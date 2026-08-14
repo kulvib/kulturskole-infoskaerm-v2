@@ -24,6 +24,10 @@ class Settings:
     client_token_ttl_seconds: int = 10 * 60
     media_stale_seconds: int = 45
     command_max_attempts: int = 5
+    viewer_heartbeat_seconds: int = 10
+    viewer_lease_seconds: int = 30
+    viewer_stop_grace_seconds: int = 30
+    viewer_reconcile_interval_seconds: int = 5
 
     @classmethod
     def load(cls) -> "Settings":
@@ -52,6 +56,10 @@ class Settings:
             public_base_url=public_base_url,
             hls_root=Path(os.getenv("HLS_ROOT", "/tmp/clientflow-hls")),
             media_stale_seconds=int(os.getenv("MEDIA_STALE_SECONDS", "45")),
+            viewer_heartbeat_seconds=int(os.getenv("VIEWER_HEARTBEAT_SECONDS", "10")),
+            viewer_lease_seconds=int(os.getenv("VIEWER_LEASE_SECONDS", "30")),
+            viewer_stop_grace_seconds=int(os.getenv("VIEWER_STOP_GRACE_SECONDS", "30")),
+            viewer_reconcile_interval_seconds=int(os.getenv("VIEWER_RECONCILE_INTERVAL_SECONDS", "5")),
         )
 
 

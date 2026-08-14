@@ -29,7 +29,7 @@ Livestream API
         +--> authenticated HLS playback
 ```
 
-Backend ejer **intent, command lease, generation identity og media health**. Ubuntu ejer **desired state, broker og process lifecycle**. Browseren ejer kun playback.
+Backend ejer **viewer-lifecycle, intent, command lease, generation identity og media health**. Ubuntu ejer **desired state, broker og process lifecycle**. Browseren rapporterer kun viewer-presence og afspiller HLS; backend afgør altid Start/Stop.
 
 ## ClientFlow 1.2-kontrakt
 
@@ -49,7 +49,7 @@ Understøttede Livestream commands er `start`, `restart`, `reset_generation` og 
 
 ## Datamodel
 
-Kun syv tabeller:
+Otte tabeller:
 
 1. `organization`
 2. `user_account`
@@ -58,8 +58,26 @@ Kun syv tabeller:
 5. `client_command`
 6. `client_domain_status`
 7. `livestream_generation`
+8. `livestream_viewer`
 
 HLS-filer er transient media og ligger ikke i databasen.
+
+
+## Viewer-ejet lifecycle
+
+Livestream har ingen normal Start/Stop-knap i Control Room. Lifecycle følger aktive viewers:
+
+- første viewer åbner Livestream → automatisk `start`
+- heartbeat hvert `VIEWER_HEARTBEAT_SECONDS` (default 10 s)
+- viewer-lease udløber efter `VIEWER_LEASE_SECONDS` (default 30 s)
+- sidste viewer væk → `VIEWER_STOP_GRACE_SECONDS` (default 30 s) → automatisk `stop`
+- vender en viewer tilbage inden grace, fortsætter samme generation uden Stop/Start
+- flere viewers deler samme generation; streamen stopper først, når sidste viewer er væk
+- skjult fane, klientskift, logout og `pagehide` sender viewer-leave
+- browsercrash/netværkstab håndteres af lease-expiry
+- media-watchdog laver kun `reset_generation`, mens mindst én viewer er aktiv
+
+Backend kører en lille DB-baseret reconcile-loop hvert `VIEWER_RECONCILE_INTERVAL_SECONDS` (default 5 s). Viewer-data er transient lifecycle-state; HLS er fortsat transient media på disk.
 
 ## Media health
 
@@ -107,7 +125,6 @@ De konkrete Ubuntu-kommandoer gives først i den fysiske testfase.
 - React/Node build
 - gammel 1.1.x-klientkode
 - gammel database/migrationshistorik
-- viewer heartbeat/leases
-- browserstyret producer-lifecycle
+- browserstyret producer-lifecycle uden backend-authoritet
 
 Fælles control-plane kan udvides senere, men kun når næste funktion behandles.

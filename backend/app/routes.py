@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import get_db
-from .models import Client, ClientDomainCredential, ClientDomainStatus, LivestreamGeneration, User, utcnow
+from .models import Client, ClientDomainCredential, ClientDomainStatus, LivestreamGeneration, LivestreamViewer, User, utcnow
 from .security import (
     create_client_token,
     create_user_session,
@@ -23,6 +23,7 @@ from .security import (
     verify_password,
 )
 from .services import (
+    active_viewer_count,
     claim_command,
     complete_command,
     current_generation,
@@ -36,6 +37,9 @@ from .services import (
     request_start,
     request_stop,
     safe_hls_filename,
+    viewer_enter,
+    viewer_heartbeat,
+    viewer_leave,
     write_hls_file,
 )
 
@@ -301,6 +305,12 @@ def livestream_status(client_id: int, request: Request, db: Session = Depends(ge
         "generation": _generation_json(generation),
         "playlist_ready": playlist_ready,
         "media_age_seconds": media_age_seconds,
+        "viewers": {
+            "active": active_viewer_count(db, client_id),
+            "heartbeat_seconds": settings.viewer_heartbeat_seconds,
+            "lease_seconds": settings.viewer_lease_seconds,
+            "stop_grace_seconds": settings.viewer_stop_grace_seconds,
+        },
         "agent": None
         if status_row is None
         else {
@@ -311,6 +321,60 @@ def livestream_status(client_id: int, request: Request, db: Session = Depends(ge
             "updated_at": status_row.updated_at,
         },
     }
+
+
+@router.post("/api/clients/{client_id}/livestream/viewers", status_code=201)
+def livestream_viewer_enter(client_id: int, request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
+    user = _user(request, db)
+    _owned_client(db, user, client_id)
+    viewer, generation, command = viewer_enter(db, client_id=client_id, user_id=user.id)
+    db.commit()
+    return {
+        "viewer_id": viewer.id,
+        "heartbeat_seconds": settings.viewer_heartbeat_seconds,
+        "lease_seconds": settings.viewer_lease_seconds,
+        "stop_grace_seconds": settings.viewer_stop_grace_seconds,
+        "generation": _generation_json(generation),
+        "command_id": command.id if command else None,
+    }
+
+
+@router.post("/api/clients/{client_id}/livestream/viewers/{viewer_id}/heartbeat")
+def livestream_viewer_heartbeat(
+    client_id: int,
+    viewer_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = _user(request, db)
+    _owned_client(db, user, client_id)
+    viewer, generation, command = viewer_heartbeat(
+        db,
+        client_id=client_id,
+        user_id=user.id,
+        viewer_id=viewer_id,
+    )
+    db.commit()
+    return {
+        "ok": True,
+        "viewer_id": viewer.id,
+        "generation": _generation_json(generation),
+        "command_id": command.id if command else None,
+    }
+
+
+@router.post("/api/clients/{client_id}/livestream/viewers/{viewer_id}/leave")
+def livestream_viewer_leave(
+    client_id: int,
+    viewer_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    user = _user(request, db)
+    _owned_client(db, user, client_id)
+    viewer_leave(db, client_id=client_id, user_id=user.id, viewer_id=viewer_id)
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/api/clients/{client_id}/livestream/start")
@@ -474,6 +538,8 @@ def agent_generation_stopped(
     elif generation.state not in {"failed", "superseded"}:
         generation.state = "stopped"
     generation.stopped_at = utcnow()
+    if active_viewer_count(db, client_id) > 0 and current_generation(db, client_id) is None:
+        request_start(db, client_id)
     db.commit()
     delete_generation_files(client_id, generation_id)
     return _generation_json(generation) or {}

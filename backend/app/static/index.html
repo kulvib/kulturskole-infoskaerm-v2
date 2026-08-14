@@ -46,26 +46,22 @@
                 <div id="clientName" class="eyebrow"></div>
                 <h2>Livestream</h2>
               </div>
-              <div class="actions">
-                <button id="startButton">Start</button>
-                <button id="restartButton" class="secondary">Genstart</button>
-                <button id="stopButton" class="danger">Stop</button>
-              </div>
             </div>
 
             <div class="status-strip">
               <span id="stateBadge" class="badge">stopped</span>
               <span id="agentStatus">Agent: ukendt</span>
               <span id="mediaAge">Media: —</span>
+              <span id="viewerStatus">Seere: 0</span>
             </div>
 
             <div class="video-frame">
               <video id="video" controls autoplay muted playsinline></video>
-              <div id="videoMessage" class="video-message">Streamen er stoppet.</div>
+              <div id="videoMessage" class="video-message">Vælg Livestream for at starte automatisk.</div>
             </div>
 
             <div class="row between wrap details-row">
-              <p class="muted">Streamen fortsætter, indtil du trykker Stop. At forlade siden påvirker ikke Ubuntu-processen.</p>
+              <p class="muted">Livestream starter automatisk, når siden vises. Når sidste seer forlader siden, stopper den efter 30 sekunders grace.</p>
               <button id="credentialButton" class="ghost">Nyt Livestream credential</button>
             </div>
 

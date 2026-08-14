@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import ClientCommand, LivestreamGeneration, utcnow
+from .models import Client, ClientCommand, LivestreamGeneration, LivestreamViewer, utcnow
 
 DOMAIN = "livestream"
 ACTIVE_GENERATION_STATES = {"starting", "running", "stopping"}
@@ -43,6 +43,153 @@ def current_generation(db: Session, client_id: int) -> LivestreamGeneration | No
         .order_by(LivestreamGeneration.created_at.desc())
         .limit(1)
     )
+
+
+def _lock_client(db: Session, client_id: int) -> None:
+    db.scalar(select(Client.id).where(Client.id == client_id).with_for_update())
+
+
+def active_viewer_count(db: Session, client_id: int, *, now: datetime | None = None) -> int:
+    now = now or utcnow()
+    cutoff = now - timedelta(seconds=settings.viewer_lease_seconds)
+    return len(
+        db.scalars(
+            select(LivestreamViewer.id).where(
+                LivestreamViewer.client_id == client_id,
+                LivestreamViewer.ended_at.is_(None),
+                LivestreamViewer.last_seen_at >= cutoff,
+            )
+        ).all()
+    )
+
+
+def viewer_enter(db: Session, *, client_id: int, user_id: int) -> tuple[LivestreamViewer, LivestreamGeneration | None, ClientCommand | None]:
+    _lock_client(db, client_id)
+    now = utcnow()
+    viewer = LivestreamViewer(
+        id=str(uuid.uuid4()),
+        client_id=client_id,
+        user_id=user_id,
+        created_at=now,
+        last_seen_at=now,
+    )
+    db.add(viewer)
+    db.flush()
+
+    generation = current_generation(db, client_id)
+    command = None
+    if generation is None:
+        generation, command = request_start(db, client_id)
+    return viewer, generation, command
+
+
+def viewer_heartbeat(
+    db: Session,
+    *,
+    client_id: int,
+    user_id: int,
+    viewer_id: str,
+) -> tuple[LivestreamViewer, LivestreamGeneration | None, ClientCommand | None]:
+    _lock_client(db, client_id)
+    viewer = db.get(LivestreamViewer, viewer_id)
+    if viewer is None or viewer.client_id != client_id or viewer.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Viewer not found")
+    if viewer.ended_at is not None:
+        raise HTTPException(status_code=409, detail="Viewer lease has ended")
+
+    now = utcnow()
+    if now - _as_utc(viewer.last_seen_at) > timedelta(seconds=settings.viewer_lease_seconds):
+        viewer.ended_at = _as_utc(viewer.last_seen_at) + timedelta(seconds=settings.viewer_lease_seconds)
+        viewer.end_reason = "lease_expired"
+        raise HTTPException(status_code=409, detail="Viewer lease expired")
+
+    viewer.last_seen_at = now
+    generation = current_generation(db, client_id)
+    command = None
+    if generation is None:
+        generation, command = request_start(db, client_id)
+    return viewer, generation, command
+
+
+def viewer_leave(db: Session, *, client_id: int, user_id: int, viewer_id: str) -> LivestreamViewer | None:
+    _lock_client(db, client_id)
+    viewer = db.get(LivestreamViewer, viewer_id)
+    if viewer is None or viewer.client_id != client_id or viewer.user_id != user_id:
+        return None
+    if viewer.ended_at is None:
+        viewer.ended_at = utcnow()
+        viewer.end_reason = "leave"
+    return viewer
+
+
+def _expire_stale_viewers(db: Session, client_id: int, *, now: datetime) -> None:
+    cutoff = now - timedelta(seconds=settings.viewer_lease_seconds)
+    rows = db.scalars(
+        select(LivestreamViewer).where(
+            LivestreamViewer.client_id == client_id,
+            LivestreamViewer.ended_at.is_(None),
+            LivestreamViewer.last_seen_at < cutoff,
+        )
+    ).all()
+    for viewer in rows:
+        viewer.ended_at = _as_utc(viewer.last_seen_at) + timedelta(seconds=settings.viewer_lease_seconds)
+        viewer.end_reason = "lease_expired"
+
+
+def reconcile_viewer_lifecycle(db: Session, client_id: int) -> str | None:
+    """Expire viewer leases and stop/start Livestream from viewer ownership.
+
+    Start is allowed only when at least one viewer is active. Stop occurs only
+    after the last viewer has been absent for the configured grace period.
+    """
+    _lock_client(db, client_id)
+    now = utcnow()
+    _expire_stale_viewers(db, client_id, now=now)
+
+    active = len(
+        db.scalars(
+            select(LivestreamViewer.id).where(
+                LivestreamViewer.client_id == client_id,
+                LivestreamViewer.ended_at.is_(None),
+            )
+        ).all()
+    )
+    generation = current_generation(db, client_id)
+
+    if active > 0:
+        if generation is None:
+            request_start(db, client_id)
+            return "start"
+        return None
+
+    if generation is None or generation.state == "stopping":
+        return None
+
+    last_ended = db.scalar(
+        select(LivestreamViewer.ended_at)
+        .where(
+            LivestreamViewer.client_id == client_id,
+            LivestreamViewer.ended_at.is_not(None),
+        )
+        .order_by(LivestreamViewer.ended_at.desc())
+        .limit(1)
+    )
+    absent_since = _as_utc(last_ended) if last_ended is not None else _as_utc(generation.created_at)
+    if now - absent_since < timedelta(seconds=settings.viewer_stop_grace_seconds):
+        return None
+
+    request_stop(db, client_id)
+    return "stop"
+
+
+def reconcile_all_viewer_lifecycles(db: Session) -> list[tuple[int, str]]:
+    actions: list[tuple[int, str]] = []
+    client_ids = db.scalars(select(Client.id).order_by(Client.id)).all()
+    for client_id in client_ids:
+        action = reconcile_viewer_lifecycle(db, client_id)
+        if action:
+            actions.append((client_id, action))
+    return actions
 
 
 def cancel_queued_generation_commands(db: Session, client_id: int) -> None:
@@ -353,6 +500,8 @@ def delete_generation_files(client_id: int, generation_id: str) -> None:
 
 
 def maybe_recover_stale_media(db: Session, client_id: int) -> bool:
+    if active_viewer_count(db, client_id) == 0:
+        return False
     generation = current_generation(db, client_id)
     if generation is None or generation.state not in {"starting", "running"}:
         return False

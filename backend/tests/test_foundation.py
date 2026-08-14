@@ -18,9 +18,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db import Base
-from app.models import Client, ClientDomainCredential, Organization, LivestreamGeneration, utcnow
+from app.models import Client, ClientDomainCredential, Organization, LivestreamGeneration, LivestreamViewer, User, utcnow
 from app.security import create_client_token, credential_digest
 from app.services import (
+    active_viewer_count,
     claim_command,
     complete_command,
     current_generation,
@@ -29,7 +30,11 @@ from app.services import (
     request_restart,
     request_start,
     request_stop,
+    reconcile_viewer_lifecycle,
     validate_manifest,
+    viewer_enter,
+    viewer_heartbeat,
+    viewer_leave,
     write_hls_file,
 )
 from fastapi import HTTPException
@@ -43,8 +48,14 @@ class FoundationTests(unittest.TestCase):
         org = Organization(name="Test")
         self.db.add(org)
         self.db.flush()
+        self.user = User(
+            organization_id=org.id,
+            email="admin@example.test",
+            password_hash="unused",
+            role="admin",
+        )
         self.client = Client(organization_id=org.id, name="NUC")
-        self.db.add(self.client)
+        self.db.add_all([self.user, self.client])
         self.db.commit()
         shutil.rmtree("/tmp/clientflow-foundation-tests", ignore_errors=True)
 
@@ -150,7 +161,7 @@ class FoundationTests(unittest.TestCase):
             validate_manifest(b"#EXTM3U\nhttps://evil.example/segment.ts\n")
 
     def test_media_watchdog_uses_upload_progress_not_process_state(self) -> None:
-        generation, command = request_start(self.db, self.client.id)
+        viewer, generation, command = viewer_enter(self.db, client_id=self.client.id, user_id=self.user.id)
         self.db.commit()
         claimed = claim_command(self.db, client_id=self.client.id, lease_seconds=60)
         assert claimed is not None
@@ -200,7 +211,7 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(claimed["command"]["payload"]["generation_id"], generation.id)
 
     def test_media_watchdog_stops_after_three_recent_auto_recoveries(self) -> None:
-        generation, command = request_start(self.db, self.client.id)
+        viewer, generation, command = viewer_enter(self.db, client_id=self.client.id, user_id=self.user.id)
         self.db.commit()
         claimed = claim_command(self.db, client_id=self.client.id, lease_seconds=60)
         assert claimed is not None
@@ -225,6 +236,97 @@ class FoundationTests(unittest.TestCase):
         claimed_stop = claim_command(self.db, client_id=self.client.id, lease_seconds=60)
         assert claimed_stop is not None
         self.assertEqual(claimed_stop["command"]["command_type"], "stop")
+
+
+    def test_first_viewer_starts_stream_and_second_viewer_shares_generation(self) -> None:
+        first, generation, command = viewer_enter(self.db, client_id=self.client.id, user_id=self.user.id)
+        self.db.commit()
+        self.assertIsNotNone(command)
+        self.assertEqual(command.command_type, "start")
+        self.assertEqual(active_viewer_count(self.db, self.client.id), 1)
+
+        second, shared, second_command = viewer_enter(self.db, client_id=self.client.id, user_id=self.user.id)
+        self.db.commit()
+        self.assertEqual(shared.id, generation.id)
+        self.assertIsNone(second_command)
+        self.assertNotEqual(first.id, second.id)
+        self.assertEqual(active_viewer_count(self.db, self.client.id), 2)
+
+    def test_quick_return_within_grace_keeps_same_generation(self) -> None:
+        first, generation, _ = viewer_enter(self.db, client_id=self.client.id, user_id=self.user.id)
+        generation.state = "running"
+        self.db.commit()
+
+        viewer_leave(self.db, client_id=self.client.id, user_id=self.user.id, viewer_id=first.id)
+        self.db.commit()
+        self.assertIsNone(reconcile_viewer_lifecycle(self.db, self.client.id))
+        self.db.commit()
+
+        second, shared, command = viewer_enter(self.db, client_id=self.client.id, user_id=self.user.id)
+        self.db.commit()
+        self.assertEqual(shared.id, generation.id)
+        self.assertIsNone(command)
+        self.assertEqual(generation.state, "running")
+        self.assertNotEqual(first.id, second.id)
+
+    def test_last_viewer_stops_only_after_grace(self) -> None:
+        viewer, generation, _ = viewer_enter(self.db, client_id=self.client.id, user_id=self.user.id)
+        generation.state = "running"
+        self.db.commit()
+        viewer_leave(self.db, client_id=self.client.id, user_id=self.user.id, viewer_id=viewer.id)
+        self.db.commit()
+
+        self.assertIsNone(reconcile_viewer_lifecycle(self.db, self.client.id))
+        self.db.commit()
+        viewer.ended_at = utcnow() - timedelta(seconds=31)
+        self.db.commit()
+        self.assertEqual(reconcile_viewer_lifecycle(self.db, self.client.id), "stop")
+        self.db.commit()
+        self.assertEqual(generation.state, "stopping")
+
+    def test_expired_lease_then_grace_stops_stream(self) -> None:
+        viewer, generation, _ = viewer_enter(self.db, client_id=self.client.id, user_id=self.user.id)
+        generation.state = "running"
+        viewer.last_seen_at = utcnow() - timedelta(seconds=61)
+        self.db.commit()
+
+        self.assertEqual(reconcile_viewer_lifecycle(self.db, self.client.id), "stop")
+        self.db.commit()
+        self.assertEqual(viewer.end_reason, "lease_expired")
+        self.assertEqual(generation.state, "stopping")
+
+    def test_heartbeat_keeps_viewer_active(self) -> None:
+        viewer, generation, _ = viewer_enter(self.db, client_id=self.client.id, user_id=self.user.id)
+        self.db.commit()
+        before = viewer.last_seen_at
+        viewer_heartbeat(
+            self.db,
+            client_id=self.client.id,
+            user_id=self.user.id,
+            viewer_id=viewer.id,
+        )
+        self.db.commit()
+        self.assertGreaterEqual(viewer.last_seen_at, before)
+        self.assertEqual(active_viewer_count(self.db, self.client.id), 1)
+
+    def test_watchdog_does_not_reset_without_active_viewer(self) -> None:
+        generation, command = request_start(self.db, self.client.id)
+        self.db.commit()
+        claimed = claim_command(self.db, client_id=self.client.id, lease_seconds=60)
+        assert claimed is not None
+        complete_command(
+            self.db,
+            client_id=self.client.id,
+            command_id=command.id,
+            claim_token=claimed["claim_token"],
+            result={},
+        )
+        generation.state = "running"
+        generation.started_at = utcnow() - timedelta(seconds=90)
+        generation.created_at = generation.started_at
+        self.db.commit()
+        self.assertFalse(maybe_recover_stale_media(self.db, self.client.id))
+        self.assertEqual(current_generation(self.db, self.client.id).id, generation.id)
 
 
 if __name__ == "__main__":

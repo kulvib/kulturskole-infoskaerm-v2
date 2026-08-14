@@ -103,6 +103,22 @@ class ClientDomainStatus(Base):
     __table_args__ = (UniqueConstraint("client_id", "domain", name="uq_status_client_domain"),)
 
 
+class LivestreamViewer(Base):
+    __tablename__ = "livestream_viewer"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("client.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_account.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    end_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (
+        Index("ix_livestream_viewer_client_active", "client_id", "ended_at", "last_seen_at"),
+    )
+
+
 class LivestreamGeneration(Base):
     __tablename__ = "livestream_generation"
 

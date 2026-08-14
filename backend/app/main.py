@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ from .db import SessionLocal
 from .models import Organization, User
 from .routes import router
 from .security import hash_password
+from .services import reconcile_all_viewer_lifecycles
 
 logger = logging.getLogger("clientflow")
 
@@ -45,11 +47,32 @@ def bootstrap_admin() -> None:
         logger.info("Initial admin created for %s", email)
 
 
+async def viewer_lifecycle_sweeper() -> None:
+    while True:
+        await asyncio.sleep(settings.viewer_reconcile_interval_seconds)
+        try:
+            with SessionLocal() as db:
+                actions = reconcile_all_viewer_lifecycles(db)
+                db.commit()
+            for client_id, action in actions:
+                logger.info("Livestream viewer lifecycle: client=%s action=%s", client_id, action)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Livestream viewer lifecycle sweep failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.hls_root.mkdir(parents=True, exist_ok=True)
     bootstrap_admin()
-    yield
+    task = asyncio.create_task(viewer_lifecycle_sweeper())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(title="ClientFlow Livestream", version="1.0.0", lifespan=lifespan)

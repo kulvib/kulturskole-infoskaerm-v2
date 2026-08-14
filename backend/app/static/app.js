@@ -4,6 +4,8 @@ let currentUser = null;
 let clients = [];
 let selectedClient = null;
 let pollTimer = null;
+let heartbeatTimer = null;
+let viewerSession = null;
 let hls = null;
 let loadedGeneration = null;
 let latestCredential = null;
@@ -18,7 +20,9 @@ async function api(path, options = {}) {
   const body = type.includes('application/json') ? await response.json() : await response.text();
   if (!response.ok) {
     const detail = typeof body === 'object' ? (body.detail || body.error || JSON.stringify(body)) : body;
-    throw new Error(detail || `HTTP ${response.status}`);
+    const error = new Error(detail || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return body;
 }
@@ -68,17 +72,93 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[char]));
 }
 
+function clearViewerHeartbeat() {
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+}
+
+function startPolling() {
+  clearInterval(pollTimer);
+  if (!selectedClient || document.visibilityState !== 'visible') return;
+  pollTimer = setInterval(refreshLivestream, 2000);
+}
+
+function startViewerHeartbeat(seconds) {
+  clearViewerHeartbeat();
+  const intervalMs = Math.max(1000, Number(seconds || 10) * 1000);
+  heartbeatTimer = setInterval(sendViewerHeartbeat, intervalMs);
+}
+
+async function enterViewer() {
+  if (!selectedClient || !currentUser || document.visibilityState !== 'visible') return;
+  if (viewerSession?.clientId === selectedClient.id) return;
+
+  const clientId = selectedClient.id;
+  const result = await api(`/api/clients/${clientId}/livestream/viewers`, { method: 'POST' });
+  if (!selectedClient || selectedClient.id !== clientId || document.visibilityState !== 'visible') {
+    navigator.sendBeacon(`/api/clients/${clientId}/livestream/viewers/${result.viewer_id}/leave`);
+    return;
+  }
+
+  viewerSession = {
+    clientId,
+    viewerId: result.viewer_id,
+    heartbeatSeconds: result.heartbeat_seconds || 10,
+  };
+  startViewerHeartbeat(viewerSession.heartbeatSeconds);
+}
+
+async function sendViewerHeartbeat() {
+  const session = viewerSession;
+  if (!session || !selectedClient || selectedClient.id !== session.clientId || document.visibilityState !== 'visible') return;
+  try {
+    await api(
+      `/api/clients/${session.clientId}/livestream/viewers/${session.viewerId}/heartbeat`,
+      { method: 'POST' },
+    );
+  } catch (error) {
+    if (error.status === 404 || error.status === 409) {
+      viewerSession = null;
+      clearViewerHeartbeat();
+      await enterViewer().catch(() => {});
+    }
+  }
+}
+
+async function leaveViewer({ beacon = false } = {}) {
+  const session = viewerSession;
+  viewerSession = null;
+  clearViewerHeartbeat();
+  if (!session) return;
+
+  const path = `/api/clients/${session.clientId}/livestream/viewers/${session.viewerId}/leave`;
+  if (beacon && navigator.sendBeacon) {
+    navigator.sendBeacon(path);
+    return;
+  }
+  await api(path, { method: 'POST' }).catch(() => {});
+}
+
 async function selectClient(client) {
-  selectedClient = client;
-  loadedGeneration = null;
-  destroyPlayer();
+  if (selectedClient?.id !== client.id) {
+    await leaveViewer();
+    selectedClient = client;
+    loadedGeneration = null;
+    destroyPlayer();
+  }
+
   $('emptyState').classList.add('hidden');
   $('clientView').classList.remove('hidden');
   $('clientName').textContent = `${client.name} · #${client.id}`;
   await refreshClients();
+
+  try {
+    await enterViewer();
+  } catch (error) {
+    toast(`Livestream kunne ikke åbnes: ${error.message}`);
+  }
   await refreshLivestream();
-  clearInterval(pollTimer);
-  pollTimer = setInterval(refreshLivestream, 2000);
+  startPolling();
 }
 
 async function refreshLivestream() {
@@ -103,11 +183,8 @@ function renderLivestream(status) {
   $('mediaAge').textContent = status.media_age_seconds == null
     ? 'Media: —'
     : `Media: ${Math.round(status.media_age_seconds)}s`;
+  $('viewerStatus').textContent = `Seere: ${status.viewers?.active ?? 0}`;
   $('debugStatus').textContent = JSON.stringify(status, null, 2);
-
-  $('startButton').disabled = ['starting', 'running', 'stopping'].includes(state);
-  $('restartButton').disabled = state === 'stopping';
-  $('stopButton').disabled = state === 'stopped';
 
   if (generation && status.playlist_ready && ['starting', 'running', 'stopping'].includes(state)) {
     if (loadedGeneration !== generation.id) attachPlayer(generation.id);
@@ -115,10 +192,12 @@ function renderLivestream(status) {
   } else {
     if (state === 'stopped' || state === 'failed') destroyPlayer();
     $('videoMessage').textContent = state === 'stopped'
-      ? 'Streamen er stoppet.'
+      ? (viewerSession ? 'Starter livestream automatisk…' : 'Livestream er stoppet, fordi ingen ser den.')
       : state === 'failed'
         ? `Streamen fejlede${generation?.error_code ? `: ${generation.error_code}` : '.'}`
-        : 'Venter på HLS-segmenter…';
+        : state === 'stopping'
+          ? 'Stopper livestream…'
+          : 'Venter på HLS-segmenter…';
     $('videoMessage').classList.remove('hidden');
   }
 }
@@ -163,18 +242,6 @@ function destroyPlayer() {
   loadedGeneration = null;
 }
 
-async function action(name) {
-  if (!selectedClient) return;
-  try {
-    await api(`/api/clients/${selectedClient.id}/livestream/${name}`, { method: 'POST' });
-    toast(`${name} sendt`);
-    await refreshLivestream();
-    await refreshClients();
-  } catch (error) {
-    toast(error.message);
-  }
-}
-
 $('loginForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   $('loginError').textContent = '';
@@ -193,16 +260,13 @@ $('loginForm').addEventListener('submit', async (event) => {
 
 $('logoutButton').addEventListener('click', async () => {
   clearInterval(pollTimer);
+  await leaveViewer();
   destroyPlayer();
   await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
   selectedClient = null;
   currentUser = null;
   setLoggedIn(false);
 });
-
-$('startButton').addEventListener('click', () => action('start'));
-$('restartButton').addEventListener('click', () => action('restart'));
-$('stopButton').addEventListener('click', () => action('stop'));
 
 $('newClientButton').addEventListener('click', () => $('clientDialog').showModal());
 $('clientCancel').addEventListener('click', () => $('clientDialog').close());
@@ -246,5 +310,25 @@ $('downloadCredential').addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 $('closeCredential').addEventListener('click', () => $('credentialDialog').close());
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    clearInterval(pollTimer);
+    leaveViewer({ beacon: true });
+    destroyPlayer();
+    return;
+  }
+
+  if (selectedClient && currentUser) {
+    enterViewer()
+      .then(refreshLivestream)
+      .then(startPolling)
+      .catch((error) => toast(`Livestream kunne ikke genoptages: ${error.message}`));
+  }
+});
+
+window.addEventListener('pagehide', () => {
+  leaveViewer({ beacon: true });
+});
 
 bootstrap();

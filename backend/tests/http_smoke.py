@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -20,6 +21,10 @@ os.environ["HLS_ROOT"] = HLS
 os.environ["ADMIN_EMAIL"] = "admin@example.test"
 os.environ["ADMIN_PASSWORD"] = "correct-horse-battery-staple"
 os.environ["ADMIN_ORG_NAME"] = "Test"
+os.environ["VIEWER_HEARTBEAT_SECONDS"] = "1"
+os.environ["VIEWER_LEASE_SECONDS"] = "3"
+os.environ["VIEWER_STOP_GRACE_SECONDS"] = "1"
+os.environ["VIEWER_RECONCILE_INTERVAL_SECONDS"] = "1"
 
 from fastapi.testclient import TestClient
 
@@ -49,9 +54,17 @@ with TestClient(app, base_url="https://testserver") as browser:
     access_token = response.json()["access_token"]
     headers = {"Authorization": f"Bearer {access_token}"}
 
-    response = browser.post(f"/api/clients/{client_id}/livestream/start")
+    response = browser.post(f"/api/clients/{client_id}/livestream/viewers")
+    assert response.status_code == 201, response.text
+    viewer = response.json()
+    viewer_id = viewer["viewer_id"]
+    generation_id = viewer["generation"]["id"]
+    assert viewer["heartbeat_seconds"] == 1
+    assert viewer["lease_seconds"] == 3
+    assert viewer["stop_grace_seconds"] == 1
+
+    response = browser.post(f"/api/clients/{client_id}/livestream/viewers/{viewer_id}/heartbeat")
     assert response.status_code == 200, response.text
-    generation_id = response.json()["generation"]["id"]
 
     response = browser.post(
         f"/api/livestream-agent/clients/{client_id}/commands/claim",
@@ -115,13 +128,25 @@ with TestClient(app, base_url="https://testserver") as browser:
     assert response.status_code == 200, response.text
     assert response.json()["playlist_ready"] is True
     assert response.json()["generation"]["state"] == "running"
+    assert response.json()["viewers"]["active"] == 1
 
     response = browser.get(f"/api/clients/{client_id}/livestream/hls/index.m3u8")
     assert response.status_code == 200, response.text
     assert b"segment-000000001.ts" in response.content
 
-    response = browser.post(f"/api/clients/{client_id}/livestream/stop")
+    # Leaving and returning inside grace keeps the same generation.
+    response = browser.post(f"/api/clients/{client_id}/livestream/viewers/{viewer_id}/leave")
     assert response.status_code == 200, response.text
+    response = browser.post(f"/api/clients/{client_id}/livestream/viewers")
+    assert response.status_code == 201, response.text
+    viewer2 = response.json()
+    assert viewer2["generation"]["id"] == generation_id
+    assert viewer2["command_id"] is None
+
+    # The last viewer leaving causes an automatic stop after grace.
+    response = browser.post(f"/api/clients/{client_id}/livestream/viewers/{viewer2['viewer_id']}/leave")
+    assert response.status_code == 200, response.text
+    time.sleep(2.2)
     response = browser.post(
         f"/api/livestream-agent/clients/{client_id}/commands/claim",
         json={"lease_seconds": 60},
