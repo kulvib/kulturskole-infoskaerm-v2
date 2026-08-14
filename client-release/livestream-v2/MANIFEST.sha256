@@ -1,0 +1,10 @@
+8892bbb061656c352771dc19056e649758205a83c2f62735e2c19e59523cbdd1  overlay/opt/clientflow/releases/clientflow-1.2.0-seq-1200/client-runtime/config-examples/livestream.json
+fd485398c3bc4d858d70218f47043a83a37d89def9786f837ada10bc6cc29515  overlay/opt/clientflow/releases/clientflow-1.2.0-seq-1200/client-runtime/systemd/clientflow-livestream-producer.service
+b481563b60b237b3a042aeae449bb61d41b36040ab6f101a90a5abc9da634cec  overlay/opt/clientflow/releases/clientflow-1.2.0-seq-1200/runtime/lib/python3.13/site-packages/clientflow_runtime/livestream_producer.py
+f224f8ae94479ba77f43d554bdc308d2d394bd72f130f5d4fe78ee13cc5dc25d  overlay/opt/clientflow/releases/clientflow-1.2.0-seq-1200/runtime/lib/python3.13/site-packages/clientflow_runtime/livestream_uploader.py
+81b2c5f453b6b91be65f23203bd7ff09a978bcd2dde8d7943fbf284ae1d5fbc9  overlay/opt/clientflow/releases/clientflow-1.2.0-seq-1200/runtime/lib/python3.13/site-packages/clientflow_runtime/livestream_wayland_capture.py
+a70ff335508536fe02ba02473b1e0be9ca746c3733b4167968df3fec340e1cd0  scripts/install_dependencies.sh
+d8336caa4eea1036fad69a313c4cd4ddadc73d42b68de93e9768733f124577d5  scripts/install_overlay.sh
+56e3028bbb41d7ca07026043c8fa1e2e7943b206d87f631a92a575db0cb41c21  scripts/validate_livestream.sh
+53d1d1273a41fa7529810f907398ce0bbfa8b7b20e947989a4c2a28ac710a65e  ubuntu-packages.txt
+ec4c80a05c475cadf30987a66795ff3112b082a58ced27e2b78bd41cc0ae72dd  README.md
