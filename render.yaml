@@ -27,6 +27,9 @@ services:
           name: clientflow-livestream-db
           property: connectionString
 
+      - key: PYTHON_VERSION
+        value: 3.13.14
+
       - key: JWT_SECRET
         generateValue: true
 
