@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClientFlow · Livestream</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.6.18/dist/hls.min.js"></script>
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">ClientFlow 1.2</div>
+        <h1>Livestream</h1>
+      </div>
+      <button id="logoutButton" class="ghost hidden">Log ud</button>
+    </header>
+
+    <section id="loginView" class="card narrow">
+      <h2>Log ind</h2>
+      <form id="loginForm" class="stack">
+        <label>E-mail<input id="email" type="email" required autocomplete="username"></label>
+        <label>Adgangskode<input id="password" type="password" required autocomplete="current-password"></label>
+        <button type="submit">Log ind</button>
+      </form>
+      <p id="loginError" class="error"></p>
+    </section>
+
+    <section id="appView" class="hidden">
+      <div class="grid">
+        <aside class="card sidebar">
+          <div class="row between">
+            <h2>Klienter</h2>
+            <button id="newClientButton" class="small">Ny</button>
+          </div>
+          <div id="clientList" class="client-list"></div>
+        </aside>
+
+        <section class="card content">
+          <div id="emptyState" class="empty">Vælg en klient.</div>
+          <div id="clientView" class="hidden">
+            <div class="row between wrap">
+              <div>
+                <div id="clientName" class="eyebrow"></div>
+                <h2>Livestream</h2>
+              </div>
+              <div class="actions">
+                <button id="startButton">Start</button>
+                <button id="restartButton" class="secondary">Genstart</button>
+                <button id="stopButton" class="danger">Stop</button>
+              </div>
+            </div>
+
+            <div class="status-strip">
+              <span id="stateBadge" class="badge">stopped</span>
+              <span id="agentStatus">Agent: ukendt</span>
+              <span id="mediaAge">Media: —</span>
+            </div>
+
+            <div class="video-frame">
+              <video id="video" controls autoplay muted playsinline></video>
+              <div id="videoMessage" class="video-message">Streamen er stoppet.</div>
+            </div>
+
+            <div class="row between wrap details-row">
+              <p class="muted">Streamen fortsætter, indtil du trykker Stop. At forlade siden påvirker ikke Ubuntu-processen.</p>
+              <button id="credentialButton" class="ghost">Nyt Livestream credential</button>
+            </div>
+
+            <pre id="debugStatus" class="debug"></pre>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="clientDialog">
+    <form id="clientForm" method="dialog" class="stack">
+      <h3>Ny klient</h3>
+      <label>Navn<input id="clientInput" required maxlength="200"></label>
+      <label>Klient-ID (valgfri, fx 23)<input id="clientIdInput" type="number" min="1"></label>
+      <div class="row end">
+        <button type="button" class="ghost" id="clientCancel">Annuller</button>
+        <button type="submit">Opret</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="credentialDialog">
+    <div class="stack">
+      <h3>Livestream credential</h3>
+      <p class="warning">Denne secret vises kun nu. Gem JSON-filen sikkert.</p>
+      <pre id="credentialJson" class="credential"></pre>
+      <div class="row end">
+        <button id="downloadCredential">Download JSON</button>
+        <button id="closeCredential" class="ghost">Luk</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+</body>
+</html>

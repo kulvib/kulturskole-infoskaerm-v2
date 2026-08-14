@@ -1,0 +1,63 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #171717;
+  background: #f3f3f1;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; }
+button, input { font: inherit; }
+button { border: 0; border-radius: 10px; padding: .72rem 1rem; background: #171717; color: white; cursor: pointer; }
+button:hover { opacity: .88; }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button.secondary { background: #4d4d4d; }
+button.danger { background: #8a2020; }
+button.ghost { background: transparent; color: #171717; border: 1px solid #c8c8c3; }
+button.small { padding: .45rem .7rem; }
+.shell { max-width: 1320px; margin: 0 auto; padding: 2rem; }
+.topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+h1, h2, h3, p { margin-top: 0; }
+h1 { margin-bottom: 0; font-size: clamp(2rem, 4vw, 3.2rem); }
+.eyebrow { text-transform: uppercase; letter-spacing: .12em; font-size: .72rem; font-weight: 700; color: #666; }
+.card { background: white; border: 1px solid #deded8; border-radius: 18px; box-shadow: 0 12px 35px rgba(0,0,0,.05); }
+.narrow { max-width: 430px; margin: 12vh auto; padding: 2rem; }
+.grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 1rem; }
+.sidebar { padding: 1rem; min-height: 600px; }
+.content { padding: 1.25rem; min-height: 600px; }
+.stack { display: grid; gap: 1rem; }
+label { display: grid; gap: .4rem; font-size: .85rem; font-weight: 650; }
+input { width: 100%; padding: .72rem .8rem; border: 1px solid #c9c9c4; border-radius: 10px; background: white; }
+.row { display: flex; align-items: center; gap: .7rem; }
+.between { justify-content: space-between; }
+.end { justify-content: flex-end; }
+.wrap { flex-wrap: wrap; }
+.actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+.client-list { display: grid; gap: .45rem; }
+.client-item { display: block; width: 100%; text-align: left; background: #f6f6f3; color: #171717; border: 1px solid transparent; }
+.client-item.active { border-color: #171717; background: white; }
+.client-item small { display: block; margin-top: .2rem; color: #777; }
+.status-strip { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; padding: .9rem 0 1rem; color: #555; font-size: .9rem; }
+.badge { display: inline-flex; border-radius: 999px; padding: .3rem .6rem; background: #eee; color: #333; font-weight: 700; }
+.badge.running { background: #dff3e4; color: #1d642e; }
+.badge.starting, .badge.stopping { background: #fff0c7; color: #6f5310; }
+.badge.failed { background: #f6d9d9; color: #7b2020; }
+.video-frame { position: relative; background: #0d0d0d; border-radius: 14px; overflow: hidden; min-height: 420px; display: grid; place-items: center; }
+video { width: 100%; height: auto; max-height: 70vh; display: block; background: #0d0d0d; }
+.video-message { position: absolute; inset: 0; display: grid; place-items: center; color: #aaa; pointer-events: none; }
+.details-row { padding-top: 1rem; }
+.muted { color: #666; max-width: 760px; margin-bottom: 0; }
+.error { color: #9f1e1e; min-height: 1.2em; }
+.warning { color: #7a5310; }
+.empty { min-height: 500px; display: grid; place-items: center; color: #888; }
+.debug, .credential { white-space: pre-wrap; overflow-wrap: anywhere; background: #f5f5f2; border-radius: 12px; padding: 1rem; font-size: .78rem; max-height: 260px; overflow: auto; }
+.hidden { display: none !important; }
+dialog { border: 0; border-radius: 16px; padding: 1.4rem; width: min(620px, calc(100vw - 2rem)); box-shadow: 0 30px 90px rgba(0,0,0,.24); }
+dialog::backdrop { background: rgba(0,0,0,.32); }
+.toast { position: fixed; right: 1.5rem; bottom: 1.5rem; padding: .8rem 1rem; color: white; background: #171717; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.2); }
+@media (max-width: 800px) {
+  .shell { padding: 1rem; }
+  .grid { grid-template-columns: 1fr; }
+  .sidebar { min-height: auto; }
+  .content { min-height: 480px; }
+  .video-frame { min-height: 260px; }
+}

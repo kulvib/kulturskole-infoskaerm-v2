@@ -1,0 +1,387 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import hashlib
+import os
+from pathlib import Path
+import re
+import secrets
+from typing import Any
+import uuid
+
+from fastapi import HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from .config import settings
+from .models import ClientCommand, LivestreamGeneration, utcnow
+
+DOMAIN = "livestream"
+ACTIVE_GENERATION_STATES = {"starting", "running", "stopping"}
+TERMINAL_GENERATION_STATES = {"stopped", "failed", "superseded"}
+_SEGMENT_RE = re.compile(r"^segment-\d{9}\.(?:ts|m4s)$")
+_ALLOWED_FILE_RE = re.compile(r"^(?:index\.m3u8|segment-\d{9}\.(?:ts|m4s)|init\.mp4)$")
+
+
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _token_digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def current_generation(db: Session, client_id: int) -> LivestreamGeneration | None:
+    return db.scalar(
+        select(LivestreamGeneration)
+        .where(
+            LivestreamGeneration.client_id == client_id,
+            LivestreamGeneration.state.in_(ACTIVE_GENERATION_STATES),
+        )
+        .order_by(LivestreamGeneration.created_at.desc())
+        .limit(1)
+    )
+
+
+def cancel_queued_generation_commands(db: Session, client_id: int) -> None:
+    now = utcnow()
+    rows = db.scalars(
+        select(ClientCommand).where(
+            ClientCommand.client_id == client_id,
+            ClientCommand.domain == DOMAIN,
+            ClientCommand.command_type.in_({"start", "restart", "reset_generation"}),
+            ClientCommand.state == "queued",
+        )
+    ).all()
+    for command in rows:
+        command.state = "cancelled"
+        command.error_code = "superseded_intent"
+        command.error_message = "Replaced by a newer livestream intent"
+        command.retryable = False
+        command.completed_at = now
+        command.updated_at = now
+
+
+def enqueue_command(
+    db: Session,
+    *,
+    client_id: int,
+    command_type: str,
+    payload: dict[str, Any] | None = None,
+) -> ClientCommand:
+    command = ClientCommand(
+        id=str(uuid.uuid4()),
+        client_id=client_id,
+        domain=DOMAIN,
+        command_type=command_type,
+        payload=payload or {},
+        schema_version=1,
+        state="queued",
+    )
+    db.add(command)
+    return command
+
+
+def _recover_expired_leases(db: Session, client_id: int) -> None:
+    now = utcnow()
+    rows = db.scalars(
+        select(ClientCommand).where(
+            ClientCommand.client_id == client_id,
+            ClientCommand.domain == DOMAIN,
+            ClientCommand.state == "leased",
+            ClientCommand.lease_expires_at.is_not(None),
+            ClientCommand.lease_expires_at < now,
+        )
+    ).all()
+    for command in rows:
+        if command.attempts >= settings.command_max_attempts:
+            command.state = "failed"
+            command.error_code = "lease_expired"
+            command.error_message = "Command lease expired too many times"
+            command.retryable = False
+            command.completed_at = now
+        else:
+            command.state = "queued"
+            command.available_at = now
+            command.claim_token_digest = None
+            command.lease_expires_at = None
+        command.updated_at = now
+
+
+def claim_command(db: Session, *, client_id: int, lease_seconds: int) -> dict[str, Any] | None:
+    lease_seconds = min(max(int(lease_seconds), 10), 300)
+    _recover_expired_leases(db, client_id)
+    now = utcnow()
+    command = db.scalar(
+        select(ClientCommand)
+        .where(
+            ClientCommand.client_id == client_id,
+            ClientCommand.domain == DOMAIN,
+            ClientCommand.state == "queued",
+            ClientCommand.available_at <= now,
+        )
+        .order_by(ClientCommand.created_at.asc())
+        .with_for_update(skip_locked=True)
+        .limit(1)
+    )
+    if command is None:
+        return None
+    claim_token = secrets.token_urlsafe(32)
+    command.state = "leased"
+    command.attempts += 1
+    command.claim_token_digest = _token_digest(claim_token)
+    command.lease_expires_at = now + timedelta(seconds=lease_seconds)
+    command.updated_at = now
+    return {
+        "command": {
+            "id": command.id,
+            "client_id": command.client_id,
+            "command_type": command.command_type,
+            "payload": command.payload,
+            "schema_version": command.schema_version,
+        },
+        "claim_token": claim_token,
+    }
+
+
+def _leased_command(db: Session, *, client_id: int, command_id: str, claim_token: str) -> ClientCommand:
+    command = db.scalar(
+        select(ClientCommand)
+        .where(
+            ClientCommand.id == command_id,
+            ClientCommand.client_id == client_id,
+            ClientCommand.domain == DOMAIN,
+        )
+        .with_for_update()
+    )
+    if command is None:
+        raise HTTPException(status_code=404, detail="Command not found")
+    if command.state != "leased" or not command.claim_token_digest:
+        raise HTTPException(status_code=409, detail="Command is not leased")
+    if command.lease_expires_at is None or _as_utc(command.lease_expires_at) < utcnow():
+        raise HTTPException(status_code=409, detail="Command lease expired")
+    if not secrets.compare_digest(command.claim_token_digest, _token_digest(claim_token)):
+        raise HTTPException(status_code=409, detail="Claim token mismatch")
+    return command
+
+
+def renew_command(db: Session, *, client_id: int, command_id: str, claim_token: str, lease_seconds: int) -> None:
+    command = _leased_command(db, client_id=client_id, command_id=command_id, claim_token=claim_token)
+    lease_seconds = min(max(int(lease_seconds), 10), 300)
+    command.lease_expires_at = utcnow() + timedelta(seconds=lease_seconds)
+    command.updated_at = utcnow()
+
+
+def complete_command(db: Session, *, client_id: int, command_id: str, claim_token: str, result: dict[str, Any]) -> ClientCommand:
+    command = _leased_command(db, client_id=client_id, command_id=command_id, claim_token=claim_token)
+    command.state = "completed"
+    command.result = result
+    command.retryable = None
+    command.claim_token_digest = None
+    command.lease_expires_at = None
+    command.updated_at = utcnow()
+    command.completed_at = utcnow()
+    return command
+
+
+def fail_command(
+    db: Session,
+    *,
+    client_id: int,
+    command_id: str,
+    claim_token: str,
+    error_code: str,
+    error_message: str,
+    retryable: bool,
+) -> ClientCommand:
+    command = _leased_command(db, client_id=client_id, command_id=command_id, claim_token=claim_token)
+    command.error_code = error_code[:128]
+    command.error_message = error_message[:2000]
+    command.retryable = bool(retryable)
+    command.claim_token_digest = None
+    command.lease_expires_at = None
+    command.updated_at = utcnow()
+    generation_id = str((command.payload or {}).get("generation_id") or "")
+    generation = db.get(LivestreamGeneration, generation_id) if generation_id else None
+    current = current_generation(db, client_id)
+    stale_generation = bool(generation_id and (generation is None or current is None or current.id != generation_id or generation.state in {"stopping", "superseded"}))
+    if retryable and not stale_generation and command.attempts < settings.command_max_attempts:
+        command.state = "queued"
+        command.available_at = utcnow() + timedelta(seconds=min(60, 2 ** command.attempts))
+    else:
+        command.state = "failed"
+        command.completed_at = utcnow()
+        if generation and generation.state not in TERMINAL_GENERATION_STATES and generation.state != "stopping":
+            generation.state = "failed"
+            generation.error_code = command.error_code
+    return command
+
+
+def _new_generation(db: Session, *, client_id: int, action: str, supersede_current: bool) -> tuple[LivestreamGeneration, ClientCommand]:
+    cancel_queued_generation_commands(db, client_id)
+    existing = current_generation(db, client_id)
+    if existing and supersede_current:
+        existing.state = "superseded"
+        existing.superseded_at = utcnow()
+    generation = LivestreamGeneration(
+        id=str(uuid.uuid4()),
+        client_id=client_id,
+        state="starting",
+        requested_action=action,
+    )
+    db.add(generation)
+    command = enqueue_command(
+        db,
+        client_id=client_id,
+        command_type=action,
+        payload={"generation_id": generation.id},
+    )
+    return generation, command
+
+
+def request_start(db: Session, client_id: int) -> tuple[LivestreamGeneration, ClientCommand | None]:
+    existing = current_generation(db, client_id)
+    if existing:
+        if existing.state in {"starting", "running"}:
+            return existing, None
+        raise HTTPException(status_code=409, detail="Livestream is stopping")
+    return _new_generation(db, client_id=client_id, action="start", supersede_current=False)
+
+
+def request_restart(db: Session, client_id: int) -> tuple[LivestreamGeneration, ClientCommand]:
+    return _new_generation(db, client_id=client_id, action="restart", supersede_current=True)
+
+
+def request_reset_generation(db: Session, client_id: int) -> tuple[LivestreamGeneration, ClientCommand]:
+    return _new_generation(db, client_id=client_id, action="reset_generation", supersede_current=True)
+
+
+def request_stop(db: Session, client_id: int) -> tuple[LivestreamGeneration | None, ClientCommand | None]:
+    cancel_queued_generation_commands(db, client_id)
+    generation = current_generation(db, client_id)
+    pending = db.scalar(
+        select(ClientCommand)
+        .where(
+            ClientCommand.client_id == client_id,
+            ClientCommand.domain == DOMAIN,
+            ClientCommand.command_type == "stop",
+            ClientCommand.state.in_({"queued", "leased"}),
+        )
+        .order_by(ClientCommand.created_at.desc())
+        .limit(1)
+    )
+    if pending:
+        return generation, pending
+    if generation:
+        generation.state = "stopping"
+    return generation, enqueue_command(db, client_id=client_id, command_type="stop", payload={"generation_id": generation.id} if generation else {})
+
+
+def ensure_current_generation(db: Session, *, client_id: int, generation_id: str, allowed_states: set[str]) -> LivestreamGeneration:
+    generation = db.get(LivestreamGeneration, generation_id)
+    current = current_generation(db, client_id)
+    if (
+        generation is None
+        or generation.client_id != client_id
+        or current is None
+        or current.id != generation_id
+        or generation.state not in allowed_states
+    ):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Stale livestream generation")
+    return generation
+
+
+def generation_root(client_id: int, generation_id: str) -> Path:
+    return settings.hls_root / str(client_id) / generation_id
+
+
+def safe_hls_filename(filename: str) -> str:
+    if not _ALLOWED_FILE_RE.fullmatch(filename):
+        raise HTTPException(status_code=400, detail="Invalid HLS filename")
+    return filename
+
+
+def validate_manifest(payload: bytes) -> None:
+    if len(payload) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Manifest too large")
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Manifest is not UTF-8") from exc
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "://" in line or line.startswith("/") or ".." in line or not _ALLOWED_FILE_RE.fullmatch(line):
+            raise HTTPException(status_code=400, detail="Manifest contains an invalid URI")
+
+
+def write_hls_file(*, client_id: int, generation_id: str, filename: str, payload: bytes, sha256: str) -> Path:
+    filename = safe_hls_filename(filename)
+    if len(payload) > 64 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="HLS file too large")
+    actual = hashlib.sha256(payload).hexdigest()
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256) or not secrets.compare_digest(actual, sha256):
+        raise HTTPException(status_code=400, detail="sha256 mismatch")
+    if filename == "index.m3u8":
+        validate_manifest(payload)
+    root = generation_root(client_id, generation_id)
+    root.mkdir(parents=True, exist_ok=True)
+    target = root / filename
+    temporary = root / f".{filename}.{secrets.token_hex(8)}.tmp"
+    with open(temporary, "xb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, target)
+    return target
+
+
+def delete_generation_files(client_id: int, generation_id: str) -> None:
+    root = generation_root(client_id, generation_id)
+    if not root.exists():
+        return
+    for item in root.iterdir():
+        if item.is_file() and not item.is_symlink():
+            item.unlink(missing_ok=True)
+    try:
+        root.rmdir()
+    except OSError:
+        pass
+
+
+def maybe_recover_stale_media(db: Session, client_id: int) -> bool:
+    generation = current_generation(db, client_id)
+    if generation is None or generation.state not in {"starting", "running"}:
+        return False
+    reference = generation.last_upload_at or generation.started_at or generation.created_at
+    if utcnow() - _as_utc(reference) <= timedelta(seconds=settings.media_stale_seconds):
+        return False
+    pending = db.scalar(
+        select(ClientCommand.id)
+        .where(
+            ClientCommand.client_id == client_id,
+            ClientCommand.domain == DOMAIN,
+            ClientCommand.command_type.in_({"start", "restart", "reset_generation"}),
+            ClientCommand.state.in_({"queued", "leased"}),
+        )
+        .limit(1)
+    )
+    if pending:
+        return False
+    recent_recoveries = db.scalars(
+        select(LivestreamGeneration.id).where(
+            LivestreamGeneration.client_id == client_id,
+            LivestreamGeneration.requested_action == "reset_generation",
+            LivestreamGeneration.created_at >= utcnow() - timedelta(minutes=10),
+        )
+    ).all()
+    if len(recent_recoveries) >= 3:
+        generation.state = "failed"
+        generation.error_code = "media_stalled"
+        enqueue_command(db, client_id=client_id, command_type="stop", payload={})
+        return True
+    request_reset_generation(db, client_id)
+    return True
