@@ -7,15 +7,20 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class WebSocketArchitectureContractTests(unittest.TestCase):
-    def test_all_runtime_brokers_use_shared_decoder(self) -> None:
+    def test_all_websocket_runtime_brokers_use_shared_decoder(self) -> None:
         for relative in (
             "backend/service1/routers/terminal.py",
             "backend/service1/routers/remote_desktop_v2.py",
-            "backend/service1/routers/livestream.py",
         ):
             with self.subTest(relative=relative):
                 source = (ROOT / relative).read_text(encoding="utf-8")
                 self.assertIn("decode_json_message", source)
+
+
+    def test_livestream_v2_is_http_control_plane_not_websocket_broker(self) -> None:
+        source = (ROOT / "backend/service1/routers/livestream_v2.py").read_text(encoding="utf-8")
+        self.assertNotIn("@router.websocket(", source)
+        self.assertNotIn("decode_json_message", source)
 
     def test_terminal_has_explicit_agent_and_browser_routes(self) -> None:
         source = (ROOT / "backend/service1/routers/terminal.py").read_text(encoding="utf-8")

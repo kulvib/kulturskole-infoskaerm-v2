@@ -14,6 +14,10 @@ os.environ.setdefault("FRONTEND_URL", "http://localhost:5173")
 os.environ.setdefault("PASSWORD_RESET_FRONTEND_URL", "http://localhost:5173")
 os.environ.setdefault("CORS_ALLOW_ORIGINS", "http://localhost:5173")
 os.environ.setdefault("HLS_BASE_DIR", "/tmp/planiq-display-ci-hls")
+os.environ.setdefault(
+    "LIVESTREAM_V2_CREDENTIAL_PEPPER",
+    "ci-only-livestream-v2-credential-pepper-at-least-thirty-two-chars",
+)
 
 from fastapi import Request
 from sqlalchemy.pool import StaticPool

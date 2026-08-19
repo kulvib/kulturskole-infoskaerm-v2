@@ -1,22 +1,12 @@
-CI full-suite stale-contract correction
+CI last-3 failures fix
 
-Repo files to commit (7 changed):
-- backend/service1/routers/clients.py
+CHANGED REPO FILES:
 - backend/tests/test_admin_entity_audit_contract.py
-- backend/tests/test_backend_cleanup_contract.py
-- backend/tests/test_client_runtime_contract.py
-- backend/tests/test_migration_baseline_adoption.py
-- backend/tests/test_season_contract.py
-- backend/tests/test_step_33b_contract.py
+  Adds deterministic test-only LIVESTREAM_V2_CREDENTIAL_PEPPER so canonical enrollment claim tests exercise atomicity/audit instead of failing on missing environment configuration.
+- backend/tests/test_websocket_architecture_contract.py
+  Removes stale legacy routers/livestream.py WebSocket expectation; Terminal and Remote Desktop remain the WebSocket brokers using the shared decoder. Adds an explicit contract that Livestream v2 is an HTTP control plane, not a WebSocket broker.
 
-Summary:
-- Remove stale Livestream desired/stop fields from generic client self-update allowlist.
-- Update admin audit fixtures to canonical isolated Terminal/RD provisioning and 50A enrollment request contract.
-- Update cleanup tests to canonical Livestream v2 no-server-reset browser behavior.
-- Treat Livestream desired/stop fields as backend-owned state, not generic ClientUpdate/self-report fields.
-- Update migration-baseline test mocks/expected preserved tables for reviewed 50A canonical foundations.
-- Make season endpoint tests deterministic by pinning the test clock to 2026-07-14 around 2025/2026 operations.
-- Update Step33B contract tests to current Terminal/RD auth helpers and Livestream v2 files/lifecycle constants.
+DELETE FILES:
+- None
 
-No migration/runtime/systemd/frozen-domain implementation changes are included.
-CHANGE_SUMMARY.txt and DELETE_FILES.txt are helper files only and should not be committed.
+Do not commit CHANGE_SUMMARY.txt or DELETE_FILES.txt.
