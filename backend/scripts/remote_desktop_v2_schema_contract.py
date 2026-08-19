@@ -36,7 +36,7 @@ REMOTE_DESKTOP_V2_COLUMNS = {
 }
 
 REMOTE_DESKTOP_V2_CONSTRAINTS = {
-    "ck_remote_desktop_client_status": "CHECK (status::text = ANY (ARRAY['approved'::character varying, 'disabled'::character varying]::text[]))",
+    "ck_remote_desktop_client_status": "CHECK (status::text = ANY (ARRAY['approved'::character varying::text, 'disabled'::character varying::text]))",
     "remote_desktop_client_pkey": "PRIMARY KEY (id)",
     "ck_remote_desktop_credential_token_version": "CHECK (token_version >= 0)",
     "remote_desktop_credential_client_id_fkey": "FOREIGN KEY (client_id) REFERENCES remote_desktop_client(id)",

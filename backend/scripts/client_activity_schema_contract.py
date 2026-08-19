@@ -16,7 +16,7 @@ CLIENT_ACTIVITY_COLUMNS = {
 }
 
 CLIENT_ACTIVITY_CONSTRAINTS = {
-    "ck_client_activity_lease_domain": "CHECK (domain::text = ANY (ARRAY['terminal'::character varying, 'remote_desktop'::character varying]::text[]))",
+    "ck_client_activity_lease_domain": "CHECK (domain::text = ANY (ARRAY['terminal'::character varying::text, 'remote_desktop'::character varying::text]))",
     "client_activity_lease_client_id_fkey": "FOREIGN KEY (client_id) REFERENCES client(id)",
     "client_activity_lease_pkey": "PRIMARY KEY (id)",
     "uq_client_activity_lease_client_domain_session": "UNIQUE (client_id, domain, session_id)",

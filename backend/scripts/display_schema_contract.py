@@ -960,5 +960,6 @@ for _retired_column in (
     _client_columns.pop(_retired_column, None)
 EXPECTED_COLUMNS["client"] = _client_columns
 EXPECTED_CONSTRAINTS.update(CANONICAL_FOUNDATION_CONSTRAINTS)
+EXPECTED_CONSTRAINTS["users_role_check"] = "CHECK (role::text = ANY (ARRAY['superadmin'::character varying::text, 'admin'::character varying::text, 'bruger'::character varying::text, 'viewer'::character varying::text]))"
 EXPECTED_INDEXES.update(CANONICAL_FOUNDATION_INDEXES)
-EXPECTED_FINGERPRINT = "1f6b05670c0a5334b2e8615e512c93ddc611946cf0ffb588a58b5d91178a2f0e"
+EXPECTED_FINGERPRINT = "ecfdf8c5259574bba614060639b243533dd44f322e87249104f0ef3488603bdb"

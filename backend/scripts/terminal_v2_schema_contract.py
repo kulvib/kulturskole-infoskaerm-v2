@@ -82,7 +82,7 @@ TERMINAL_V2_COLUMNS = {
 }
 
 TERMINAL_V2_CONSTRAINTS = {
-    "ck_terminal_client_status": "CHECK (status::text = ANY (ARRAY['approved'::character varying, 'disabled'::character varying]::text[]))",
+    "ck_terminal_client_status": "CHECK (status::text = ANY (ARRAY['approved'::character varying::text, 'disabled'::character varying::text]))",
     "terminal_client_pkey": "PRIMARY KEY (id)",
     "ck_terminal_credential_token_version": "CHECK (token_version >= 0)",
     "terminal_credential_client_id_fkey": "FOREIGN KEY (client_id) REFERENCES terminal_client(id)",
@@ -103,8 +103,8 @@ TERMINAL_V2_CONSTRAINTS = {
     "root_terminal_grant_user_id_fkey": 'FOREIGN KEY (user_id) REFERENCES "user"(id)',
     "uq_root_terminal_grant_session": "UNIQUE (terminal_session_id)",
     "ck_terminal_session_expiry_order": "CHECK (expires_at > created_at)",
-    "ck_terminal_session_privilege": "CHECK (privilege_level::text = ANY (ARRAY['standard'::character varying, 'root'::character varying]::text[]))",
-    "ck_terminal_session_status": "CHECK (status::text = ANY (ARRAY['requested'::character varying, 'authorized'::character varying, 'connected'::character varying, 'disconnected'::character varying, 'expired'::character varying, 'revoked'::character varying, 'failed'::character varying]::text[]))",
+    "ck_terminal_session_privilege": "CHECK (privilege_level::text = ANY (ARRAY['standard'::character varying::text, 'root'::character varying::text]))",
+    "ck_terminal_session_status": "CHECK (status::text = ANY (ARRAY['requested'::character varying::text, 'authorized'::character varying::text, 'connected'::character varying::text, 'disconnected'::character varying::text, 'expired'::character varying::text, 'revoked'::character varying::text, 'failed'::character varying::text]))",
     "terminal_session_client_id_fkey": "FOREIGN KEY (client_id) REFERENCES terminal_client(id)",
     "terminal_session_pkey": "PRIMARY KEY (id)",
     "terminal_session_requested_by_user_id_fkey": 'FOREIGN KEY (requested_by_user_id) REFERENCES "user"(id)',

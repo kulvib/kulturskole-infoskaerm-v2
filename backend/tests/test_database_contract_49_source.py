@@ -77,3 +77,40 @@ def test_head_contract_promotes_adopted_runtime_tables_out_of_opaque_preservatio
     assert "- ADOPTED_RUNTIME_TABLES" in runner
     assert "- CANONICAL_FOUNDATION_TABLES" in runner
     assert "_without_adopted_runtime_schema" in runner
+
+
+
+def test_catalog_contract_uses_postgresql_canonical_array_check_rendering():
+    sources = "\n".join(
+        read(path)
+        for path in (
+            "scripts/display_schema_contract.py",
+            "scripts/client_activity_schema_contract.py",
+            "scripts/remote_desktop_v2_schema_contract.py",
+            "scripts/terminal_v2_schema_contract.py",
+            "scripts/adopted_runtime_schema_contract.py",
+        )
+    )
+
+    for snippet in (
+        "'superadmin'::character varying::text",
+        "'terminal'::character varying::text",
+        "'approved'::character varying::text",
+        "'standard'::character varying::text",
+        "'requested'::character varying::text",
+        "'queued'::character varying::text",
+        "'cancelled'::character varying::text",
+    ):
+        assert snippet in sources
+
+    for constraint in (
+        "users_role_check",
+        "ck_client_activity_lease_domain",
+        "ck_remote_desktop_client_status",
+        "ck_remote_desktop_session_status",
+        "ck_terminal_client_status",
+        "ck_terminal_session_privilege",
+        "ck_terminal_session_status",
+        "ck_client_command_status",
+    ):
+        assert constraint in sources
