@@ -32,7 +32,7 @@ RUNTIME_FIELDS = {
     "client_update_reason",
 }
 
-LIVESTREAM_RUNTIME_FIELDS = {
+LIVESTREAM_BACKEND_STATE_FIELDS = {
     
     
     "livestream_desired_state",
@@ -61,9 +61,10 @@ class ClientRuntimeContractTests(unittest.TestCase):
         for model in (Client, ClientRead, ClientUpdate):
             self.assertTrue(RUNTIME_FIELDS.issubset(model.model_fields))
         self.assertTrue(CLIENT_REPORTABLE_VERSION_FIELDS.issubset(CLIENT_SELF_UPDATE_FIELDS))
-        for model in (Client, ClientRead, ClientUpdate):
-            self.assertTrue(LIVESTREAM_RUNTIME_FIELDS.issubset(model.model_fields))
-        self.assertTrue(LIVESTREAM_RUNTIME_FIELDS.issubset(CLIENT_SELF_UPDATE_FIELDS))
+        for model in (Client, ClientRead):
+            self.assertTrue(LIVESTREAM_BACKEND_STATE_FIELDS.issubset(model.model_fields))
+        self.assertTrue(LIVESTREAM_BACKEND_STATE_FIELDS.isdisjoint(ClientUpdate.model_fields))
+        self.assertTrue(LIVESTREAM_BACKEND_STATE_FIELDS.isdisjoint(CLIENT_SELF_UPDATE_FIELDS))
         self.assertNotIn("client_update_reason", CLIENT_SELF_UPDATE_FIELDS)
         self.assertNotIn("client_update_allow_downgrade", CLIENT_SELF_UPDATE_FIELDS)
 

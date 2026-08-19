@@ -365,8 +365,6 @@ CLIENT_SELF_UPDATE_FIELDS = {
     "pending_shutdown",
     "pending_chrome_action",
     "pending_chrome_action_source",
-    "livestream_desired_state",
-    "livestream_stop_reason",
     "state",
     "last_boot_id",
     "last_boot_at",

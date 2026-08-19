@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import os
 import unittest
+import uuid
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -39,9 +41,13 @@ from service1.routers.clients import (
     revoke_client_secret,
     rotate_client_secret,
 )
+from service1.enrollment_models import ClientEnrollmentReceipt, ClientSystemEncryptionKey
+from service1.remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
+from service1.terminal_v2_models import TerminalClient, TerminalCredential
 from service1.routers.enrollment import (
     EnrollmentClaimRequest,
     EnrollmentTokenCreate,
+    _derive_resume_proof,
     claim_enrollment_token,
     create_enrollment_token,
     revoke_enrollment_token,
@@ -51,6 +57,33 @@ from service1.routers.organizations import (
     delete_organization,
     update_organization_name,
 )
+
+
+TEST_SYSTEM_PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoia5/Qqkv6PJidOyW+5i
+loeFlY0cp4BWfI0i2jagFRvtp9KYULb13koJGzjK9/rLdHLn2/91bKcXQnZKY6CP
+ICfH5jXoscWXVCxC1DL6pQ/+R9F+lFJ1o5t2Scz52DhyWRY2XnppZ1kICniYc5yX
+KVyrnYG5xNrRMTrb8r7BtDm7I3QwlYl9V96XqdrEEZRAgyZCML9ZbSjHIiI29Hu+
+6q4NSY7CoxAp7oGdNsfhhPqF+Am2AtD8IJALQHWduZK0C74amXPaYNuE+Bl+x25M
+TEHLgOQgYQ07E74f2bpXS9uCQciDLDSgmyGOQkAwrud1nlyYclVY9BafgeSE4nbp
+eQIDAQAB
+-----END PUBLIC KEY-----
+"""
+
+
+def _canonical_enrollment_claim(*, code: str, hostname: str, machine_id: str | None = None) -> EnrollmentClaimRequest:
+    install_id = str(uuid.uuid4())
+    seed = bytes(range(32))
+    seed_b64 = base64.urlsafe_b64encode(seed).rstrip(b"=").decode("ascii")
+    return EnrollmentClaimRequest(
+        enrollment_code=code,
+        install_id=install_id,
+        credential_seed_b64=seed_b64,
+        resume_proof=_derive_resume_proof(seed, install_id),
+        system_encryption_public_key_pem=TEST_SYSTEM_PUBLIC_KEY_PEM,
+        hostname=hostname,
+        machine_id=machine_id,
+    )
 
 
 def _request(method: str = "POST", path: str = "/api/admin-contract") -> Request:
@@ -116,6 +149,20 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
         self.session.refresh(client)
         return client
 
+
+    def _provision_isolated_domains(self, client: Client) -> None:
+        now = utcnow()
+        self.session.add(TerminalClient(id=client.id, display_name=client.name, status="disabled", created_at=now))
+        self.session.add(RemoteDesktopClient(id=client.id, display_name=client.name, status="disabled", created_at=now))
+        self.session.flush()
+        self.session.add(TerminalCredential(
+            id=str(uuid.uuid4()), client_id=client.id, secret_hash="ci-terminal-secret-hash", created_at=now
+        ))
+        self.session.add(RemoteDesktopCredential(
+            id=str(uuid.uuid4()), client_id=client.id, secret_hash="ci-rd-secret-hash", created_at=now
+        ))
+        self.session.commit()
+
     def _audit(self, action: str, entity_id: int) -> AuditLog:
         return self.session.exec(
             select(AuditLog).where(AuditLog.action == action, AuditLog.entity_id == entity_id)
@@ -124,6 +171,7 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_client_approval_rolls_back_status_and_calendar_when_audit_fails(self) -> None:
         client = self._new_client()
         client_id = client.id
+        self._provision_isolated_domains(client)
 
         with patch(
             "service1.routers.clients.add_audit_log",
@@ -210,6 +258,7 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_client_approval_and_calendar_creation_share_one_commit(self) -> None:
         client = self._new_client()
         client_id = client.id
+        self._provision_isolated_domains(client)
 
         approved = await approve_client(
             _request("POST", f"/api/clients/{client_id}/approve"),
@@ -296,8 +345,8 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
 
         response = claim_enrollment_token(
             _request("POST", "/api/enrollment/claim"),
-            EnrollmentClaimRequest(
-                enrollment_code=code,
+            _canonical_enrollment_claim(
+                code=code,
                 hostname="batch4-screen",
                 machine_id="batch4-machine-id",
             ),
@@ -307,6 +356,12 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
         stored_token = self.session.get(EnrollmentToken, token.id)
         stored_client = self.session.get(Client, response.client_id)
         self.assertIsNotNone(stored_client)
+        self.assertIsNotNone(self.session.exec(select(ClientEnrollmentReceipt).where(ClientEnrollmentReceipt.client_id == stored_client.id)).first())
+        self.assertIsNotNone(self.session.exec(select(ClientSystemEncryptionKey).where(ClientSystemEncryptionKey.client_id == stored_client.id)).first())
+        self.assertIsNotNone(self.session.get(TerminalClient, stored_client.id))
+        self.assertIsNotNone(self.session.get(RemoteDesktopClient, stored_client.id))
+        self.assertIsNotNone(self.session.exec(select(TerminalCredential).where(TerminalCredential.client_id == stored_client.id)).first())
+        self.assertIsNotNone(self.session.exec(select(RemoteDesktopCredential).where(RemoteDesktopCredential.client_id == stored_client.id)).first())
         self.assertEqual(stored_token.used_by_client_id, stored_client.id)
         self.assertIsNotNone(stored_token.used_at)
         self.assertEqual(self._audit("client_enrolled", stored_client.id).details["enrollment_token_id"], token.id)
@@ -333,8 +388,8 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "forced-audit-failure"):
                 claim_enrollment_token(
                     _request("POST", "/api/enrollment/claim"),
-                    EnrollmentClaimRequest(
-                        enrollment_code=code,
+                    _canonical_enrollment_claim(
+                        code=code,
                         hostname="must-not-persist",
                     ),
                     self.session,

@@ -34,7 +34,10 @@ class BackendCleanupContractTests(unittest.TestCase):
                 if nested_path:
                     route_paths.add(f"{prefix}{nested_path}")
 
-        self.assertIn("/api/hls/{client_id}/reset", route_paths)
+        self.assertIn("/api/hls/{client_id}/health", route_paths)
+        self.assertIn("/api/hls/{client_id}/last-segment-info", route_paths)
+        self.assertIn("/api/livestream-v2/hls/{client_id}/viewer-heartbeat", route_paths)
+        self.assertNotIn("/api/hls/{client_id}/reset", route_paths)
 
         retired = {
             "/api/clients/{id}/stream",
@@ -45,7 +48,7 @@ class BackendCleanupContractTests(unittest.TestCase):
         }
         self.assertTrue(retired.isdisjoint(route_paths), retired & route_paths)
 
-    def test_frontend_uses_only_canonical_hls_reset_and_no_dead_api_exports(self) -> None:
+    def test_frontend_does_not_reintroduce_server_side_hls_reset_or_dead_api_exports(self) -> None:
         api_source = (REPO_ROOT / "frontend/src/api/api.js").read_text(encoding="utf-8")
         livestream_source = (
             REPO_ROOT / "frontend/src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx"
@@ -54,7 +57,8 @@ class BackendCleanupContractTests(unittest.TestCase):
         self.assertNotIn("export function openTerminal", api_source)
         self.assertNotIn("export function getClientStream", api_source)
         self.assertNotIn("/reset-hls", livestream_source)
-        self.assertIn("/api/hls/${encodeURIComponent(clientId)}/reset", livestream_source)
+        self.assertNotIn("/api/hls/${encodeURIComponent(clientId)}/reset", livestream_source)
+        self.assertIn("Genindlæs kun browserens HLS-player", livestream_source)
 
     def test_enrollment_claim_locks_active_tokens_against_concurrent_reuse(self) -> None:
         enrollment_source = (

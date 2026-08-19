@@ -1,1 +1,1 @@
-# No repository files need deletion for this delta.
+No repo files should be deleted for this delta.

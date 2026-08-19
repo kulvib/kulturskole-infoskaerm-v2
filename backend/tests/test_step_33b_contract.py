@@ -86,8 +86,8 @@ class Step33BContractTests(unittest.TestCase):
         terminal_source = (SERVICE_ROOT / "routers/terminal.py").read_text(encoding="utf-8")
         remote_source = (SERVICE_ROOT / "routers/remote_desktop_v2.py").read_text(encoding="utf-8")
 
-        self.assertIn("authenticate_browser_websocket", terminal_source)
-        self.assertIn("extract_agent_ws_token", terminal_source)
+        self.assertIn("authenticate_terminal_browser_websocket_with_context", terminal_source)
+        self.assertIn("extract_terminal_agent_ws_token", terminal_source)
         self.assertIn("await websocket.accept(subprotocol=selected_subprotocol)", terminal_source)
 
         self.assertIn("authenticate_browser_websocket", remote_source)
@@ -103,27 +103,27 @@ class Step33BContractTests(unittest.TestCase):
         frontend_source = (
             REPO_ROOT / "frontend/src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx"
         ).read_text(encoding="utf-8")
-        backend_source = (SERVICE_ROOT / "routers/livestream.py").read_text(encoding="utf-8")
-        render_source = (REPO_ROOT / "render.yaml").read_text(encoding="utf-8")
+        backend_source = (SERVICE_ROOT / "livestream_v2.py").read_text(encoding="utf-8")
 
         self.assertIn("HIDDEN_INACTIVITY_STOP_MS = 3 * 60 * 1000", frontend_source)
         self.assertIn("Siden har ikke været besøgt i 3 min.", frontend_source)
         self.assertIn("HLS_INITIAL_MANIFEST_SEGMENTS = 2", frontend_source)
-        self.assertIn('HLS_VIEWER_HEARTBEAT_TIMEOUT_SECONDS", "180"', backend_source)
-        self.assertIn("HLS_VIEWER_HEARTBEAT_TIMEOUT_SECONDS", render_source)
-        self.assertIn('value: "180"', render_source)
+        self.assertIn('LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS", "10"', backend_source)
+        self.assertIn('LIVESTREAM_V2_VIEWER_LEASE_SECONDS", "30"', backend_source)
+        self.assertIn('LIVESTREAM_V2_VIEWER_STOP_GRACE_SECONDS", "30"', backend_source)
 
     def test_websocket_and_hls_errors_are_neutral(self) -> None:
         terminal_source = (SERVICE_ROOT / "routers/terminal.py").read_text(encoding="utf-8")
         remote_source = (SERVICE_ROOT / "routers/remote_desktop_v2.py").read_text(encoding="utf-8")
-        livestream_source = (SERVICE_ROOT / "routers/livestream.py").read_text(encoding="utf-8")
+        livestream_source = (SERVICE_ROOT / "routers/livestream_v2.py").read_text(encoding="utf-8")
 
         self.assertNotIn('"message": str(exc)', terminal_source)
         self.assertNotIn("repr(exc)", terminal_source)
         self.assertNotIn("repr(exc)", remote_source)
         self.assertNotIn("traceback.format_exc", remote_source)
-        self.assertNotIn("reset failed:", livestream_source)
-        self.assertIn('"message": "reset failed"', livestream_source)
+        self.assertNotIn('"message": str(exc)', livestream_source)
+        self.assertNotIn("repr(exc)", livestream_source)
+        self.assertNotIn("traceback.format_exc", livestream_source)
 
 
 if __name__ == "__main__":

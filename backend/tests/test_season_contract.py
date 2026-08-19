@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 from datetime import date, datetime
 
 from fastapi import HTTPException, Request
@@ -253,14 +254,15 @@ class SeasonContractTests(unittest.TestCase):
                 "monday": {"status": "on", "onTime": "08:00", "offTime": "19:00"},
                 "tuesday": {"status": "on", "onTime": "08:30", "offTime": "19:30"},
             }
-            result = apply_organization_season_times(
-                _request(f"/api/organizations/{organization.id}/apply-season-times/2025/2026"),
-                organization.id,
-                "2025/2026",
-                OrganizationTimesUpdate(day_times=new_times),
-                session,
-                admin,
-            )
+            with patch("service1.season_service.today_copenhagen", return_value=date(2026, 7, 14)):
+                result = apply_organization_season_times(
+                    _request(f"/api/organizations/{organization.id}/apply-season-times/2025/2026"),
+                    organization.id,
+                    "2025/2026",
+                    OrganizationTimesUpdate(day_times=new_times),
+                    session,
+                    admin,
+                )
 
             stored_times = session.exec(
                 select(OrganizationSeasonTimes).where(
@@ -330,31 +332,32 @@ class SeasonContractTests(unittest.TestCase):
                 **SYSTEM_DEFAULT_DAY_TIMES,
                 "monday": {"status": "on", "onTime": "07:00", "offTime": "17:00"},
             }
-            with self.assertRaises(HTTPException) as raised:
-                replace_organization_season_calendars(
+            with patch("service1.season_service.today_copenhagen", return_value=date(2026, 7, 14)):
+                with self.assertRaises(HTTPException) as raised:
+                    replace_organization_season_calendars(
+                        _request(f"/api/organizations/{organization.id}/replace-season-calendars/2025/2026"),
+                        organization.id,
+                        "2025/2026",
+                        OrganizationSeasonTimesReplace(
+                            day_times=replacement_times,
+                            confirmation="forkert",
+                        ),
+                        session,
+                        admin,
+                    )
+                self.assertEqual(raised.exception.status_code, 400)
+
+                result = replace_organization_season_calendars(
                     _request(f"/api/organizations/{organization.id}/replace-season-calendars/2025/2026"),
                     organization.id,
                     "2025/2026",
                     OrganizationSeasonTimesReplace(
                         day_times=replacement_times,
-                        confirmation="forkert",
+                        confirmation="OVERSKRIV",
                     ),
                     session,
                     admin,
                 )
-            self.assertEqual(raised.exception.status_code, 400)
-
-            result = replace_organization_season_calendars(
-                _request(f"/api/organizations/{organization.id}/replace-season-calendars/2025/2026"),
-                organization.id,
-                "2025/2026",
-                OrganizationSeasonTimesReplace(
-                    day_times=replacement_times,
-                    confirmation="OVERSKRIV",
-                ),
-                session,
-                admin,
-            )
             calendar = session.exec(
                 select(CalendarMarking).where(
                     CalendarMarking.client_id == client.id,

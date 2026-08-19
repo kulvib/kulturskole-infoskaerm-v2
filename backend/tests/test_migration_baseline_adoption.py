@@ -286,6 +286,8 @@ class BaselineAdoptionTests(unittest.TestCase):
                     return Revision(runner.REVIEWED_CLIENT_ACTIVITY_REVISION)
                 if revision == runner.REVIEWED_DATABASE_CONTRACT_REVISION:
                     return Revision(runner.REVIEWED_LIFECYCLE_REVISION)
+                if revision == runner.REVIEWED_CANONICAL_FOUNDATIONS_REVISION:
+                    return Revision(runner.REVIEWED_DATABASE_CONTRACT_REVISION)
                 raise AssertionError(f"unexpected revision lookup: {revision}")
 
         def verify(_connection, **kwargs):
@@ -451,8 +453,6 @@ class BaselineAdoptionTests(unittest.TestCase):
             runner.HEAD_LEGACY_PRESERVED_TABLES,
             frozenset({
                 "browser_websocket_ticket",
-                "client_enrollment_receipt",
-                "client_system_encryption_key",
                 "livestream_generation",
             }),
         )
@@ -683,6 +683,8 @@ class BaselineAdoptionTests(unittest.TestCase):
                     return Revision(runner.REVIEWED_CLIENT_ACTIVITY_REVISION)
                 if revision == runner.REVIEWED_DATABASE_CONTRACT_REVISION:
                     return Revision(runner.REVIEWED_LIFECYCLE_REVISION)
+                if revision == runner.REVIEWED_CANONICAL_FOUNDATIONS_REVISION:
+                    return Revision(runner.REVIEWED_DATABASE_CONTRACT_REVISION)
                 raise AssertionError(f"unexpected revision lookup: {revision}")
 
         with patch.object(
