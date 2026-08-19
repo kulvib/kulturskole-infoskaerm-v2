@@ -1,24 +1,25 @@
-ClientFlow CI + smoke delta package
+CI failure remediation delta for branch agent/shared-foundations-canonicalization
 
-Apply from repository root:
-1. Extract this zip over the repository root (overwrite existing files).
-2. Delete every path listed in DELETE_FILES.txt.
-3. Do not commit DELETE_FILES.txt or CHANGE_SUMMARY.txt.
+NEW:
+- ruff.toml
 
-Added files: 5
-  + .github/workflows/ci.yml
-  + .github/workflows/deployment-smoke.yml
-  + backend/.python-version
-  + frontend/.node-version
-  + scripts/tests/test_github_workflow_contract.py
+MODIFIED:
+- backend/service1/client_domain_models.py
+- backend/service1/routers/clients.py
+- backend/service1/routers/enrollment.py
+- backend/service1/shared_domain.py
+- backend/tests/test_backend_cleanup_contract.py
+- frontend/dependency-audit-allowlist.json
+- frontend/package-lock.json
+- frontend/package.json
+- frontend/tests/dependencyRuntime.test.mjs
 
-Changed files: 6
-  M CLIENTFLOW_RELEASE_PROCEDURE.md
-  M DEPENDENCY_MAINTENANCE.md
-  M README.md
-  M backend/tests/test_shared_domain_control_plane_contract.py
-  M requirements-ci.lock.txt
-  M requirements-ci.txt
+Purpose:
+- Keep full Ruff F-family enforcement while exempting F401 only in the two physically validated FROZEN Livestream files.
+- Remove seven unused imports from shared/non-frozen backend code.
+- Fix stale CI cleanup test reference to non-existent scripts/ci_validate_repository.py.
+- Remediate actionable frontend advisories with compatible patched dependency versions.
+- Upgrade react-router-dom to 7.18.2 and lock react-router 7.18.2.
+- Keep Nano ID 3.3.16 behind one documented temporary advisory exception because it remains a PostCSS transitive dependency and the GitHub advisory is unreviewed/unmapped to an actionable npm range.
 
-Deleted files: 1
-  - backend/tests/test_canonical_foundations_50_source_fixed.py
+Do NOT commit CHANGE_SUMMARY.txt or DELETE_FILES.txt.

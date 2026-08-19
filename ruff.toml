@@ -1,0 +1,10 @@
+# Repo-wide Ruff configuration.
+#
+# Livestream is a physically validated FROZEN domain. Its existing unused imports
+# are intentionally not changed as part of CI/bootstrap cleanup; all other F rules
+# remain enforced. Remove these exemptions only when Livestream is legitimately
+# opened with its required physical regression test.
+
+[lint.per-file-ignores]
+"backend/service1/livestream_v2.py" = ["F401"]
+"backend/service1/routers/livestream_v2.py" = ["F401"]

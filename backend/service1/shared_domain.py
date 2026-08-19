@@ -13,7 +13,7 @@ import uuid
 from typing import Any
 
 import jwt
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from .auth import SECRET_KEY, verify_password

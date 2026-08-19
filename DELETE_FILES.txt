@@ -1,5 +1,3 @@
-DELETE THESE FILES FROM THE REPOSITORY AFTER APPLYING THIS DELTA:
+Ingen filer skal slettes i denne delta.
 
-backend/tests/test_canonical_foundations_50_source_fixed.py
-
-This file is informational and should NOT be committed to the repository.
+Do NOT commit this helper file.

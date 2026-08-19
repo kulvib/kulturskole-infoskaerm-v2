@@ -66,15 +66,20 @@ class BackendCleanupContractTests(unittest.TestCase):
             enrollment_source.index("token.used_at = now"),
         )
 
-    def test_ci_checks_the_complete_ruff_f_family(self) -> None:
+    def test_ci_checks_the_complete_ruff_f_family_with_only_frozen_livestream_exemptions(self) -> None:
         workflow = (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        validator = (REPO_ROOT / "scripts/ci_validate_repository.py").read_text(encoding="utf-8")
         dependency_validator = (REPO_ROOT / "scripts/validate_dependency_contract.py").read_text(encoding="utf-8")
+        ruff_config = (REPO_ROOT / "ruff.toml").read_text(encoding="utf-8")
 
         required = "python -m ruff check backend/service1 backend/scripts scripts --select F"
-        for source in (workflow, validator, dependency_validator):
+        for source in (workflow, dependency_validator):
             self.assertIn(required, source)
             self.assertNotIn("--select F821,F822,F823", source)
+            self.assertNotIn("--ignore F401", source)
+
+        self.assertIn('"backend/service1/livestream_v2.py" = ["F401"]', ruff_config)
+        self.assertIn('"backend/service1/routers/livestream_v2.py" = ["F401"]', ruff_config)
+        self.assertNotIn('ignore = ["F401"]', ruff_config)
 
 
 if __name__ == "__main__":

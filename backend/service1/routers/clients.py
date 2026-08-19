@@ -2,17 +2,16 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Body, Request
 from pydantic import BaseModel, Field as PydanticField
-from sqlmodel import select, delete
+from sqlmodel import select
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 from ..db import get_session
 from ..audit import add_audit_log
-from ..models import Client, ClientRead, ClientCreate, ClientUpdate, CalendarMarking, ChromeAction, Organization, EnrollmentToken
+from ..models import Client, ClientRead, ClientCreate, ClientUpdate, CalendarMarking, ChromeAction, Organization
 from ..auth import get_current_user, get_current_admin_user, get_current_superadmin_user, get_current_user_or_client, require_client_self_or_user, principal_is_client, get_password_hash, validate_password_strength
 from ..models import utcnow
 from ..observability import log_safe_exception
 from ..lifecycle import prepare_client_for_permanent_delete
-from ..livestream_v2 import request_start as request_livestream_v2_start, request_stop as request_livestream_v2_stop
 from ..terminal_v2_models import TerminalClient, TerminalCredential
 from ..remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
 from ..season_service import (

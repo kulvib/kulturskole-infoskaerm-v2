@@ -1,3 +1,13 @@
 {
-  "exceptions": []
+  "exceptions": [
+    {
+      "package": "nanoid",
+      "advisories": [
+        "GHSA-2v37-7h3g-55p8"
+      ],
+      "expires": "2026-09-30",
+      "scope": "Transitive build dependency via PostCSS only; ClientFlow frontend does not call Nano ID APIs directly.",
+      "replacementPlan": "Re-evaluate the maintained Nano ID 3.3.x line and PostCSS dependency before expiry; remove this exception as soon as upstream publishes a compatible fixed 3.x release or npm maps the advisory to an actionable package range."
+    }
+  ]
 }
