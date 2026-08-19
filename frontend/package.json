@@ -1,0 +1,56 @@
+{
+  "name": "kulturskole-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@emotion/react": "11.14.0",
+    "@emotion/styled": "11.14.1",
+    "@hello-pangea/dnd": "18.0.1",
+    "@mui/icons-material": "9.2.0",
+    "@mui/material": "9.2.0",
+    "@mui/x-date-pickers": "9.9.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "date-fns": "4.4.0",
+    "hls.js": "^1.5.7",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-router-dom": "6.30.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@vitejs/plugin-react": "6.0.3",
+    "eslint": "9.39.5",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "15.14.0",
+    "vite": "8.1.4"
+  },
+  "scripts": {
+    "dev": "vite",
+    "start": "vite",
+    "build": "vite build && node scripts/checkBundleBudget.mjs --dist dist && node scripts/writeReleaseMetadata.mjs --product \"PlanIQ Display\" --output dist/release.json",
+    "preview": "vite preview",
+    "test:api-error": "node --test tests/apiError.test.mjs",
+    "test:calendar-auth-client": "node --test tests/calendarAuthClient.test.mjs",
+    "lint": "eslint . --max-warnings=0",
+    "test:remote-desktop-urls": "node --test tests/remoteDesktopUrls.test.mjs",
+    "test:browser-websocket-transport": "node --test tests/browserWebSocketTransport.test.mjs",
+    "audit:dependencies": "node scripts/auditDependencies.mjs",
+    "test:dependency-runtime": "node --test tests/dependencyRuntime.test.mjs",
+    "test:release-metadata": "node --test tests/releaseMetadata.test.mjs",
+    "test:bundle-budget": "node --test tests/bundleBudget.test.mjs",
+    "test:runtime-status": "node --test tests/runtimeStatus.test.mjs",
+    "test:backend-cleanup": "node --test tests/backendCleanupContract.test.mjs",
+    "test:clientflow-version-catalog": "node --test tests/clientflowVersionCatalog.test.mjs",
+    "test:season-contract": "node --test tests/seasonContract.test.mjs",
+    "test:mui-react-upgrade": "node --test tests/muiReactUpgrade.test.mjs",
+    "test:snackbar-contract": "node --test tests/snackbarContract.test.mjs",
+    "test:livestream-stability": "node --test tests/livestreamStabilityContract.test.mjs",
+    "test:remote-desktop-keyboard": "node --test tests/remoteDesktopKeyboardMapping.test.mjs"
+  },
+  "engines": {
+    "node": "22.22.0",
+    "npm": "10.9.4"
+  },
+  "packageManager": "npm@10.9.4"
+}
