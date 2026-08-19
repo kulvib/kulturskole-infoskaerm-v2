@@ -264,6 +264,39 @@ def _normalise(value: str | None) -> str | None:
     return re.sub(r"\s+", " ", value.strip())
 
 
+def _normalise_constraint(value: str | None) -> str | None:
+    """Normalise PostgreSQL-equivalent constraint deparsing across majors.
+
+    PostgreSQL can deparse ``text = ANY(text[])`` constants either by casting
+    each varchar literal to text or by casting the completed varchar array to
+    ``text[]``.  Those forms are semantically identical, but a byte-for-byte
+    catalog comparison would treat them as drift.  Keep this deliberately
+    narrow to CHECK/ANY/ARRAY renderings so meaningful constraint differences
+    still fail closed.
+    """
+    normalised = _normalise(value)
+    if (
+        normalised is None
+        or not normalised.startswith("CHECK (")
+        or " = ANY (ARRAY[" not in normalised
+    ):
+        return normalised
+
+    string_literal = r"('(?:''|[^'])*')"
+    normalised = re.sub(
+        string_literal + r"::character varying::text",
+        r"\1",
+        normalised,
+    )
+    normalised = re.sub(
+        string_literal + r"::character varying",
+        r"\1",
+        normalised,
+    )
+    normalised = re.sub(r"(ARRAY\[[^\]]*\])::text\[\]", r"\1", normalised)
+    return normalised
+
+
 def _catalog_snapshot(connection) -> dict:
     tables = {
         row[0]
@@ -289,6 +322,7 @@ def _catalog_snapshot(connection) -> dict:
         }
     constraint_rows = list(connection.execute(text("""
         SELECT c.conname AS constraint_name,
+               c.contype AS constraint_type,
                pg_get_constraintdef(c.oid, true) AS definition,
                rel.relname AS table_name
         FROM pg_constraint c
@@ -300,11 +334,13 @@ def _catalog_snapshot(connection) -> dict:
         row.constraint_name: _normalise(row.definition)
         for row in constraint_rows
         if row.constraint_name != "alembic_version_pkc"
+        and row.constraint_type != "n"
     }
     constraint_tables = {
         row.constraint_name: row.table_name
         for row in constraint_rows
         if row.constraint_name != "alembic_version_pkc"
+        and row.constraint_type != "n"
     }
 
     index_rows = list(connection.execute(text(
@@ -357,6 +393,7 @@ def _catalog_snapshot(connection) -> dict:
             (row.constraint_name, _normalise(row.definition), row.table_name)
             for row in constraint_rows
             if row.constraint_name != "alembic_version_pkc"
+            and row.constraint_type != "n"
         ],
         "indexes": indexes,
         "index_tables": index_tables,
@@ -635,7 +672,7 @@ def _verify_schema(
         changed = {
             name: {"expected": expected[name], "actual": actual[name]}
             for name in sorted(set(expected) & set(actual))
-            if _normalise(expected[name]) != _normalise(actual[name])
+            if _normalise_constraint(expected[name]) != _normalise_constraint(actual[name])
         }
         if missing or extra or changed:
             raise RuntimeError(

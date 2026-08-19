@@ -1,16 +1,16 @@
-CI second failure fix delta
+CI PostgreSQL 18 migration-verifier fix
 
-CHANGED FILES:
-- backend/migrations/versions/20260712_30d_display_base_frozen_display_baseline.py
-  * organizationlogo.organization_id now explicitly autoincrement=False so the frozen baseline does not create an unintended SERIAL sequence/default on fresh PostgreSQL databases.
-- backend/tests/test_database_contract_49_source.py
-  * adds a source contract test locking the non-autoincrement organizationlogo baseline invariant.
-- frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx
-  * removes two stale/undefined Livestream dependency-array identifiers.
-- frontend/src/pages/clientdetailspage/remotedesktop/RemoteDesktop.jsx
-  * adds the actually-used stable clearTransferFiles callback to useCallback dependencies.
+CHANGED:
+- backend/scripts/run_migrations.py
+  - filters PostgreSQL 18 contype='n' NOT NULL catalog rows from constraint comparison
+    because column nullability is already verified via information_schema.columns
+  - normalizes the two semantically equivalent PostgreSQL ANY(ARRAY[...]) text-cast renderings
+    before exact constraint comparison
 
-DELETE FILES:
-- none
+ADDED:
+- backend/tests/test_migration_catalog_normalization.py
+  - proves PG17/PG18 ANY-array renderings normalize equally
+  - proves a real membership change still compares unequal
+  - locks the PostgreSQL 18 NOT NULL filtering contract
 
-Do not commit CHANGE_SUMMARY.txt or DELETE_FILES.txt.
+No migrations, ORM models, runtime, systemd units, or frozen-domain implementation changed.
