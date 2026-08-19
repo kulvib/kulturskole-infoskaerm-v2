@@ -18,6 +18,11 @@ os.environ.setdefault(
     "LIVESTREAM_V2_CREDENTIAL_PEPPER",
     "ci-only-livestream-v2-credential-pepper-at-least-thirty-two-chars",
 )
+os.environ.setdefault(
+    "CLIENTFLOW_ROOT_TERMINAL_KEY_B64",
+    "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+)
+os.environ.setdefault("CLIENTFLOW_ROOT_TERMINAL_KEY_ID", "ci-root-terminal-key-v1")
 
 from fastapi import Request
 from sqlalchemy.pool import StaticPool

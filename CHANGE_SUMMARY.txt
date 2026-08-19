@@ -1,15 +1,9 @@
-CI enrollment issuer contract fix
+CI root-terminal enrollment test fixture fix
 
-Root cause:
-Canonical enrollment required all six ClientFlow domains to share one token issuer, but the active source/deployment contracts intentionally retain different issuers (Livestream: clientflow-api; shared/Terminal/RD: planiq-display-api). The client runtime already stores/verifies token_issuer per domain credential.
-
-Changed repo files:
-- backend/service1/routers/enrollment.py
-- client/release/lib/clientflow_release/enrollment.py
+CHANGED:
 - backend/tests/test_admin_entity_audit_contract.py
-- backend/tests/test_enrollment_issuer_contract.py (new)
+  Adds deterministic test-only CLIENTFLOW_ROOT_TERMINAL_KEY_B64 and
+  CLIENTFLOW_ROOT_TERMINAL_KEY_ID values so the canonical enrollment claim
+  can reach the atomicity/audit assertions while production remains fail-closed.
 
-No files must be deleted.
-No runtime domain implementation, render.yaml, migrations or systemd files are changed.
-
-Do not commit CHANGE_SUMMARY.txt or DELETE_FILES.txt.
+No production/runtime/migration/systemd/domain implementation files changed.
