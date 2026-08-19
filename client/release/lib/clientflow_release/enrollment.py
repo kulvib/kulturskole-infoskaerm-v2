@@ -162,12 +162,18 @@ def claim(
         **facts,
     }
     response = _post_json(f"{backend}/api/enrollment/claim", payload, ca_file=ca_file)
-    required = {"client_id", "token_issuer", "credentials", "root_terminal_broker", "system_encryption_key_id"}
+    required = {"client_id", "credentials", "root_terminal_broker", "system_encryption_key_id"}
     if not required.issubset(response):
         raise EnrollmentError("Enrollment-responsen mangler obligatoriske felter")
     rows = response.get("credentials")
     if not isinstance(rows, list) or {str(row.get("domain")) for row in rows if isinstance(row, dict)} != set(DOMAIN_NAMES):
         raise EnrollmentError("Enrollment-responsen mangler de seks domænecredentials")
+    for row in rows:
+        if not isinstance(row, dict):
+            raise EnrollmentError("Enrollment-responsen indeholder en ugyldig domænecredential")
+        token_issuer = str(row.get("token_issuer") or "").strip()
+        if not token_issuer or len(token_issuer) > 200:
+            raise EnrollmentError("Enrollment-responsen mangler token issuer for et domæne")
     return response
 
 
@@ -182,13 +188,15 @@ def persist_enrollment(
     tls_ca_file: str | None = None,
 ) -> None:
     client_id = int(response["client_id"])
-    token_issuer = str(response["token_issuer"])
     credentials_root = etc_root / "credentials"
     ensure_real_directory(etc_root, mode=0o750)
     ensure_real_directory(credentials_root, mode=0o700)
     for row in response["credentials"]:
         domain = str(row["domain"])
         credential_id = str(uuid.UUID(str(row["credential_id"])))
+        token_issuer = str(row.get("token_issuer") or "").strip()
+        if not token_issuer or len(token_issuer) > 200:
+            raise EnrollmentError(f"Enrollment credential for {domain} mangler token issuer")
         secret = derive_domain_secret(seed, client_id=client_id, credential_id=credential_id, domain=domain)
         credential = {
             "schema_version": 1,

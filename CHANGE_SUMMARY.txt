@@ -1,12 +1,15 @@
-CI last-3 failures fix
+CI enrollment issuer contract fix
 
-CHANGED REPO FILES:
+Root cause:
+Canonical enrollment required all six ClientFlow domains to share one token issuer, but the active source/deployment contracts intentionally retain different issuers (Livestream: clientflow-api; shared/Terminal/RD: planiq-display-api). The client runtime already stores/verifies token_issuer per domain credential.
+
+Changed repo files:
+- backend/service1/routers/enrollment.py
+- client/release/lib/clientflow_release/enrollment.py
 - backend/tests/test_admin_entity_audit_contract.py
-  Adds deterministic test-only LIVESTREAM_V2_CREDENTIAL_PEPPER so canonical enrollment claim tests exercise atomicity/audit instead of failing on missing environment configuration.
-- backend/tests/test_websocket_architecture_contract.py
-  Removes stale legacy routers/livestream.py WebSocket expectation; Terminal and Remote Desktop remain the WebSocket brokers using the shared decoder. Adds an explicit contract that Livestream v2 is an HTTP control plane, not a WebSocket broker.
+- backend/tests/test_enrollment_issuer_contract.py (new)
 
-DELETE FILES:
-- None
+No files must be deleted.
+No runtime domain implementation, render.yaml, migrations or systemd files are changed.
 
 Do not commit CHANGE_SUMMARY.txt or DELETE_FILES.txt.

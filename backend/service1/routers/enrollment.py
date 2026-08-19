@@ -107,19 +107,22 @@ def _canonical_public_key(value: str) -> tuple[str, str]:
     return canonical, key_id
 
 
-def _canonical_token_issuer() -> str:
+def _domain_token_issuer(domain: str) -> str:
     issuers = {
-        str(SHARED_TOKEN_ISSUER).strip(),
-        str(LIVESTREAM_TOKEN_ISSUER).strip(),
-        str(TERMINAL_TOKEN_ISSUER).strip(),
-        str(REMOTE_DESKTOP_TOKEN_ISSUER).strip(),
+        "status": SHARED_TOKEN_ISSUER,
+        "display": SHARED_TOKEN_ISSUER,
+        "system": SHARED_TOKEN_ISSUER,
+        "livestream": LIVESTREAM_TOKEN_ISSUER,
+        "terminal": TERMINAL_TOKEN_ISSUER,
+        "remote_desktop": REMOTE_DESKTOP_TOKEN_ISSUER,
     }
-    if "" in issuers or len(issuers) != 1:
+    issuer = str(issuers.get(domain) or "").strip()
+    if not issuer or len(issuer) > 200:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ClientFlow domain token issuers er ikke konfigureret ens",
+            detail=f"ClientFlow {domain}-token issuer er ikke konfigureret",
         )
-    return next(iter(issuers))
+    return issuer
 
 
 def _root_terminal_broker(terminal_credential_id: str) -> dict[str, str]:
@@ -177,6 +180,7 @@ class EnrollmentTokenCreated(BaseModel):
 class EnrollmentCredentialRead(BaseModel):
     domain: str
     credential_id: str
+    token_issuer: str
 
 
 class EnrollmentRootBrokerRead(BaseModel):
@@ -208,7 +212,6 @@ class EnrollmentClaimRequest(BaseModel):
 
 class EnrollmentClaimResponse(BaseModel):
     client_id: int
-    token_issuer: str
     credentials: list[EnrollmentCredentialRead]
     root_terminal_broker: EnrollmentRootBrokerRead
     system_encryption_key_id: str
@@ -405,10 +408,16 @@ def _credential_response(
         raise HTTPException(status_code=409, detail="Enrollment resume-proof matcher ikke credentials")
     rows["remote_desktop"] = remote_desktop.id
 
-    credentials = [EnrollmentCredentialRead(domain=domain, credential_id=rows[domain]) for domain in DOMAIN_NAMES]
+    credentials = [
+        EnrollmentCredentialRead(
+            domain=domain,
+            credential_id=rows[domain],
+            token_issuer=_domain_token_issuer(domain),
+        )
+        for domain in DOMAIN_NAMES
+    ]
     return EnrollmentClaimResponse(
         client_id=int(client.id),
-        token_issuer=_canonical_token_issuer(),
         credentials=credentials,
         root_terminal_broker=EnrollmentRootBrokerRead(**_root_terminal_broker(rows["terminal"])),
         system_encryption_key_id=system_key.id,

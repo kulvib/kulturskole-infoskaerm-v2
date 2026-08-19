@@ -357,6 +357,14 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
             self.session,
         )
 
+        issuer_by_domain = {row.domain: row.token_issuer for row in response.credentials}
+        self.assertEqual(issuer_by_domain["livestream"], "clientflow-api")
+        self.assertEqual(issuer_by_domain["terminal"], "planiq-display-api")
+        self.assertEqual(issuer_by_domain["remote_desktop"], "planiq-display-api")
+        self.assertEqual(issuer_by_domain["status"], "planiq-display-api")
+        self.assertEqual(issuer_by_domain["display"], "planiq-display-api")
+        self.assertEqual(issuer_by_domain["system"], "planiq-display-api")
+
         stored_token = self.session.get(EnrollmentToken, token.id)
         stored_client = self.session.get(Client, response.client_id)
         self.assertIsNotNone(stored_client)
