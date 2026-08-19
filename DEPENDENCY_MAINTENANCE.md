@@ -21,6 +21,7 @@ python -m pip install --require-hashes -r requirements-ci.lock.txt
 python -m pip check
 python -m pip_audit --disable-pip --no-deps --progress-spinner off -r backend/requirements.lock.txt
 python scripts/validate_dependency_contract.py
+python -m pytest -q backend/tests scripts/tests
 ```
 
 Lockfiler skal genereres fra rene Python 3.13-miljøer og må ikke indeholde interne index-URL'er eller credentials.

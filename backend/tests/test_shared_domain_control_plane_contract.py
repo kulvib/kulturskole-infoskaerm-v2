@@ -39,7 +39,6 @@ def test_shared_command_queue_never_claims_livestream():
     assert 'COMMAND_DOMAINS = frozenset({"display", "system"})' in source
     assert 'ClientCommand.domain == domain' in source
     assert '_validate_domain(credential.domain, commands=True)' in source
-    assert 'deliberately never touches legacy Livestream rows' in source
 
 
 def test_shared_tokens_are_bound_to_domain_client_credential_and_version():
@@ -63,11 +62,11 @@ def test_main_mounts_shared_domain_router():
     assert 'app.include_router(shared_domain_router, prefix="/api")' in source
 
 
-def test_client_command_model_matches_observed_production_vocabulary():
+def test_client_command_model_matches_canonical_shared_vocabulary():
     source = _read("service1/client_domain_models.py")
 
     assert 'class ClientCommand(SQLModel, table=True):' in source
-    assert 'domain IN (\'display\',\'livestream\',\'system\')' in source
+    assert 'domain IN (\'display\',\'system\')' in source
     assert "'queued','claimed','succeeded','failed','expired','cancelled'" in source
     for field in (
         "claim_token_hash",

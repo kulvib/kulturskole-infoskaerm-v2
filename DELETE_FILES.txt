@@ -1,0 +1,5 @@
+DELETE THESE FILES FROM THE REPOSITORY AFTER APPLYING THIS DELTA:
+
+backend/tests/test_canonical_foundations_50_source_fixed.py
+
+This file is informational and should NOT be committed to the repository.

@@ -72,7 +72,7 @@ See:
 Backend source-contract checks:
 
 ```bash
-python -m unittest discover -s backend/tests -p 'test_*source*.py' -q
+python -m pytest -q backend/tests/test_*source*.py
 ```
 
 Frontend:

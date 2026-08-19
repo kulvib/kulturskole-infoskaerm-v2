@@ -101,7 +101,7 @@ At minimum:
 
 ```bash
 python -m compileall -q backend/service1 backend/migrations client/runtime client/release/lib scripts
-python -m unittest discover -s backend/tests -p 'test_*source*.py' -q
+python -m pytest -q backend/tests/test_*source*.py
 ```
 
 A release/install change is not accepted as physically validated until the relevant Ubuntu installation/update and frozen-domain regressions have been run.

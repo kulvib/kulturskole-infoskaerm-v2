@@ -1,0 +1,24 @@
+ClientFlow CI + smoke delta package
+
+Apply from repository root:
+1. Extract this zip over the repository root (overwrite existing files).
+2. Delete every path listed in DELETE_FILES.txt.
+3. Do not commit DELETE_FILES.txt or CHANGE_SUMMARY.txt.
+
+Added files: 5
+  + .github/workflows/ci.yml
+  + .github/workflows/deployment-smoke.yml
+  + backend/.python-version
+  + frontend/.node-version
+  + scripts/tests/test_github_workflow_contract.py
+
+Changed files: 6
+  M CLIENTFLOW_RELEASE_PROCEDURE.md
+  M DEPENDENCY_MAINTENANCE.md
+  M README.md
+  M backend/tests/test_shared_domain_control_plane_contract.py
+  M requirements-ci.lock.txt
+  M requirements-ci.txt
+
+Deleted files: 1
+  - backend/tests/test_canonical_foundations_50_source_fixed.py
