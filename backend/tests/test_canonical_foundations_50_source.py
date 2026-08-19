@@ -37,6 +37,20 @@ def test_step50_retires_shared_livestream_only_after_isolated_credential_check()
     assert "domain IN ('display','system')" in migration
 
 
+def test_step50_detaches_historical_livestream_generation_before_command_delete():
+    migration = read("migrations/versions/20260819_50a_canonical_foundations.py")
+    detach = "UPDATE livestream_generation AS generation"
+    null_command = "SET command_id = NULL"
+    delete_command = "DELETE FROM client_command WHERE domain = 'livestream'"
+
+    assert 'if _has_table("livestream_generation"):' in migration
+    assert detach in migration
+    assert null_command in migration
+    assert "generation.command_id = command.id" in migration
+    assert "command.domain = 'livestream'" in migration
+    assert migration.index(detach) < migration.index(delete_command)
+
+
 def test_models_exclude_retired_shared_livestream_domains():
     models = read("service1/client_domain_models.py")
     assert "domain IN ('status','display','system')" in models
@@ -96,9 +110,9 @@ def test_final_schema_contract_head_is_step50():
     assert 'EXPECTED_HEAD_REVISION = "20260819_50a_canonical"' in contract
     assert 'REVIEWED_CANONICAL_FOUNDATIONS_REVISION = "20260819_50a_canonical"' in runner
 
+
 def test_permanent_delete_cleans_canonical_enrollment_fk_state():
     source = read("service1/lifecycle.py")
     assert "delete(ClientEnrollmentReceipt)" in source
     assert "delete(ClientSystemEncryptionKey)" in source
     assert source.index("delete(ClientEnrollmentReceipt)") < source.index("delete(CalendarMarking)")
-
