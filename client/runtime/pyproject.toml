@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools==80.10.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clientflow-runtime"
+version = "1.2.0"
+description = "Domain-isolated ClientFlow client runtime"
+requires-python = "==3.13.14"
+dependencies = [
+  "evdev==1.9.3",
+  "PyJWT==2.13.0",
+  "websockets==12.0",
+]
+
+[project.scripts]
+clientflow-display-agent = "clientflow_runtime.display_agent:main"
+clientflow-display-power-broker = "clientflow_runtime.display_power_broker:main"
+clientflow-display-runtime = "clientflow_runtime.display_runtime:main"
+clientflow-livestream-agent = "clientflow_runtime.livestream_agent:main"
+clientflow-livestream-broker = "clientflow_runtime.livestream_broker:main"
+clientflow-livestream-producer = "clientflow_runtime.livestream_producer:main"
+clientflow-livestream-uploader = "clientflow_runtime.livestream_uploader:main"
+clientflow-remote-desktop-agent = "clientflow_runtime.remote_desktop_agent:main"
+clientflow-remote-desktop-capture = "clientflow_runtime.remote_desktop_capture:main"
+clientflow-remote-desktop-input-broker = "clientflow_runtime.remote_desktop_input_broker:main"
+clientflow-root-terminal-broker = "clientflow_runtime.root_terminal_broker:main"
+clientflow-runtime-diagnostics = "clientflow_runtime.diagnostics:main"
+clientflow-standard-terminal-broker = "clientflow_runtime.standard_terminal_broker:main"
+clientflow-status-agent = "clientflow_runtime.status_agent:main"
+clientflow-system-agent = "clientflow_runtime.system_agent:main"
+clientflow-system-broker = "clientflow_runtime.system_broker:main"
+clientflow-terminal-agent = "clientflow_runtime.terminal_agent:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["clientflow_runtime*"]

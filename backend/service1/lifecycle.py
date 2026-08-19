@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 
 from .client_activity_models import ClientActivityLease
 from .client_domain_models import ClientCommand, ClientDomainCredential, ClientDomainStatus
+from .enrollment_models import ClientEnrollmentReceipt, ClientSystemEncryptionKey
 from .livestream_v2_models import (
     LivestreamV2AgentStatus,
     LivestreamV2Command,
@@ -158,6 +159,12 @@ def delete_platform_client_state(session: Session, *, client_id: int) -> int:
     session.exec(delete(ClientDomainStatus).where(ClientDomainStatus.client_id == client_id))
     session.exec(delete(ClientCommand).where(ClientCommand.client_id == client_id))
     session.exec(delete(ClientDomainCredential).where(ClientDomainCredential.client_id == client_id))
+
+    # Canonical enrollment/setup state has non-cascading FKs to client.id.
+    # Remove it before the platform Client row so permanent deletion remains
+    # valid for fresh 1.2 enrollments as well as adopted clients.
+    session.exec(delete(ClientEnrollmentReceipt).where(ClientEnrollmentReceipt.client_id == client_id))
+    session.exec(delete(ClientSystemEncryptionKey).where(ClientSystemEncryptionKey.client_id == client_id))
 
     session.exec(delete(CalendarMarking).where(CalendarMarking.client_id == client_id))
 

@@ -1,71 +1,47 @@
 # ClientFlow WebSocket protocol contract
 
-PlanIQ Display keeps the deployed, versioned ClientFlow wire contracts explicit.
-The backend currently exposes two active Terminal/Remote Desktop WebSocket domains plus one
-legacy Livestream signalling compatibility socket:
+The canonical v2 repository has WebSocket transports only for Terminal and Remote Desktop. Livestream v2 uses authenticated HTTP for control/status/upload and HLS for media delivery; it has no browser/agent signalling WebSocket.
 
-- Terminal v2: `/api/terminal-agent/clients/{client_id}/ws` and `/api/terminal/browser/{client_id}/ws`
-- Remote Desktop v2: `/api/remote-desktop-agent/clients/{client_id}/control/ws`, `/api/remote-desktop-agent/clients/{client_id}/files/ws` and `/api/remote-desktop/browser/{client_id}/ws`
-- Legacy Livestream signalling compatibility: `/api/ws/livestream/{client_id}`; Livestream v2 agent control/upload uses authenticated HTTP endpoints instead
+## Terminal
 
-## Browser authentication and direct transport
+- agent: `/api/terminal-agent/clients/{client_id}/ws`
+- browser: `/api/terminal/browser/{client_id}/ws`
 
-The production frontend remains a static site at `https://display.planiq.dk`. Normal HTTP
-API calls remain same-origin through `/api/*`, so the existing refresh-cookie and API client
-contract is unchanged.
+Terminal uses its isolated Terminal credential/session model. Standard and admin/root sessions share the Terminal domain but remain bound to the requested mode/session and current authorization state.
 
-Browser Terminal and Remote Desktop WebSockets connect directly to the backend web service.
-Before opening a socket, the authenticated frontend requests a short-lived ticket from
-`POST /api/websocket-tickets/browser`. The ticket is a one-time credential and:
+## Remote Desktop
 
-- opaque and random;
-- valid for one connection only;
-- bound to the authenticated user and current `token_version`;
-- bound to one `client_id` and one exact capability;
-- transported in `Sec-WebSocket-Protocol`, never in the URL;
-- accepted only together with an allowed production `Origin`.
+- control agent: `/api/remote-desktop-agent/clients/{client_id}/control/ws`
+- file agent: `/api/remote-desktop-agent/clients/{client_id}/files/ws`
+- browser: `/api/remote-desktop/browser/{client_id}/ws`
 
-The marker subprotocol is `planiq-ws-ticket`. The browser offers the marker followed by the
-opaque ticket, and the backend selects only the marker when accepting the connection. The
-first-party HttpOnly `access_token` cookie remains a same-origin/local fallback, but browser
-query-token authentication is deliberately ignored.
+Remote Desktop uses its isolated credential/session model. Control and file transports are separate and are bound to the same client/session authority.
 
-The ticket store is bounded and process-local. This matches the current `render.yaml`
-contract of one backend instance worker and the existing process-local Terminal/Remote
-Desktop brokers. Horizontal scaling or multiple backend workers requires shared broker and
-ticket state before changing that deployment contract.
+## Browser authentication
 
-## Installed ClientFlow agents
+Before opening Terminal or Remote Desktop browser WebSockets, the authenticated frontend requests a short-lived ticket from `POST /api/websocket-tickets/browser`.
 
-Installed ClientFlow agents use domain-owned authentication. Terminal and Livestream retain
-their existing agent-token compatibility, while Remote Desktop v2 uses its dedicated
-`/api/remote-desktop-auth/token` credential and sends that token as an Authorization bearer
-on its separate control and file WebSockets. Agent output is forwarded only to a browser
-session for the same client; terminal sessions must also match `mode` (`user` or `admin`).
+The ticket is:
+
+- opaque and random
+- one-time use
+- bound to the authenticated user and current token version
+- bound to one client and exact capability
+- transported through `Sec-WebSocket-Protocol`, not the URL
+- accepted only with an allowed Origin
+
+The marker subprotocol is `planiq-ws-ticket`.
+
+## Agent authentication
+
+Installed agents authenticate with their domain-owned credential/token boundary. Terminal uses its Terminal auth endpoint. Remote Desktop uses its Remote Desktop auth endpoint. Status/Display/System use the shared HTTP domain-token boundary and do not use WebSockets for their command queue.
 
 ## Defensive decoding
 
-`backend/service1/websocket_protocol.py` is the single decoder for runtime WebSocket JSON
-messages. Every message must be a JSON object with a non-empty string `type`. Oversized
-messages close with code `1009`; ordinary protocol errors are returned as neutral error
-messages without stack traces or credentials.
+`backend/service1/websocket_protocol.py` is the shared decoder for runtime WebSocket JSON messages. Messages must be JSON objects with a non-empty string `type`; oversized/protocol-invalid messages are rejected without exposing stack traces or credentials.
 
-Current limits:
+Browser uploads/downloads for Remote Desktop use the dedicated file transport and authenticated HTTP handoff where applicable.
 
-- terminal browser messages: staged-script limit plus protocol overhead
-- Remote Desktop browser command: 2,100,000 characters
-- Remote Desktop v2 control-agent message/frame: 20,000,000 characters
-- Remote Desktop v2 file-agent message/frame: 4,500,000 characters
-- livestream signalling: `LIVESTREAM_WS_MAX_MESSAGE_BYTES` (default 262,144)
+## Change rule
 
-These are broker/message limits. Browser uploads enter through authenticated HTTP and are
-then streamed to the RD agent over the dedicated file WebSocket. Agent downloads return over
-the file WebSocket and become short-lived, authenticated browser HTTP downloads after backend
-size/SHA-256 verification.
-
-## Compatibility rule
-
-A ClientFlow agent protocol change must preserve the currently deployed versioned URLs and
-message types unless a separately versioned ClientFlow release is deployed first. CI tests
-the shared decoder, ticket binding/single-use behavior, direct browser transport and each
-domain's current agent-auth contract.
+A Terminal or Remote Desktop wire-contract change requires a documented contract/runtime reason and the corresponding physical regression test. Frozen domain protocols are not renamed or refactored solely for cleanup.

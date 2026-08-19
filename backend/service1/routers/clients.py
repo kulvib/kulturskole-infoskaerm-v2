@@ -13,6 +13,8 @@ from ..models import utcnow
 from ..observability import log_safe_exception
 from ..lifecycle import prepare_client_for_permanent_delete
 from ..livestream_v2 import request_start as request_livestream_v2_start, request_stop as request_livestream_v2_stop
+from ..terminal_v2_models import TerminalClient, TerminalCredential
+from ..remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
 from ..season_service import (
     SeasonValidationError,
     apply_standard_times_to_existing_markings,
@@ -2739,7 +2741,38 @@ async def approve_client(
             raise HTTPException(status_code=404, detail="Organisation ikke fundet")
         client.organization_id = data.organization_id
 
+    terminal_identity = session.get(TerminalClient, id)
+    remote_desktop_identity = session.get(RemoteDesktopClient, id)
+    terminal_credential = session.exec(
+        select(TerminalCredential).where(
+            TerminalCredential.client_id == id,
+            TerminalCredential.revoked_at == None,
+        )
+    ).first()
+    remote_desktop_credential = session.exec(
+        select(RemoteDesktopCredential).where(
+            RemoteDesktopCredential.client_id == id,
+            RemoteDesktopCredential.revoked_at == None,
+        )
+    ).first()
+    if (
+        terminal_identity is None
+        or remote_desktop_identity is None
+        or terminal_credential is None
+        or remote_desktop_credential is None
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Klientens isolerede Terminal/Remote Desktop provisioning er ufuldstændig",
+        )
+
     client.status = "approved"
+    terminal_identity.status = "approved"
+    terminal_identity.display_name = client.name
+    remote_desktop_identity.status = "approved"
+    remote_desktop_identity.display_name = client.name
+    session.add(terminal_identity)
+    session.add(remote_desktop_identity)
     max_sort_order = session.exec(
         select(Client.sort_order)
         .where(Client.status == "approved", Client.sort_order != None)

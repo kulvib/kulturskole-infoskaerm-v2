@@ -247,11 +247,6 @@ brugernavn/email allerede er i brug. Den nye konto får tvunget passwordskift.
 Fjern `ADMIN_PASSWORD` fra miljøet straks efter brug. Kommandoen må aldrig tilføjes
 til Render start- eller pre-deploy-command.
 
-## ClientFlow versionsvalg og rollback
+## ClientFlow release og rollback
 
-- Installér fra hele `clientflow-autoinstall-site`-mappen med `CLIENTFLOW_START_HER.sh`.
-- Standard er `latest_stable`; en `supported` release kan vælges eksplicit.
-- `blocked` og `deprecated` releases må ikke installeres.
-- Control Room kræver bekræftelse og begrundelse ved downgrade og skriver en kritisk audit-log.
-- Deploymentsekvensen må aldrig sænkes eller genbruges.
-- Katalog, backendkopi og installerfiler skal deployes i samme commit.
+ClientFlow v2 bruger den canonical keyless 1.2 release-/installationskæde. Byg, godkend, verificér og installer kun efter `CLIENTFLOW_RELEASE_PROCEDURE.md` og dokumentationen i `client/release/docs/`. Release sequence må ikke genbruges, og fysisk aktivering er altid eksplicit.

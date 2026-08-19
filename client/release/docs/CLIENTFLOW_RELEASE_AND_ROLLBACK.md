@@ -111,7 +111,7 @@ Installerens `verify` og `install` kræver den eksakte, på forhånd kendte SHA-
 
 ```bash
 clientflow-installer verify \
-  ./clientflow-1.2.0-seq-1200-approved.tar \
+  --bundle ./clientflow-1.2.0-seq-1200-approved.tar \
   --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256>
 ```
 
@@ -138,16 +138,6 @@ Hvis også rollback fejler, markeres transaktionen eksplicit som fejlet; der for
 
 Manuel rollback kræver både approval-reference og begrundelse. Rollback kan kun gå til en allerede installeret, verificeret release. Anti-rollback forhindrer genindlæsning af gamle bundles, men forhindrer ikke kontrolleret rollback til en allerede installeret immutable release.
 
-## GitHub Actions-bygget offline runtime
+## Offline runtime input
 
-Workflowet `.github/workflows/clientflow-offline-runtime.yml`:
-
-- bruger Python `3.13.14` og den daterede officielle Ubuntu 26.04-image `ubuntu:resolute-20260707`;
-- verificerer CPython-kildearkivet og pip-wheel med fastlåste SHA-256-værdier;
-- bygger `python-runtime-amd64.tar` og de tilladte wheel-distributioner i en isoleret container;
-- udfører to builds med samme image og afviser enhver forskel i filindhold eller mode;
-- bygger en keyless release candidate med `offline_wheelhouse_complete: true`;
-- kører den samme offline runtime-preflight, som godkendelsesgaten kræver, inde i Ubuntu 26.04;
-- uploader kun et artifact med `deployable: false`, `integrity_algorithm: sha256`, tom `release_approval`, manuel aktivering og ingen automatisk reboot.
-
-Workflowet har kun `contents: read`, bruger ingen release secrets og kan hverken godkende, deploye eller installere på en fysisk klient. Outputtet er et verificeret releaseinput, ikke en godkendt release.
+Python-runtime og tredjeparts-wheels er release-inputs, ikke source. De leveres til `scripts/build_clientflow_release.py --runtime-inputs ...`. Builderen genbygger altid ClientFlow-wheelet fra `client/runtime/`, så et ældre prebuilt ClientFlow-wheel ikke kan overskrive den canonical source.

@@ -938,3 +938,27 @@ EXPECTED_COLUMNS.update(ADOPTED_RUNTIME_COLUMNS)
 EXPECTED_CONSTRAINTS.update(ADOPTED_RUNTIME_CONSTRAINTS)
 EXPECTED_INDEXES.update(ADOPTED_RUNTIME_INDEXES)
 EXPECTED_FINGERPRINT = "12733459e3fe43611edfca307efd8bdcee9fc7b034ec3d9fb5fb83fd674c3d01"
+
+
+# Step 50A: canonical shared foundations and fresh-enrollment persistence.
+from canonical_foundations_schema_contract import (
+    CANONICAL_FOUNDATION_COLUMNS,
+    CANONICAL_FOUNDATION_CONSTRAINTS,
+    CANONICAL_FOUNDATION_INDEXES,
+    CANONICAL_FOUNDATION_TABLES,
+)
+EXPECTED_HEAD_REVISION = "20260819_50a_canonical"
+EXPECTED_TABLES |= CANONICAL_FOUNDATION_TABLES
+EXPECTED_COLUMNS.update(CANONICAL_FOUNDATION_COLUMNS)
+_client_columns = dict(EXPECTED_COLUMNS["client"])
+for _retired_column in (
+    "pending_livestream_action",
+    "pending_livestream_action_source",
+    "livestream_control_plane_version",
+    "school",
+):
+    _client_columns.pop(_retired_column, None)
+EXPECTED_COLUMNS["client"] = _client_columns
+EXPECTED_CONSTRAINTS.update(CANONICAL_FOUNDATION_CONSTRAINTS)
+EXPECTED_INDEXES.update(CANONICAL_FOUNDATION_INDEXES)
+EXPECTED_FINGERPRINT = "1f6b05670c0a5334b2e8615e512c93ddc611946cf0ffb588a58b5d91178a2f0e"

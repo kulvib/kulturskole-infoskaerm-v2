@@ -247,8 +247,7 @@ def _reconcile_command_state(
     domain: str,
     now: datetime,
 ) -> None:
-    # Scope reconciliation to exactly one shared command domain/client. This
-    # deliberately never touches legacy Livestream rows in client_command.
+    # Scope reconciliation to exactly one shared command domain/client.
     rows = session.exec(
         select(ClientCommand)
         .where(

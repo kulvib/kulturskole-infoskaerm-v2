@@ -22,7 +22,7 @@ Ingen fysisk installation må ske, før en konkret pilotklient er udpeget og ins
 
    ```bash
    clientflow-installer verify \
-     ./clientflow-1.2.0-seq-1200-approved.tar \
+     --bundle ./clientflow-1.2.0-seq-1200-approved.tar \
      --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256>
    ```
 
@@ -30,7 +30,7 @@ Ingen fysisk installation må ske, før en konkret pilotklient er udpeget og ins
 
    ```bash
    sudo clientflow-installer install \
-     ./clientflow-1.2.0-seq-1200-approved.tar \
+     --bundle ./clientflow-1.2.0-seq-1200-approved.tar \
      --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
      --backend-url https://<backend-origin> \
      --enrollment-code <one-time-code> \

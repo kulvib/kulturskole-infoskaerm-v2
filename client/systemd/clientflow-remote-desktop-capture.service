@@ -4,8 +4,8 @@ After=graphical.target
 
 [Service]
 Type=simple
-User=viborg2
-Group=viborg2
+User=@CLIENTFLOW_KIOSK_USER@
+Group=@CLIENTFLOW_KIOSK_USER@
 ExecStart=/opt/clientflow/active/runtime/bin/clientflow-remote-desktop-capture
 LoadCredential=remote-desktop.json:/etc/clientflow/remote-desktop.json
 Environment=CLIENTFLOW_REMOTE_DESKTOP_CONFIG=%d/remote-desktop.json

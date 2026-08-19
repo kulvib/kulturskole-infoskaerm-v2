@@ -38,6 +38,7 @@ import service1.terminal_v2_models  # noqa: E402,F401 - registers adopted Termin
 import service1.remote_desktop_v2_models  # noqa: E402,F401 - registers isolated Remote Desktop tables
 import service1.remote_desktop_session_models  # noqa: E402,F401 - registers reviewed Remote Desktop session tables
 import service1.client_activity_models  # noqa: E402,F401 - registers shared activity leases
+import service1.enrollment_models  # noqa: E402,F401 - registers canonical enrollment persistence
 METADATA = SQLModel.metadata
 
 MIGRATION = ROOT / "migrations" / "versions" / '20260712_30d_display_base_frozen_display_baseline.py'

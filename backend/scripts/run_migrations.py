@@ -53,6 +53,12 @@ from adopted_runtime_schema_contract import (
     ADOPTED_RUNTIME_INDEXES,
     ADOPTED_RUNTIME_TABLES,
 )
+from canonical_foundations_schema_contract import (
+    CANONICAL_FOUNDATION_CONSTRAINTS,
+    CANONICAL_FOUNDATION_INDEXES,
+    CANONICAL_FOUNDATION_TABLES,
+    CANONICAL_RETIRED_CLIENT_COLUMNS,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = ROOT / "alembic.ini"
@@ -61,7 +67,7 @@ ADVISORY_LOCK_KEY = -614927384150371204
 # Baseline adoption is deliberately reviewed only for this exact graph. If a
 # later migration changes the head, the adoption path fails closed until the
 # baseline delta is reviewed again.
-REVIEWED_BASELINE_ADOPTION_HEAD = "20260819_49a_db_contract"
+REVIEWED_BASELINE_ADOPTION_HEAD = "20260819_50a_canonical"
 REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 
 # Production was observed at this Alembic label before Step 40A was deployed,
@@ -70,7 +76,7 @@ REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 # 39A schema; otherwise deployment fails closed without stamping or DDL.
 RECOVERABLE_LEGACY_REVISION = "20260730_41a"
 RECOVERABLE_LEGACY_TARGET = "20260717_39a_livestream_leases"
-REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260819_49a_db_contract"
+REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260819_50a_canonical"
 REVIEWED_LIVESTREAM_V2_PREDECESSOR = "20260814_40a_livestream_control"
 REVIEWED_LIVESTREAM_V2_REVISION = "20260814_41a_livestream_v2"
 REVIEWED_TERMINAL_V2_REVISION = "20260816_42a_terminal_v2"
@@ -81,6 +87,7 @@ REVIEWED_REMOTE_DESKTOP_V2_REVISION = "20260817_46a_remote_desktop_v2"
 REVIEWED_CLIENT_ACTIVITY_REVISION = "20260818_47a_client_activity"
 REVIEWED_LIFECYCLE_REVISION = "20260818_48a_lifecycle"
 REVIEWED_DATABASE_CONTRACT_REVISION = "20260819_49a_db_contract"
+REVIEWED_CANONICAL_FOUNDATIONS_REVISION = "20260819_50a_canonical"
 LIVESTREAM_V2_TABLES = frozenset({
     "livestream_v2_agent_status",
     "livestream_v2_command",
@@ -211,7 +218,10 @@ RECOVERABLE_LEGACY_PRESERVED_TABLES = frozenset({
 })
 
 HEAD_LEGACY_PRESERVED_TABLES = frozenset(
-    RECOVERABLE_LEGACY_PRESERVED_TABLES - TERMINAL_V2_TABLES - ADOPTED_RUNTIME_TABLES
+    RECOVERABLE_LEGACY_PRESERVED_TABLES
+    - TERMINAL_V2_TABLES
+    - ADOPTED_RUNTIME_TABLES
+    - CANONICAL_FOUNDATION_TABLES
 )
 
 
@@ -358,6 +368,43 @@ def _catalog_snapshot(connection) -> dict:
     }
 
 
+def _without_canonical_foundations_schema(
+    columns: dict[str, dict],
+    constraints: dict[str, str],
+    indexes: dict[str, str],
+) -> tuple[dict[str, dict], dict[str, str], dict[str, str]]:
+    """Remove Step 50A objects when reconstructing an earlier reviewed schema."""
+    cleaned_columns = {
+        table: values for table, values in columns.items()
+        if table not in CANONICAL_FOUNDATION_TABLES
+    }
+    client_columns = dict(cleaned_columns["client"])
+    client_columns.update(CANONICAL_RETIRED_CLIENT_COLUMNS)
+    cleaned_columns["client"] = client_columns
+    cleaned_constraints = {
+        name: definition for name, definition in constraints.items()
+        if name not in CANONICAL_FOUNDATION_CONSTRAINTS
+        or name in {
+            "ck_client_domain_credential_domain",
+            "ck_client_domain_status_domain",
+            "ck_client_command_domain",
+        }
+    }
+    # Restore the Step-49A shared-domain definitions before earlier-schema
+    # reconstruction removes the adopted shared runtime tables entirely.
+    for name in (
+        "ck_client_domain_credential_domain",
+        "ck_client_domain_status_domain",
+        "ck_client_command_domain",
+    ):
+        cleaned_constraints[name] = ADOPTED_RUNTIME_CONSTRAINTS[name]
+    cleaned_indexes = {
+        name: definition for name, definition in indexes.items()
+        if name not in CANONICAL_FOUNDATION_INDEXES
+    }
+    return cleaned_columns, cleaned_constraints, cleaned_indexes
+
+
 def _baseline_schema_contract() -> tuple[dict[str, dict], dict[str, str], dict[str, str]]:
     """Return the exact frozen schema immediately before Step 34A.
 
@@ -377,10 +424,13 @@ def _baseline_schema_contract() -> tuple[dict[str, dict], dict[str, str], dict[s
             "Display baseline-adoption er ikke gennemgået for den aktuelle Alembic-kæde"
         )
 
-    columns, constraints, indexes = _without_adopted_runtime_schema(
+    columns, constraints, indexes = _without_canonical_foundations_schema(
         {table: dict(values) for table, values in EXPECTED_COLUMNS.items()},
         dict(EXPECTED_CONSTRAINTS),
         dict(EXPECTED_INDEXES),
+    )
+    columns, constraints, indexes = _without_adopted_runtime_schema(
+        columns, constraints, indexes
     )
     columns, constraints, indexes = _without_livestream_v2_schema(
         columns, constraints, indexes
@@ -479,10 +529,13 @@ def _pre_livestream_control_schema_contract() -> tuple[dict[str, dict], dict[str
             "Legacy-revision reconciliation er ikke gennemgået for den aktuelle Alembic-kæde"
         )
 
-    columns, constraints, indexes = _without_adopted_runtime_schema(
+    columns, constraints, indexes = _without_canonical_foundations_schema(
         {table: dict(values) for table, values in EXPECTED_COLUMNS.items()},
         dict(EXPECTED_CONSTRAINTS),
         dict(EXPECTED_INDEXES),
+    )
+    columns, constraints, indexes = _without_adopted_runtime_schema(
+        columns, constraints, indexes
     )
     columns, constraints, indexes = _without_livestream_v2_schema(
         columns, constraints, indexes
@@ -763,13 +816,15 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
             client_activity_revision = script.get_revision(REVIEWED_CLIENT_ACTIVITY_REVISION)
             lifecycle_revision = script.get_revision(REVIEWED_LIFECYCLE_REVISION)
             database_contract_revision = script.get_revision(REVIEWED_DATABASE_CONTRACT_REVISION)
+            canonical_foundations_revision = script.get_revision(REVIEWED_CANONICAL_FOUNDATIONS_REVISION)
             head_revision = script.get_revision(head)
             if any(
                 item is None
                 for item in (
                     target_revision, predecessor_revision, livestream_v2_revision,
                     terminal_v2_revision, terminal_policy_revision, terminal_storage_revision,
-                    terminal_client_revision, remote_desktop_revision, client_activity_revision, lifecycle_revision, database_contract_revision, head_revision,
+                    terminal_client_revision, remote_desktop_revision, client_activity_revision, lifecycle_revision,
+                    database_contract_revision, canonical_foundations_revision, head_revision,
                 )
             ):
                 raise RuntimeError("Legacy-revision reconciliation mangler kendte Alembic-noder")
@@ -784,10 +839,11 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                 or client_activity_revision.down_revision != REVIEWED_REMOTE_DESKTOP_V2_REVISION
                 or lifecycle_revision.down_revision != REVIEWED_CLIENT_ACTIVITY_REVISION
                 or database_contract_revision.down_revision != REVIEWED_LIFECYCLE_REVISION
-                or head != REVIEWED_DATABASE_CONTRACT_REVISION
+                or canonical_foundations_revision.down_revision != REVIEWED_DATABASE_CONTRACT_REVISION
+                or head != REVIEWED_CANONICAL_FOUNDATIONS_REVISION
             ):
                 raise RuntimeError(
-                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A-kæde"
+                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A-kæde"
                 )
             legacy_columns, legacy_constraints, legacy_indexes = (
                 _pre_livestream_control_schema_contract()

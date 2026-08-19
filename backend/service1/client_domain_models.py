@@ -1,8 +1,8 @@
 """Shared SQLModel mappings for ClientFlow domain credentials and status.
 
-These two tables are deliberate cross-domain infrastructure: every isolated
-ClientFlow domain owns its own row keyed by (client_id, domain). Domain-specific
-session/lifecycle data must live in the domain module instead.
+These tables are deliberate shared infrastructure only for Status, Display and
+System. Livestream, Terminal and Remote Desktop own isolated credential/status
+storage and must not create rows here.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class ClientDomainCredential(SQLModel, table=True):
     __tablename__ = "client_domain_credential"
     __table_args__ = (
         CheckConstraint(
-            "domain IN ('status','display','livestream','remote_desktop','terminal','system')",
+            "domain IN ('status','display','system')",
             name="ck_client_domain_credential_domain",
         ),
         CheckConstraint("token_version >= 0", name="ck_client_domain_credential_token_version"),
@@ -48,7 +48,7 @@ class ClientDomainStatus(SQLModel, table=True):
     __tablename__ = "client_domain_status"
     __table_args__ = (
         CheckConstraint(
-            "domain IN ('status','display','livestream','remote_desktop','terminal','system')",
+            "domain IN ('status','display','system')",
             name="ck_client_domain_status_domain",
         ),
         CheckConstraint("schema_version >= 1", name="ck_client_domain_status_schema_version"),
@@ -75,17 +75,16 @@ class ClientDomainStatus(SQLModel, table=True):
 
 
 class ClientCommand(SQLModel, table=True):
-    """Shared command queue retained for Display/System agents.
+    """Shared command queue owned only by Display/System agents.
 
-    Livestream no longer consumes this table; its v2 queue is isolated in
-    ``livestream_v2_command``. Step 49A adopts the physically reviewed
-    production table into the exact runtime schema contract.
+    Livestream uses ``livestream_v2_command`` and is deliberately excluded
+    from this shared queue.
     """
 
     __tablename__ = "client_command"
     __table_args__ = (
         CheckConstraint(
-            "domain IN ('display','livestream','system')",
+            "domain IN ('display','system')",
             name="ck_client_command_domain",
         ),
         CheckConstraint(

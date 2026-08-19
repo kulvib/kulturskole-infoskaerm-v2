@@ -1,41 +1,23 @@
-# ClientFlow canonical baseline
+# ClientFlow canonical v2 baseline
 
-This repository is a consolidated source baseline built on 2026-08-19 from:
+This repository represents the consolidated ClientFlow v2 source baseline derived from the reviewed web application and the physically validated Ubuntu ClientFlow 1.2.0 runtime.
 
-- the latest reviewed backend/frontend repository; and
-- the physically validated Ubuntu runtime `/opt/clientflow/releases/clientflow-1.2.0-seq-1200`.
+## Canonical boundaries
 
-## Canonical runtime
+- `backend/` and `frontend/` contain the current application contracts.
+- `client/runtime/` is the source representation of the validated runtime.
+- `client/systemd/` represents the validated service topology; host-specific values that must vary on fresh installation are rendered by the installer.
+- `client/release/`, `client/sysusers.d/` and `client/tmpfiles.d/` are the canonical release/install source.
+- Runtime binaries are external release inputs; hashes for the physically validated artifact set are documented separately in `client/runtime-artifacts.lock.json`.
 
-`client/` is the source representation of the physically validated 1.2.0 runtime.
-The systemd units are taken from the installed `/etc/systemd/system` state, because
-that is the physical source of truth for the producer and Remote Desktop capture
-units that differed from the older packaged copies.
+## Domain ownership
 
-## Retired
-
-- all 1.1.x installer artifacts and signed multi-version release history
-- Terminal, Remote Desktop and Livestream overlay installers
-- Livestream v1/shared-mailbox transport
-- `pending_livestream_action` and `pending_livestream_action_source`
-- `livestream_control_plane_version` branching
-- compatibility `/api/clients/{id}/livestream-command`
-- Livestream aliases through the generic Chrome command endpoint
-- legacy Livestream upload/cleanup/viewer/WebSocket endpoints
-- historical support-terminal commands targeting old ClientFlow services/paths
-- unused `client.school` compatibility column
+Status, Display and System use the shared domain control plane. Livestream, Terminal and Remote Desktop use isolated credentials/state and must not fall back through shared legacy transport.
 
 ## Database history
 
-The reviewed Alembic history through v49 is retained intentionally as schema
-history, not active runtime compatibility. Revision 50A removes the retired
-runtime compatibility columns from existing databases. A future migration
-squash can be performed only after a fresh-database + existing-database parity
-run proves the new baseline.
+Reviewed Alembic history is retained as migration history. The canonical foundations migration removes retired runtime columns/shared Livestream ownership while adopting the physically proven enrollment/system-key tables. Migration history is not rewritten merely to make the repository look newer.
 
-## Release artifacts
+## Validation status
 
-Large offline Python runtime/wheel binaries are intentionally not committed to
-source. `client/runtime-artifacts.lock.json` records the exact physically
-validated artifact hashes. Binary publication belongs to the release artifact
-store/build pipeline.
+The repository is a canonical source candidate until its release/install path and any changed shared-foundation contracts have passed the required tests. Physically validated runtime domains remain protected as frozen baselines.
