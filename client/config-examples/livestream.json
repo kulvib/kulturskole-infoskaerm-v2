@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "ffmpeg_binary": "ffmpeg",
+  "input_arguments": [
+    "-f",
+    "x11grab",
+    "-video_size",
+    "1920x1080",
+    "-framerate",
+    "25",
+    "-i",
+    ":0"
+  ],
+  "video_codec": "libx264",
+  "preset": "veryfast",
+  "segment_seconds": 2,
+  "playlist_size": 8
+}

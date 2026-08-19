@@ -1,0 +1,13 @@
+[Unit]
+Description=ClientFlow root Terminal broker socket
+
+[Socket]
+ListenStream=/run/clientflow/root-terminal.sock
+SocketUser=root
+SocketGroup=clientflow-terminal-agent
+SocketMode=0660
+RemoveOnStop=yes
+Service=clientflow-root-terminal-broker.service
+
+[Install]
+WantedBy=clientflow.target

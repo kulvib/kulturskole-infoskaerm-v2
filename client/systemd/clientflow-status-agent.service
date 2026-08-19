@@ -1,0 +1,36 @@
+[Unit]
+Description=ClientFlow status and host telemetry agent
+Documentation=file:/usr/share/doc/clientflow/CLIENTFLOW_RUNTIME.md
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/clientflow/credentials/status.json
+
+[Service]
+Type=simple
+User=clientflow-status
+Group=clientflow-status
+ExecStart=/opt/clientflow/active/runtime/bin/clientflow-status-agent
+Restart=on-failure
+RestartSec=5s
+LoadCredential=status.json:/etc/clientflow/credentials/status.json
+StateDirectory=clientflow/status
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=clientflow.target

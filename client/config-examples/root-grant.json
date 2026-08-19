@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "key_id": "clientflow-root-grant-v1",
+  "algorithm": "HS256",
+  "audience": "clientflow-root-terminal-broker",
+  "issuer": "clientflow-backend",
+  "verification_key_b64": "REPLACE_WITH_ONE_TIME_ENROLLMENT_VALUE"
+}

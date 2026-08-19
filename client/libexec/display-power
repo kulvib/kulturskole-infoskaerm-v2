@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+KIOSK_USER="${1:-}"
+ACTION="${2:-}"
+if [[ -z "$KIOSK_USER" || ! "$ACTION" =~ ^(on|off)$ ]]; then
+  echo "brug: display-power USER on|off" >&2
+  exit 2
+fi
+if ! id "$KIOSK_USER" >/dev/null 2>&1; then
+  echo "kiosk-bruger findes ikke" >&2
+  exit 2
+fi
+
+USER_UID="$(id -u "$KIOSK_USER")"
+USER_HOME="$(getent passwd "$KIOSK_USER" | cut -d: -f6)"
+RUNTIME_DIR="/run/user/${USER_UID}"
+BUS="unix:path=${RUNTIME_DIR}/bus"
+DISPLAY_VALUE="${CLIENTFLOW_DISPLAY:-:0}"
+
+if [[ ! -d "$RUNTIME_DIR" ]]; then
+  echo "grafisk runtime-dir findes ikke" >&2
+  exit 3
+fi
+
+find_xauth() {
+  local file
+  file="$(ls -t "$RUNTIME_DIR"/.mutter-Xwaylandauth.* 2>/dev/null | head -1 || true)"
+  if [[ -n "$file" && -r "$file" ]]; then printf '%s\n' "$file"; return 0; fi
+  if [[ -r "$RUNTIME_DIR/gdm/Xauthority" ]]; then printf '%s\n' "$RUNTIME_DIR/gdm/Xauthority"; return 0; fi
+  if [[ -r "$USER_HOME/.Xauthority" ]]; then printf '%s\n' "$USER_HOME/.Xauthority"; return 0; fi
+  return 1
+}
+
+XAUTHORITY_RESOLVED="$(find_xauth || true)"
+run_as_user() {
+  runuser -u "$KIOSK_USER" -- env \
+    HOME="$USER_HOME" \
+    XDG_RUNTIME_DIR="$RUNTIME_DIR" \
+    DBUS_SESSION_BUS_ADDRESS="$BUS" \
+    DISPLAY="$DISPLAY_VALUE" \
+    XAUTHORITY="$XAUTHORITY_RESOLVED" \
+    "$@"
+}
+
+try_mutter() {
+  [[ -S "$RUNTIME_DIR/bus" ]] || return 1
+  command -v busctl >/dev/null 2>&1 || return 1
+  local mode=0
+  [[ "$ACTION" == "off" ]] && mode=3
+  run_as_user busctl --user set-property \
+    org.gnome.Mutter.DisplayConfig \
+    /org/gnome/Mutter/DisplayConfig \
+    org.gnome.Mutter.DisplayConfig \
+    PowerSaveMode i "$mode" >/dev/null
+}
+
+try_xset() {
+  command -v xset >/dev/null 2>&1 || return 1
+  [[ -n "$XAUTHORITY_RESOLVED" ]] || return 1
+  run_as_user xset +dpms >/dev/null 2>&1 || true
+  if [[ "$ACTION" == "off" ]]; then
+    run_as_user xset dpms force off >/dev/null
+  else
+    run_as_user xset s reset >/dev/null 2>&1 || true
+    run_as_user xset dpms force on >/dev/null
+  fi
+}
+
+if try_mutter; then
+  echo "display ${ACTION} via Mutter"
+  exit 0
+fi
+if try_xset; then
+  echo "display ${ACTION} via Xwayland/xset"
+  exit 0
+fi
+
+echo "display power kunne ikke ændres" >&2
+exit 1

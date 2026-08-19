@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+LOCK=/run/clientflow-update-os.lock
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "En OS-opdatering kører allerede" >&2
+  exit 75
+fi
+
+APT_GET=/usr/bin/apt-get
+if [[ ! -x "$APT_GET" ]]; then
+  echo "apt-get blev ikke fundet" >&2
+  exit 1
+fi
+
+"$APT_GET" -o Acquire::Retries=3 update
+"$APT_GET" \
+  -o Dpkg::Options::=--force-confdef \
+  -o Dpkg::Options::=--force-confold \
+  -y dist-upgrade
+
+# Reboot udføres aldrig implicit. Backendens separate reboot-kommando skal bruges.
+echo "OS-opdatering gennemført; ingen automatisk genstart udført"

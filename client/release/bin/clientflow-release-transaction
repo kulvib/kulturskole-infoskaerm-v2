@@ -1,0 +1,12 @@
+#!/opt/clientflow/active/runtime/bin/python
+from __future__ import annotations
+import os
+import sys
+from pathlib import Path
+
+os.environ.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+HERE = Path(__file__).resolve()
+sys.path.insert(0, str(HERE.parents[1] / "lib"))
+from clientflow_release.cli import transaction_main
+
+raise SystemExit(transaction_main())

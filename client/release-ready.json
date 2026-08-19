@@ -1,0 +1,7 @@
+{
+  "python": "3.13.14",
+  "release_id": "clientflow-1.2.0-seq-1200",
+  "release_sequence": 1200,
+  "schema_version": 1,
+  "version": "1.2.0"
+}

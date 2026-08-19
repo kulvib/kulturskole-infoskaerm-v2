@@ -1,0 +1,13 @@
+[Unit]
+Description=ClientFlow system broker socket
+
+[Socket]
+ListenStream=/run/clientflow/system.sock
+SocketUser=root
+SocketGroup=clientflow-system-agent
+SocketMode=0660
+RemoveOnStop=yes
+Service=clientflow-system-broker.service
+
+[Install]
+WantedBy=clientflow.target

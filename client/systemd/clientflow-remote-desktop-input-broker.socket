@@ -1,0 +1,13 @@
+[Unit]
+Description=ClientFlow Remote Desktop input broker socket
+
+[Socket]
+ListenStream=/run/clientflow/remote-desktop-input.sock
+SocketUser=root
+SocketGroup=clientflow-remote-desktop-agent
+SocketMode=0660
+RemoveOnStop=yes
+Service=clientflow-remote-desktop-input-broker.service
+
+[Install]
+WantedBy=clientflow.target

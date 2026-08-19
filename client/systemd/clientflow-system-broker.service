@@ -1,0 +1,27 @@
+[Unit]
+Description=ClientFlow fixed-function privileged system broker
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/opt/clientflow/active/runtime/bin/clientflow-system-broker
+LoadCredential=system-private-key.pem:/etc/clientflow/system-private-key.pem
+StateDirectory=clientflow/system-broker
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=no
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX

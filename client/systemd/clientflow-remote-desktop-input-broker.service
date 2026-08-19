@@ -1,0 +1,26 @@
+[Unit]
+Description=ClientFlow Remote Desktop fixed-function uinput broker
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/opt/clientflow/active/runtime/bin/clientflow-remote-desktop-input-broker
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=no
+DevicePolicy=closed
+DeviceAllow=/dev/uinput rw
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX
