@@ -1,9 +1,0 @@
-{
-  "schema_version": 1,
-  "capture_backend": "wayland_mutter",
-  "fps": 10,
-  "bitrate_kbit": 12000,
-  "preset": "veryfast",
-  "segment_seconds": 2,
-  "playlist_size": 8
-}
