@@ -135,6 +135,19 @@ def _retire_shared_livestream() -> None:
 
     # Historical shared Livestream state/commands are retired only after the
     # isolated credential presence check above has proved the active boundary.
+    #
+    # livestream_generation is retained as historical lifecycle data. Its
+    # command_id is nullable, so detach references to retired shared commands
+    # before deleting those transport rows.
+    if _has_table("livestream_generation"):
+        op.execute(sa.text("""
+            UPDATE livestream_generation AS generation
+            SET command_id = NULL
+            FROM client_command AS command
+            WHERE generation.command_id = command.id
+              AND command.domain = 'livestream'
+        """))
+
     op.execute(sa.text("DELETE FROM client_domain_status WHERE domain = 'livestream'"))
     op.execute(sa.text("DELETE FROM client_command WHERE domain = 'livestream'"))
     op.execute(sa.text("DELETE FROM client_domain_credential WHERE domain = 'livestream'"))
