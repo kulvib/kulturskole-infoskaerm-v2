@@ -1,3 +1,1 @@
-Ingen filer skal slettes i denne delta.
-
-Do NOT commit this helper file.
+# No repository files need deletion for this delta.

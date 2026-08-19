@@ -100,7 +100,7 @@ def upgrade() -> None:
     )
 
     op.create_table('organizationlogo',
-        sa.Column('organization_id', sa.Integer(), nullable=False),
+        sa.Column('organization_id', sa.Integer(), autoincrement=False, nullable=False),
         sa.Column('filename', sa.String(), nullable=False),
         sa.Column('content_type', sa.String(), nullable=False),
         sa.Column('data', sa.LargeBinary(), nullable=False),

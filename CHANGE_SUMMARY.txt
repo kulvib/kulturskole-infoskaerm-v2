@@ -1,25 +1,16 @@
-CI failure remediation delta for branch agent/shared-foundations-canonicalization
+CI second failure fix delta
 
-NEW:
-- ruff.toml
+CHANGED FILES:
+- backend/migrations/versions/20260712_30d_display_base_frozen_display_baseline.py
+  * organizationlogo.organization_id now explicitly autoincrement=False so the frozen baseline does not create an unintended SERIAL sequence/default on fresh PostgreSQL databases.
+- backend/tests/test_database_contract_49_source.py
+  * adds a source contract test locking the non-autoincrement organizationlogo baseline invariant.
+- frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx
+  * removes two stale/undefined Livestream dependency-array identifiers.
+- frontend/src/pages/clientdetailspage/remotedesktop/RemoteDesktop.jsx
+  * adds the actually-used stable clearTransferFiles callback to useCallback dependencies.
 
-MODIFIED:
-- backend/service1/client_domain_models.py
-- backend/service1/routers/clients.py
-- backend/service1/routers/enrollment.py
-- backend/service1/shared_domain.py
-- backend/tests/test_backend_cleanup_contract.py
-- frontend/dependency-audit-allowlist.json
-- frontend/package-lock.json
-- frontend/package.json
-- frontend/tests/dependencyRuntime.test.mjs
+DELETE FILES:
+- none
 
-Purpose:
-- Keep full Ruff F-family enforcement while exempting F401 only in the two physically validated FROZEN Livestream files.
-- Remove seven unused imports from shared/non-frozen backend code.
-- Fix stale CI cleanup test reference to non-existent scripts/ci_validate_repository.py.
-- Remediate actionable frontend advisories with compatible patched dependency versions.
-- Upgrade react-router-dom to 7.18.2 and lock react-router 7.18.2.
-- Keep Nano ID 3.3.16 behind one documented temporary advisory exception because it remains a PostCSS transitive dependency and the GitHub advisory is unreviewed/unmapped to an actionable npm range.
-
-Do NOT commit CHANGE_SUMMARY.txt or DELETE_FILES.txt.
+Do not commit CHANGE_SUMMARY.txt or DELETE_FILES.txt.

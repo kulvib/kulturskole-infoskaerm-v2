@@ -1367,8 +1367,6 @@ export default function ClientDetailsPage({
       liveLivestreamStatus,
       liveLivestreamProcessStatus,
       liveLivestreamDesiredState,
-      livePendingLivestreamAction,
-      livePendingLivestreamActionSource,
       liveLivestreamStopReason,
     ]
   );

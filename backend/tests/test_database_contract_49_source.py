@@ -7,6 +7,12 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+
+def test_frozen_display_baseline_does_not_autoincrement_organizationlogo_fk_primary_key():
+    migration = read("migrations/versions/20260712_30d_display_base_frozen_display_baseline.py")
+    assert "sa.Column('organization_id', sa.Integer(), autoincrement=False, nullable=False)" in migration
+    assert "organizationlogo_organization_id_seq" not in migration
+
 def test_step49_is_additive_head_after_lifecycle_and_creates_missing_command_queue():
     migration = read("migrations/versions/20260819_49a_database_contract.py")
     assert 'revision = "20260819_49a_db_contract"' in migration

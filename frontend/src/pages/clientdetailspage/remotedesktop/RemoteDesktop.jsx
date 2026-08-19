@@ -891,7 +891,7 @@ export default function RemoteDesktop() {
       setTransferStatus("");
       setTransferError(err?.message || "Upload fejlede");
     }
-  }, [canControl, clientId, fileBrowserDisplayPath, send, sessionId, setTransferStatus, transferFiles, transferUploading]);
+  }, [canControl, clearTransferFiles, clientId, fileBrowserDisplayPath, send, sessionId, setTransferStatus, transferFiles, transferUploading]);
 
   const beginUploadFilesToClient = useCallback((conflictStrategiesByIndex = {}) => {
     if (!Array.from(transferFiles || []).length || transferUploading) return;
