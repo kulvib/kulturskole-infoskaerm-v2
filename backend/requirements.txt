@@ -1,0 +1,16 @@
+# Direct production dependencies. All direct versions are exact; transitive
+# dependencies are frozen with hashes in requirements.lock.txt.
+fastapi==0.139.0
+sqlmodel==0.0.39
+passlib[bcrypt]==1.7.4
+PyJWT==2.13.0
+bcrypt==4.0.1
+pydantic==2.13.4
+uvicorn[standard]==0.50.1
+python-dotenv==1.2.2
+python-multipart==0.0.32
+psycopg2-binary==2.9.12
+requests==2.34.2
+websockets==12.0
+redis==8.0.1
+alembic==1.18.5
