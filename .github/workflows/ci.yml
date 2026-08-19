@@ -1,1 +1,140 @@
-tes
+name: CI
+
+"on":
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend, migrations and contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:18.4
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: planiq_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d planiq_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/planiq_ci
+      ENVIRONMENT: development
+      SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+      PYTHONPATH: backend
+      MIGRATION_ALLOW_EMPTY_DATABASE: "true"
+      MIGRATION_ADVISORY_LOCK_TIMEOUT_SECONDS: "30"
+      MIGRATION_LOCK_TIMEOUT_SECONDS: "10"
+      MIGRATION_STATEMENT_TIMEOUT_SECONDS: "120"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+          pip-version: "26.1.2"
+
+      - name: Verify Python toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(python -c 'import platform; print(platform.python_version())')" = "3.13.14"
+          test "$(python -m pip --version | awk '{print $2}')" = "26.1.2"
+
+      - name: Install hash-locked CI dependencies
+        run: python -m pip install --require-hashes -r requirements-ci.lock.txt
+
+      - name: Verify dependency contract
+        run: |
+          python -m pip check
+          python scripts/validate_dependency_contract.py
+
+      - name: Static Python checks
+        run: |
+          python -m ruff check backend/service1 backend/scripts scripts --select F
+          python -m compileall -q backend/service1 backend/migrations client/runtime client/release/lib scripts
+
+      - name: Audit production Python dependencies
+        run: python -m pip_audit --disable-pip --no-deps --progress-spinner off -r backend/requirements.lock.txt
+
+      - name: Migrate empty PostgreSQL database to canonical head
+        run: python backend/scripts/run_migrations.py
+
+      - name: Verify migration runner is idempotent at head
+        run: python backend/scripts/run_migrations.py
+
+      - name: Run Python test suite
+        run: python -m pytest -q backend/tests scripts/tests
+
+  frontend:
+    name: Frontend contracts and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.22.0"
+          package-manager-cache: false
+
+      - name: Verify Node.js toolchain
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "v22.22.0"
+          test "$(npm --version)" = "10.9.4"
+
+      - name: Install locked frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm run audit:dependencies
+
+      - name: Run dependency and upgrade contracts
+        working-directory: frontend
+        run: |
+          npm run test:dependency-runtime
+          npm run test:mui-react-upgrade
+          npm run test:snackbar-contract
+
+      - name: Run complete frontend test suite
+        working-directory: frontend
+        run: node --test tests/*.test.mjs
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Build production frontend
+        working-directory: frontend
+        run: npm run build
