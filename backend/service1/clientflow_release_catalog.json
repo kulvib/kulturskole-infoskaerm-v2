@@ -1,0 +1,42 @@
+{
+  "manifest_schema": 4,
+  "channel": "canonical-release-catalog",
+  "catalog_sequence": 1200,
+  "latest_stable": "1.2.0",
+  "default_install_version": "1.2.0",
+  "retention_policy": {
+    "max_installable_versions": 1,
+    "keep_blocked_metadata": false
+  },
+  "created_at": "2026-08-19T00:00:00Z",
+  "releases": [
+    {
+      "version": "1.2.0",
+      "client_version": "1.2.0",
+      "release_sequence": 1200,
+      "revision": "clientflow-1.2.0-seq-1200",
+      "status": "stable",
+      "installable": true,
+      "update_allowed": true,
+      "rollback_allowed": false,
+      "requires_explicit_downgrade": false,
+      "requires_reboot": false,
+      "ubuntu_compatibility": {
+        "policy": "ubuntu-desktop-lts-minimum",
+        "minimum_lts_version": "26.04",
+        "maximum_certified_version": "26.04",
+        "certified_versions": [
+          "26.04"
+        ],
+        "architecture": "amd64",
+        "desktop": "gnome",
+        "display_stack": "wayland",
+        "requires_platform_preflight": true
+      },
+      "notes": [
+        "Canonical isolated runtime for Display, Status, System, Livestream, Terminal and Remote Desktop.",
+        "Source baseline derived from physically validated clientflow-1.2.0-seq-1200 runtime."
+      ]
+    }
+  ]
+}
