@@ -1,130 +1,149 @@
-# ClientFlow – fresh Livestream foundation
+# PlanIQ Display / ClientFlow
 
-Dette repository er et nyt udgangspunkt for Infoskærm. Det implementerer **kun Livestream** mod den faktiske ClientFlow **1.2.0 seq-1200** klientkontrakt.
+Dette repository indeholder PlanIQ Display-webapplikationen og ClientFlow-runtime/integrationerne til fysiske infoskærmsklienter.
 
-Det gamle 1.1.x-flow, `pending_chrome_action`, viewer-leases, gammel HLS-signalling og compatibility aliases er ikke med.
+Projektet består af en fælles webplatform med backend, frontend, database-migrationer, ClientFlow release-/installationsmateriale og domænespecifik funktionalitet til blandt andet Livestream, Terminal og Remote Desktop.
 
-## Arkitektur
+## Repository-struktur
 
 ```text
-Control Room (samme FastAPI service)
-        |
-        v
-Livestream API
-        |
-        +--> client_command (leased FIFO queue)
-        |       |
-        |       v
-        |   ClientFlow 1.2 livestream-agent
-        |       |
-        |       v
-        |   local livestream broker
-        |       |
-        |       v
-        |   FFmpeg producer + uploader
-        |       |
-        |       v
-        +<-- generation-owned HLS upload
-        |
-        +--> authenticated HLS playback
+.
+├── backend/                     FastAPI-backend, Alembic-migrationer og backend-tests
+├── frontend/                    React/Vite-frontend og frontend-tests
+├── client-release/              ClientFlow releaseartefakter
+├── clientflow-autoinstall-site/ Installations- og update-materiale til ClientFlow
+├── scripts/                     Repository-/release-/valideringsscripts
+├── render.yaml                  Render deployment-konfiguration
+└── *.md                         Drift, release, audit og integrationsdokumentation
 ```
 
-Backend ejer **viewer-lifecycle, intent, command lease, generation identity og media health**. Ubuntu ejer **desired state, broker og process lifecycle**. Browseren rapporterer kun viewer-presence og afspiller HLS; backend afgør altid Start/Stop.
+## Backend
 
-## ClientFlow 1.2-kontrakt
+Backenden ligger i `backend/` og kører som en FastAPI-applikation.
 
-Klienten forventer disse endpoints:
-
-- `POST /api/client-auth/token`
-- `POST /api/livestream-agent/clients/{id}/commands/claim`
-- `POST /api/livestream-agent/clients/{id}/commands/{command_id}/renew`
-- `POST /api/livestream-agent/clients/{id}/commands/{command_id}/complete`
-- `POST /api/livestream-agent/clients/{id}/commands/{command_id}/fail`
-- `PUT /api/livestream-agent/clients/{id}/status`
-- `POST /api/livestream-agent/clients/{id}/generations/{generation_id}/started`
-- `POST /api/livestream-agent/clients/{id}/generations/{generation_id}/stopped`
-- `PUT /api/livestream-agent/clients/{id}/generations/{generation_id}/files/{filename}`
-
-Understøttede Livestream commands er `start`, `restart`, `reset_generation` og `stop`.
-
-## Datamodel
-
-Otte tabeller:
-
-1. `organization`
-2. `user_account`
-3. `client`
-4. `client_domain_credential`
-5. `client_command`
-6. `client_domain_status`
-7. `livestream_generation`
-8. `livestream_viewer`
-
-HLS-filer er transient media og ligger ikke i databasen.
-
-
-## Viewer-ejet lifecycle
-
-Livestream har ingen normal Start/Stop-knap i Control Room. Lifecycle følger aktive viewers:
-
-- første viewer åbner Livestream → automatisk `start`
-- heartbeat hvert `VIEWER_HEARTBEAT_SECONDS` (default 10 s)
-- viewer-lease udløber efter `VIEWER_LEASE_SECONDS` (default 30 s)
-- sidste viewer væk → `VIEWER_STOP_GRACE_SECONDS` (default 30 s) → automatisk `stop`
-- vender en viewer tilbage inden grace, fortsætter samme generation uden Stop/Start
-- flere viewers deler samme generation; streamen stopper først, når sidste viewer er væk
-- skjult fane, klientskift, logout og `pagehide` sender viewer-leave
-- browsercrash/netværkstab håndteres af lease-expiry
-- media-watchdog laver kun `reset_generation`, mens mindst én viewer er aktiv
-
-Backend kører en lille DB-baseret reconcile-loop hvert `VIEWER_RECONCILE_INTERVAL_SECONDS` (default 5 s). Viewer-data er transient lifecycle-state; HLS er fortsat transient media på disk.
-
-## Media health
-
-ClientFlow 1.2 kan rapportere producer=`running`, selv før der findes brugbare segmenter. Derfor bruger backend **faktiske HLS uploads** som health-signal.
-
-Hvis en aktiv generation ikke har haft uploadprogression inden for `MEDIA_STALE_SECONDS` (default 45 s), opretter backend én ny generation og sender `reset_generation`. Browseren må ikke genstarte Ubuntu-processer.
-
-## Lokal udvikling
-
-Opret miljøvariabler fra `backend/.env.example`, opret en tom PostgreSQL-database og kør:
+Databaseændringer håndteres med Alembic. Produktionsdeployet kører migrationer via:
 
 ```bash
 cd backend
-python -m pip install -r requirements.txt
-alembic upgrade head
-uvicorn app.main:app --reload
+python scripts/run_migrations.py
 ```
 
-Første startup opretter admin-brugeren fra `ADMIN_EMAIL` + `ADMIN_PASSWORD`, hvis databasen endnu ikke har brugere.
+Lokal kontrol af migrationer kan blandt andet køres med:
 
-## Render – frisk staging
+```bash
+cd backend
+python scripts/validate_display_baseline.py
+alembic history
+alembic heads
+```
 
-`render.yaml` opretter én Python 3.13.14 web service og én **frisk** PostgreSQL-database. Deploy dette som **staging først**. Tilslut ikke den gamle produktionsdatabase til denne baseline.
+Applikations-startup må ikke oprette eller ændre databaseskemaet implicit.
 
-Vigtigt under Livestream-isolation: ClientFlow 1.2 har credential pr. domæne. Peg derfor kun Ubuntu-maskinens `livestream.json` på denne staging-backend. Display, Terminal, Remote Desktop og System kan fortsætte mod deres eksisterende backend, indtil deres tur kommer.
+## Frontend
 
-I Control Room:
+Frontend ligger i `frontend/` og er bygget med React/Vite.
 
-1. Opret klienten.
-2. Vælg **Nyt Livestream credential**.
-3. Download `livestream.json`.
-4. Installer kun denne fil på Ubuntu som Livestream credential.
-5. Genstart kun `clientflow-livestream-agent.service` og `clientflow-livestream-uploader.service`.
+Typisk lokal installation og build:
 
-De konkrete Ubuntu-kommandoer gives først i den fysiske testfase.
+```bash
+cd frontend
+npm ci
+npm run build
+```
 
-## Bevidst ikke med
+Frontend deployes som statisk site og kommunikerer med backend over HTTPS/WSS.
 
-- Terminal
-- Remote Desktop
-- Display management
-- System/update agent
-- Redis
-- WebSockets
-- React/Node build
-- gammel 1.1.x-klientkode
-- gammel database/migrationshistorik
-- browserstyret producer-lifecycle uden backend-authoritet
+## ClientFlow-domæner
 
-Fælles control-plane kan udvides senere, men kun når næste funktion behandles.
+ClientFlow omfatter flere funktionelle domæner, herunder:
+
+- **Livestream** – skærm-capture og HLS-streaming.
+- **Bruger-terminal / Admin-terminal** – interaktive PTY-sessioner på klienten.
+- **Remote Desktop** – fjernvisning og fjernstyring.
+
+Domænerne skal behandles som selvstændige sikkerheds- og driftsområder. Ændringer i ét domæne må ikke antages at være risikofrie for de andre uden dokumenteret isolation og fysisk test.
+
+### Terminal
+
+Terminal-v2 har egne Terminal-specifikke session-, event-, grant-, credential- og statusmodeller i backendens database.
+
+Admin-terminalen anvender separat root-grant-validering på den fysiske klient. Bruger-terminal og Admin-terminal deler Terminal-domænet, men skal ikke dele credential-/session-state med Livestream eller Remote Desktop.
+
+### Livestream
+
+Livestream har særskilt ClientFlow capture-/upload-flow og tilhørende backend-ruter og state. Se blandt andet:
+
+- `LIVESTREAM_V2_INTEGRATION.md`
+- `LIVESTREAM_V2_ISOLATION_REPORT.txt`
+- `LIVESTREAM_V2_CHANGED_FILES.txt`
+
+### Remote Desktop
+
+Remote Desktop ligger som et separat funktionelt domæne i backend/frontend og ClientFlow-runtime. Ændringer bør testes isoleret fra Terminal og Livestream.
+
+## Deployment
+
+`render.yaml` beskriver den nuværende Render-deployment:
+
+- `infoskaerm-backend` – Python/FastAPI backend
+- `infoskaerm-frontend` – statisk frontend
+
+Backenden kører med én Uvicorn-worker i den nuværende deployment-konfiguration.
+
+Secrets, database-credentials og signing keys skal leveres som environment variables på deployment-platformen og må ikke hardcodes i repositoryet.
+
+## Database
+
+Produktionsdatabasen konfigureres via `DATABASE_URL`.
+
+Alembic er autoritativ for databaseskemaet. Nye tabeller, constraints, indexes og ændringer skal tilføjes gennem migrationer og valideres mod den aktuelle migrations-head før deployment.
+
+Domænespecifikke data bør have domænespecifikke tabeller og credentials frem for generiske cross-domain records, når isolation er et krav.
+
+## Tests og validering
+
+Repositoryet indeholder backend-, frontend- og repository-kontrakttests.
+
+Relevante kontroller ligger blandt andet i:
+
+```text
+backend/tests/
+frontend/tests/
+scripts/tests/
+```
+
+Før release bør de relevante domænetests køres sammen med repositoryets release-/readiness-kontroller.
+
+## ClientFlow releases
+
+ClientFlow release- og signing-flow er dokumenteret i:
+
+- `CLIENTFLOW_RELEASE_PROCEDURE.md`
+- `CLIENTFLOW_RELEASE_SIGNING.md`
+- `FINAL_RELEASE_BASELINE.md`
+- `RELEASE_CHECKLIST.md`
+
+Releasefiler og runtime-identitet skal valideres efter projektets signing- og manifestkontrakter.
+
+## Drift og fejlsøgning
+
+Driftsvejledning findes i:
+
+- `DRIFTSVEJLEDNING.md`
+- `FINAL_AUDIT.md`
+- `WEBSOCKET_PROTOCOL.md`
+- `DEPENDENCY_MAINTENANCE.md`
+
+Ved fejlsøgning på ClientFlow bør den fysiske Ubuntu-klient betragtes som autoritativ for faktisk runtime-adfærd. Undgå samtidige ændringer på tværs af Livestream, Terminal og Remote Desktop, medmindre en fælles afhængighed er dokumenteret som årsag.
+
+## Sikkerhed
+
+- Commit aldrig passwords, API-nøgler, database-URLs eller signing secrets.
+- Brug environment variables til production secrets.
+- Terminal root-grants og andre kortlivede credentials skal valideres efter deres specifikke issuer/audience/key-kontrakter.
+- Administrative funktioner skal være beskyttet af relevante rolle-, token-version- og step-up-kontroller.
+- Database- og credential-isolation skal verificeres med tests og ikke kun antages ud fra fil-/modulnavne.
+
+## Projektstatus
+
+Dette repository er under aktiv isolering og fejlsøgning af ClientFlow-domænerne. Funktionel godkendelse af et domæne er ikke i sig selv dokumentation for fuld infrastrukturel isolation fra de øvrige domæner.
