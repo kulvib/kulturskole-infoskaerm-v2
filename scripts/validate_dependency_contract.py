@@ -175,21 +175,27 @@ def main() -> int:
 
     render = yaml.safe_load((ROOT / "render.yaml").read_text()) or {}
     services = render.get("services", [])
-    web = next((item for item in services if item.get("type") == "web"), None)
-    static = next((item for item in services if item.get("type") == "static"), None)
-    if not web or not static:
-        raise ValueError("render.yaml mangler web/static service")
-    build = str(web.get("buildCommand"))
+    backend = next(
+        (item for item in services if item.get("type") == "web" and item.get("runtime") == "python"),
+        None,
+    )
+    frontend = next(
+        (item for item in services if item.get("type") == "web" and item.get("runtime") == "static"),
+        None,
+    )
+    if not backend or not frontend:
+        raise ValueError("render.yaml mangler canonical web/python backend eller web/static frontend")
+    build = str(backend.get("buildCommand"))
     for token in (f"pip=={PIP_VERSION}", "--require-hashes", "requirements.lock.txt"):
         if token not in build:
             raise ValueError(f"Render backend-build mangler {token}")
-    if str(static.get("buildCommand")) != "npm ci && npm run build":
+    if str(frontend.get("buildCommand")) != "npm ci && npm run build":
         raise ValueError("Render frontend-build skal være præcis npm ci && npm run build")
-    web_env = {item.get("key"): item.get("value") for item in web.get("envVars", [])}
-    static_env = {item.get("key"): item.get("value") for item in static.get("envVars", [])}
-    if web_env.get("PYTHON_VERSION") != PYTHON_VERSION:
+    backend_env = {item.get("key"): item.get("value") for item in backend.get("envVars", [])}
+    frontend_env = {item.get("key"): item.get("value") for item in frontend.get("envVars", [])}
+    if backend_env.get("PYTHON_VERSION") != PYTHON_VERSION:
         raise ValueError("Render PYTHON_VERSION afviger")
-    if static_env.get("NODE_VERSION") != NODE_VERSION:
+    if frontend_env.get("NODE_VERSION") != NODE_VERSION:
         raise ValueError("Render NODE_VERSION afviger")
 
     workflow = (ROOT / ".github/workflows/ci.yml").read_text()

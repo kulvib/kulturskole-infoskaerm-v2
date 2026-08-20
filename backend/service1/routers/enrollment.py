@@ -12,12 +12,27 @@ from typing import List, Optional
 import uuid
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import Session, select
 
 from ..audit import add_audit_log
 from ..auth import get_current_superadmin_user, get_password_hash, verify_password
 from ..client_domain_models import ClientDomainCredential
+from ..clientflow_fresh_install_auth import (
+    ClientFlowFreshInstallAuthorizationError,
+    issue_fresh_install_authorization,
+    utc_epoch,
+    verify_fresh_install_authorization,
+)
+from ..clientflow_release_artifacts import (
+    ClientFlowReleaseArtifactError,
+    open_artifact_matches_fresh_install_authorization,
+)
+from ..clientflow_releases import (
+    ClientFlowCatalogError,
+    fresh_install_release_snapshot,
+)
 from ..clientflow_update_auth import (
     ClientFlowUpdateAuthError,
     UPDATE_ACCESS_TOKEN_AUDIENCE,
@@ -52,6 +67,7 @@ ENROLLMENT_RESUME_HOURS = 24
 DOMAIN_NAMES = ("status", "display", "livestream", "remote_desktop", "terminal", "system")
 SHARED_CREDENTIAL_DOMAINS = ("status", "display", "system")
 _RSA_ENCRYPTION_OID_DER = bytes.fromhex("06092a864886f70d010101")
+FRESH_INSTALL_ARTIFACT_URL = "/api/enrollment/fresh-install-artifact"
 
 
 def _generate_enrollment_code() -> str:
@@ -185,6 +201,23 @@ class EnrollmentTokenCreated(BaseModel):
     code: str
     expires_at: str
     note: Optional[str] = None
+    release_id: str
+    version: str
+    release_sequence: int
+    bundle_sha256: str
+    bundle_size: int
+    release_approval_reference: str
+    release_candidate_sha256: str
+    source_commit: str
+    fresh_install_authorization: str
+    artifact_url: str = FRESH_INSTALL_ARTIFACT_URL
+
+
+class FreshInstallArtifactRequest(BaseModel):
+    enrollment_code: str = PydanticField(min_length=1, max_length=128)
+    authorization: str = PydanticField(min_length=32, max_length=4096)
+    expected_release_id: str = PydanticField(min_length=1, max_length=160)
+    expected_bundle_sha256: str = PydanticField(min_length=64, max_length=64)
 
 
 class EnrollmentCredentialRead(BaseModel):
@@ -278,6 +311,24 @@ def _require_admin_can_use_organization(admin: User, organization_id: Optional[i
     raise HTTPException(status_code=403, detail="Du kan kun oprette installationskoder til din egen organisation")
 
 
+def _active_token_for_code(session: Session, code: str) -> EnrollmentToken:
+    normalized = str(code or "").strip().upper()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Installationskode mangler")
+    now = utcnow()
+    candidates = session.exec(
+        select(EnrollmentToken).where(
+            EnrollmentToken.used_at == None,
+            EnrollmentToken.revoked_at == None,
+            EnrollmentToken.expires_at >= now,
+        )
+    ).all()
+    token = next((candidate for candidate in candidates if verify_password(normalized, candidate.code_hash)), None)
+    if token is None:
+        raise HTTPException(status_code=401, detail="Installationskoden er ugyldig, brugt eller udløbet")
+    return token
+
+
 @router.post("/admin/enrollment-tokens", response_model=EnrollmentTokenCreated, status_code=201)
 def create_enrollment_token(
     request: Request,
@@ -289,6 +340,11 @@ def create_enrollment_token(
     resolved_organization_id = data.organization_id if data.organization_id is not None else admin.organization_id
     if resolved_organization_id is not None and not session.get(Organization, resolved_organization_id):
         raise HTTPException(status_code=404, detail="Organisation ikke fundet")
+    try:
+        snapshot = fresh_install_release_snapshot()
+    except ClientFlowCatalogError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     code = _generate_enrollment_code()
     token = EnrollmentToken(
         code_hash=get_password_hash(code),
@@ -301,6 +357,19 @@ def create_enrollment_token(
     )
     session.add(token)
     session.flush()
+    if token.id is None:
+        session.rollback()
+        raise HTTPException(status_code=500, detail="Installationskoden kunne ikke oprettes")
+    try:
+        authorization = issue_fresh_install_authorization(
+            enrollment_token_id=int(token.id),
+            expires_at=token.expires_at,
+            snapshot=snapshot,
+        )
+    except ClientFlowFreshInstallAuthorizationError as exc:
+        session.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
     add_audit_log(
         session,
         action="enrollment_token_created",
@@ -310,11 +379,99 @@ def create_enrollment_token(
         entity_id=token.id,
         entity_label=token.code_preview,
         target_organization_id=token.organization_id,
-        details={"expires_at": token.expires_at.isoformat(), "note": token.note},
+        details={
+            "expires_at": token.expires_at.isoformat(),
+            "note": token.note,
+            "fresh_install_release_id": snapshot["target_release_id"],
+            "fresh_install_bundle_sha256": snapshot["bundle_sha256"],
+            "fresh_install_approval_reference": snapshot["release_approval_reference"],
+            "fresh_install_source_commit": snapshot["source_commit"],
+        },
     )
     session.commit()
     session.refresh(token)
-    return EnrollmentTokenCreated(id=token.id, code=code, expires_at=token.expires_at.isoformat() + "Z", note=token.note)
+    return EnrollmentTokenCreated(
+        id=int(token.id),
+        code=code,
+        expires_at=token.expires_at.isoformat() + "Z",
+        note=token.note,
+        release_id=snapshot["target_release_id"],
+        version=snapshot["target_version"],
+        release_sequence=int(snapshot["target_release_sequence"]),
+        bundle_sha256=snapshot["bundle_sha256"],
+        bundle_size=int(snapshot["bundle_size"]),
+        release_approval_reference=snapshot["release_approval_reference"],
+        release_candidate_sha256=snapshot["release_candidate_sha256"],
+        source_commit=snapshot["source_commit"],
+        fresh_install_authorization=authorization,
+    )
+
+
+@router.post("/enrollment/fresh-install-artifact")
+def download_fresh_install_artifact(
+    request: Request,
+    data: FreshInstallArtifactRequest,
+    session: Session = Depends(get_session),
+):
+    enforce_request_rate_limit(
+        request,
+        bucket="enrollment-fresh-install-artifact",
+        max_attempts=20,
+        window_seconds=60,
+        detail="For mange fresh-install downloadforsøg. Prøv igen senere.",
+    )
+    token = _active_token_for_code(session, data.enrollment_code)
+    try:
+        authorization = verify_fresh_install_authorization(
+            data.authorization,
+            enrollment_token_id=int(token.id),
+        )
+    except ClientFlowFreshInstallAuthorizationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    if authorization.expires_at_epoch != utc_epoch(token.expires_at):
+        raise HTTPException(status_code=401, detail="Fresh-install authorization matcher ikke installationskodens udløb")
+    if str(data.expected_release_id).strip() != authorization.release_id:
+        raise HTTPException(status_code=409, detail="Forventet release-id matcher ikke fresh-install authorization")
+    expected_sha = str(data.expected_bundle_sha256).strip().lower()
+    if not hmac.compare_digest(expected_sha, authorization.bundle_sha256):
+        raise HTTPException(status_code=409, detail="Forventet bundle-SHA-256 matcher ikke fresh-install authorization")
+
+    release = {
+        "release_id": authorization.release_id,
+        "version": authorization.version,
+        "release_sequence": authorization.release_sequence,
+    }
+    try:
+        artifact, artifact_handle = open_artifact_matches_fresh_install_authorization(
+            release,
+            authorization_release_id=authorization.release_id,
+            bundle_sha256=authorization.bundle_sha256,
+            bundle_size=authorization.bundle_size,
+            approval_reference=authorization.approval_reference,
+            candidate_sha256=authorization.candidate_sha256,
+            source_commit=authorization.source_commit,
+        )
+    except ClientFlowReleaseArtifactError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    def stream_verified_artifact():
+        try:
+            while chunk := artifact_handle.read(1024 * 1024):
+                yield chunk
+        finally:
+            artifact_handle.close()
+
+    return StreamingResponse(
+        stream_verified_artifact(),
+        media_type="application/octet-stream",
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Content-Disposition": f'attachment; filename="{artifact.release_id}.tar"',
+            "Content-Length": str(artifact.bundle_size),
+            "ETag": f'"sha256-{artifact.bundle_sha256}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/admin/enrollment-tokens", response_model=List[EnrollmentTokenRead])

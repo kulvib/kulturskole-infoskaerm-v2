@@ -13,6 +13,7 @@ from typing import Any
 
 from .clientflow_release_artifacts import (
     ClientFlowReleaseArtifactError,
+    inspect_published_fresh_install_artifact,
     inspect_published_release_artifact,
 )
 
@@ -146,6 +147,24 @@ def resolve_release(requested_version: str | None) -> dict[str, Any]:
     return dict(release)
 
 
+def resolve_fresh_install_release() -> dict[str, Any]:
+    """Resolve only the catalog's canonical default fresh-install target."""
+    catalog = load_catalog()
+    version = str(catalog.get("default_install_version") or catalog["latest_stable"]).strip()
+    release = next((item for item in catalog["releases"] if item.get("version") == version), None)
+    if release is None:
+        raise ClientFlowCatalogError("Default fresh-install version findes ikke i releasekataloget")
+    status = str(release.get("status") or "").lower()
+    install_modes = release.get("install_modes") or []
+    if (
+        status not in SELECTABLE_STATUSES
+        or release.get("installable") is not True
+        or "fresh_install" not in install_modes
+    ):
+        reason = release.get("block_reason") or release.get("deprecation_reason") or "Versionen kan ikke fresh-installeres"
+        raise ClientFlowCatalogError(str(reason))
+    return dict(release)
+
 
 def validate_release_compatibility(
     release: dict[str, Any],
@@ -155,10 +174,11 @@ def validate_release_compatibility(
 ) -> None:
     """Reject a known-incompatible update/rollback target.
 
-    Fresh factory installation is validated by the autoinstall selector. This
+    Fresh factory installation is selected by ``resolve_fresh_install_release``
+    and validated again by the embedded installer's platform preflight. This
     helper protects remote update orders when the backend has enough client
     telemetry to make an authoritative decision. Unknown telemetry is left to
-    the signed ClientFlow worker, which performs the same check locally.
+    the ClientFlow worker, which performs the same check locally.
     """
     current = str(current_version or "").strip().lstrip("vV")
     minimum = str(release.get("min_current_version") or "").strip().lstrip("vV")
@@ -183,6 +203,7 @@ def validate_release_compatibility(
         raise ClientFlowCatalogError(
             f"ClientFlow {release['version']} understøtter {supported}; klienten rapporterer {actual_ubuntu}"
         )
+
 
 def public_catalog() -> dict[str, Any]:
     catalog = load_catalog()
@@ -232,6 +253,25 @@ def deployment_release_snapshot(release: dict[str, Any]) -> dict[str, Any]:
         raise ClientFlowArtifactUnavailable(str(exc)) from exc
     return {
         "target_release_id": artifact.release_id,
+        "bundle_sha256": artifact.bundle_sha256,
+        "bundle_size": artifact.bundle_size,
+        "release_approval_reference": artifact.approval_reference,
+        "release_candidate_sha256": artifact.candidate_sha256,
+        "source_commit": artifact.source_commit,
+    }
+
+
+def fresh_install_release_snapshot() -> dict[str, Any]:
+    """Resolve the default fresh-install release to exact approved 51M bytes."""
+    release = resolve_fresh_install_release()
+    try:
+        artifact = inspect_published_fresh_install_artifact(release)
+    except ClientFlowReleaseArtifactError as exc:
+        raise ClientFlowArtifactUnavailable(str(exc)) from exc
+    return {
+        "target_release_id": artifact.release_id,
+        "target_version": artifact.version,
+        "target_release_sequence": artifact.release_sequence,
         "bundle_sha256": artifact.bundle_sha256,
         "bundle_size": artifact.bundle_size,
         "release_approval_reference": artifact.approval_reference,

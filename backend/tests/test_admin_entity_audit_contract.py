@@ -319,13 +319,49 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rename_audit.details["name_before"], "Audit organisation")
         self.assertEqual(rename_audit.details["name_after"], "Audit organisation renamed")
 
-        created_token = create_enrollment_token(
-            _request("POST", "/api/admin/enrollment-tokens"),
-            EnrollmentTokenCreate(organization_id=organization_id, expires_in_hours=1),
-            self.session,
-            self.admin,
+        fresh_install_snapshot = {
+            "target_release_id": "clientflow-1.3.0-seq-1201",
+            "target_version": "1.3.0",
+            "target_release_sequence": 1201,
+            "bundle_sha256": "a" * 64,
+            "bundle_size": 123456,
+            "release_approval_reference": "51H-approved",
+            "release_candidate_sha256": "b" * 64,
+            "source_commit": "c" * 40,
+        }
+
+        with patch(
+            "service1.routers.enrollment.fresh_install_release_snapshot",
+            return_value=fresh_install_snapshot,
+        ), patch(
+            "service1.routers.enrollment.issue_fresh_install_authorization",
+            return_value="ci-fresh-install-authorization",
+        ):
+            created_token = create_enrollment_token(
+                _request("POST", "/api/admin/enrollment-tokens"),
+                EnrollmentTokenCreate(organization_id=organization_id, expires_in_hours=1),
+                self.session,
+                self.admin,
+            )
+
+        enrollment_audit = self._audit("enrollment_token_created", created_token.id)
+        self.assertEqual(enrollment_audit.target_organization_id, organization_id)
+        self.assertEqual(
+            enrollment_audit.details["fresh_install_release_id"],
+            fresh_install_snapshot["target_release_id"],
         )
-        self.assertEqual(self._audit("enrollment_token_created", created_token.id).target_organization_id, organization_id)
+        self.assertEqual(
+            enrollment_audit.details["fresh_install_bundle_sha256"],
+            fresh_install_snapshot["bundle_sha256"],
+        )
+        self.assertEqual(
+            enrollment_audit.details["fresh_install_approval_reference"],
+            fresh_install_snapshot["release_approval_reference"],
+        )
+        self.assertEqual(
+            enrollment_audit.details["fresh_install_source_commit"],
+            fresh_install_snapshot["source_commit"],
+        )
 
         revoked = revoke_enrollment_token(
             _request("POST", f"/api/admin/enrollment-tokens/{created_token.id}/revoke"),
