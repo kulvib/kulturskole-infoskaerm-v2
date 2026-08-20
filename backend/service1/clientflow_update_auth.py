@@ -539,7 +539,9 @@ def create_provisioning_token(
     for old in existing_tokens:
         old.revoked_at = now
         session.add(old)
-    current = active_update_credential(session, client_id=int(client.id), for_update=True)
+    # Serialize provisioning against credential rotation/recovery even though
+    # this code path only needs the row-lock side effect, not the returned row.
+    active_update_credential(session, client_id=int(client.id), for_update=True)
     has_credential_history = session.exec(
         select(ClientFlowUpdateCredential.id)
         .where(ClientFlowUpdateCredential.client_id == int(client.id))
