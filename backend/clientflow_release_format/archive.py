@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path, PurePosixPath
 import stat
 import tarfile
@@ -72,41 +73,55 @@ def inspect_payload_tar(path: Path, *, expected_root: str, limits: ArchiveLimits
     return members
 
 
-def read_bundle(bundle: Path) -> tuple[dict, bytes]:
-    try:
-        metadata = bundle.lstat()
-    except FileNotFoundError as exc:
-        raise ArchiveError("Releasebundlen findes ikke") from exc
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+def _stat_signature(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def read_bundle_fd(descriptor: int) -> tuple[dict, bytes]:
+    """Read manifest and payload from one already-open immutable file identity."""
+    metadata = os.fstat(descriptor)
+    if not stat.S_ISREG(metadata.st_mode):
         raise ArchiveError("Releasebundlen skal være en almindelig fil")
     if metadata.st_size <= 0 or metadata.st_size > MAX_BUNDLE_BYTES:
         raise ArchiveError("Releasebundlens størrelse er ugyldig")
     seen: set[str] = set()
     manifest_bytes: bytes | None = None
     payload_bytes: bytes | None = None
-    with tarfile.open(bundle, mode="r:") as archive:
-        for member in archive.getmembers():
-            validate_member_name(member.name)
-            if member.name in seen:
-                raise ArchiveError("Releasebundlen indeholder dublerede medlemmer")
-            seen.add(member.name)
-            if not member.isfile() or member.name not in {"manifest.json", "clientflow-payload.tar"}:
-                raise ArchiveError("Releasebundlen indeholder uventede medlemmer")
-            if member.uid != 0 or member.gid != 0 or member.mode & 0o022:
-                raise ArchiveError("Releasebundle-medlemmer har ugyldigt ejerskab eller mode")
-            limit = MAX_MANIFEST_BYTES if member.name == "manifest.json" else MAX_PAYLOAD_BYTES
-            if member.size <= 0 or member.size > limit:
-                raise ArchiveError("Releasebundle-medlem er for stort eller tomt")
-            stream = archive.extractfile(member)
-            if stream is None:
-                raise ArchiveError("Releasebundle-medlem kunne ikke læses")
-            data = stream.read(member.size + 1)
-            if len(data) != member.size:
-                raise ArchiveError("Releasebundle-medlem har forkert størrelse")
-            if member.name == "manifest.json":
-                manifest_bytes = data
-            else:
-                payload_bytes = data
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    with os.fdopen(os.dup(descriptor), "rb", closefd=True) as source:
+        with tarfile.open(fileobj=source, mode="r:") as archive:
+            for member in archive.getmembers():
+                validate_member_name(member.name)
+                if member.name in seen:
+                    raise ArchiveError("Releasebundlen indeholder dublerede medlemmer")
+                seen.add(member.name)
+                if not member.isfile() or member.name not in {"manifest.json", "clientflow-payload.tar"}:
+                    raise ArchiveError("Releasebundlen indeholder uventede medlemmer")
+                if member.uid != 0 or member.gid != 0 or member.mode & 0o022:
+                    raise ArchiveError("Releasebundle-medlemmer har ugyldigt ejerskab eller mode")
+                limit = MAX_MANIFEST_BYTES if member.name == "manifest.json" else MAX_PAYLOAD_BYTES
+                if member.size <= 0 or member.size > limit:
+                    raise ArchiveError("Releasebundle-medlem er for stort eller tomt")
+                stream = archive.extractfile(member)
+                if stream is None:
+                    raise ArchiveError("Releasebundle-medlem kunne ikke læses")
+                data = stream.read(member.size + 1)
+                if len(data) != member.size:
+                    raise ArchiveError("Releasebundle-medlem har forkert størrelse")
+                if member.name == "manifest.json":
+                    manifest_bytes = data
+                else:
+                    payload_bytes = data
+    after = os.fstat(descriptor)
+    if _stat_signature(after) != _stat_signature(metadata):
+        raise ArchiveError("Releasebundlen ændrede sig under læsning")
+    os.lseek(descriptor, 0, os.SEEK_SET)
     if seen != {"manifest.json", "clientflow-payload.tar"} or manifest_bytes is None or payload_bytes is None:
         raise ArchiveError("Releasebundlen mangler manifest eller payload")
     try:
@@ -116,3 +131,19 @@ def read_bundle(bundle: Path) -> tuple[dict, bytes]:
     if not isinstance(manifest, dict):
         raise ArchiveError("Releasebundlens manifest skal være et objekt")
     return manifest, payload_bytes
+
+
+def read_bundle(bundle: Path) -> tuple[dict, bytes]:
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(bundle, flags)
+    except FileNotFoundError as exc:
+        raise ArchiveError("Releasebundlen findes ikke") from exc
+    except OSError as exc:
+        raise ArchiveError("Releasebundlen kunne ikke åbnes sikkert") from exc
+    try:
+        return read_bundle_fd(descriptor)
+    finally:
+        os.close(descriptor)

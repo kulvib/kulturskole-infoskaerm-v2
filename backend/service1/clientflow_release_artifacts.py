@@ -11,9 +11,12 @@ import os
 from pathlib import Path
 import re
 import stat
-from typing import Any
+from typing import Any, BinaryIO
 
-from clientflow_release_format.bundle import BundleFormatError, verify_bundle_structure
+from clientflow_release_format.bundle import (
+    BundleFormatError,
+    open_verified_bundle_structure,
+)
 from clientflow_release_format.constants import INSTALL_MODE_UPDATE, MAX_BUNDLE_BYTES
 
 _RELEASE_ID_RE = re.compile(r"^clientflow-\d+\.\d+\.\d+-seq-[1-9]\d*$")
@@ -84,18 +87,15 @@ def _artifact_path(release_id: str) -> Path:
     return path
 
 
-def inspect_published_release_artifact(release: dict[str, Any]) -> PublishedReleaseArtifact:
+def _artifact_from_verified_bundle(
+    release: dict[str, Any],
+    *,
+    path: Path,
+    manifest: dict[str, Any],
+    bundle_size: int,
+    bundle_sha256: str,
+) -> PublishedReleaseArtifact:
     release_id = _release_id(release)
-    path = _artifact_path(release_id)
-    try:
-        manifest, _payload, bundle_size, bundle_sha256 = verify_bundle_structure(
-            path,
-            require_deployable=True,
-            required_install_mode=INSTALL_MODE_UPDATE,
-        )
-    except BundleFormatError as exc:
-        raise ClientFlowReleaseArtifactError(f"Publiceret ClientFlow artifact er ugyldigt: {exc}") from exc
-
     version = str(release.get("version") or "").strip()
     try:
         release_sequence = int(release.get("release_sequence"))
@@ -124,6 +124,51 @@ def inspect_published_release_artifact(release: dict[str, Any]) -> PublishedRele
     )
 
 
+def _validate_open_artifact_file(handle: BinaryIO) -> None:
+    metadata = os.fstat(handle.fileno())
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ClientFlowReleaseArtifactError("Publiceret ClientFlow artifact skal være en almindelig fil")
+    if metadata.st_mode & 0o022:
+        raise ClientFlowReleaseArtifactError("Publiceret ClientFlow artifact må ikke være gruppe-/verdensskrivbart")
+    allowed_owners = {0, os.geteuid()}
+    if hasattr(metadata, "st_uid") and metadata.st_uid not in allowed_owners:
+        raise ClientFlowReleaseArtifactError("Publiceret ClientFlow artifact har uventet ejer")
+
+
+def open_published_release_artifact(release: dict[str, Any]) -> tuple[PublishedReleaseArtifact, BinaryIO]:
+    """Return verified metadata plus a handle pinned to those exact bundle bytes."""
+    release_id = _release_id(release)
+    path = _artifact_path(release_id)
+    handle: BinaryIO | None = None
+    try:
+        manifest, _payload, bundle_size, bundle_sha256, handle = open_verified_bundle_structure(
+            path,
+            require_deployable=True,
+            required_install_mode=INSTALL_MODE_UPDATE,
+        )
+        _validate_open_artifact_file(handle)
+        artifact = _artifact_from_verified_bundle(
+            release,
+            path=path,
+            manifest=manifest,
+            bundle_size=bundle_size,
+            bundle_sha256=bundle_sha256,
+        )
+        return artifact, handle
+    except (BundleFormatError, ClientFlowReleaseArtifactError) as exc:
+        if handle is not None:
+            handle.close()
+        if isinstance(exc, ClientFlowReleaseArtifactError):
+            raise
+        raise ClientFlowReleaseArtifactError(f"Publiceret ClientFlow artifact er ugyldigt: {exc}") from exc
+
+
+def inspect_published_release_artifact(release: dict[str, Any]) -> PublishedReleaseArtifact:
+    artifact, handle = open_published_release_artifact(release)
+    handle.close()
+    return artifact
+
+
 def verify_artifact_matches_deployment(
     release: dict[str, Any],
     *,
@@ -148,3 +193,31 @@ def verify_artifact_matches_deployment(
     if actual != expected:
         raise ClientFlowReleaseArtifactError("Publiceret artifact matcher ikke deploymentens immutable authorization")
     return artifact
+
+
+def open_artifact_matches_deployment(
+    release: dict[str, Any],
+    *,
+    deployment_release_id: str,
+    bundle_sha256: str,
+    bundle_size: int,
+    approval_reference: str,
+) -> tuple[PublishedReleaseArtifact, BinaryIO]:
+    artifact, handle = open_published_release_artifact(release)
+    expected = (
+        deployment_release_id,
+        str(bundle_sha256).lower(),
+        int(bundle_size),
+        str(approval_reference),
+    )
+    actual = (
+        artifact.release_id,
+        artifact.bundle_sha256,
+        artifact.bundle_size,
+        artifact.approval_reference,
+    )
+    if actual != expected:
+        handle.close()
+        raise ClientFlowReleaseArtifactError("Publiceret artifact matcher ikke deploymentens immutable authorization")
+    handle.seek(0)
+    return artifact, handle

@@ -19,8 +19,10 @@ def test_step51c_backend_artifact_authority_is_deployment_and_dpop_bound():
     assert "deployment.bundle_sha256" in auth
     assert "deployment.bundle_size" in auth
     assert 'os.getenv("CLIENTFLOW_RELEASE_ARTIFACT_DIR")' in artifacts
-    assert "verify_bundle_structure" in artifacts
+    assert "open_verified_bundle_structure" in artifacts
     assert "required_install_mode=INSTALL_MODE_UPDATE" in artifacts
+    assert "StreamingResponse" in router
+    assert "FileResponse" not in router
 
 
 def test_legacy_system_agent_token_is_not_accepted_by_artifact_endpoint_contract():

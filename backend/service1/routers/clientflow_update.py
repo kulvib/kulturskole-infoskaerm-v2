@@ -6,7 +6,7 @@ from typing import Any, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field as PydanticField
 from sqlmodel import Session
 
@@ -18,6 +18,7 @@ from ..clientflow_artifact_auth import (
 )
 from ..clientflow_release_artifacts import (
     ClientFlowReleaseArtifactError,
+    open_artifact_matches_deployment,
     verify_artifact_matches_deployment,
 )
 from ..auth import get_current_superadmin_user
@@ -459,7 +460,7 @@ def download_clientflow_release_artifact(
         # remain consumed even if the separately published artifact is missing.
         session.commit()
         deployment = principal.deployment
-        artifact = verify_artifact_matches_deployment(
+        artifact, artifact_handle = open_artifact_matches_deployment(
             {
                 "release_id": deployment.target_release_id,
                 "version": deployment.target_version,
@@ -476,12 +477,21 @@ def download_clientflow_release_artifact(
     except ClientFlowReleaseArtifactError as exc:
         session.rollback()
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return FileResponse(
-        path=artifact.path,
+
+    def stream_verified_artifact():
+        try:
+            while chunk := artifact_handle.read(1024 * 1024):
+                yield chunk
+        finally:
+            artifact_handle.close()
+
+    return StreamingResponse(
+        stream_verified_artifact(),
         media_type="application/octet-stream",
-        filename=f"{artifact.release_id}.tar",
         headers={
             "Cache-Control": "no-store, max-age=0",
+            "Content-Disposition": f'attachment; filename="{artifact.release_id}.tar"',
+            "Content-Length": str(artifact.bundle_size),
             "ETag": f'"sha256-{artifact.bundle_sha256}"',
             "X-Content-Type-Options": "nosniff",
         },

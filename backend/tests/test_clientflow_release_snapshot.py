@@ -7,6 +7,7 @@ from pathlib import Path
 import tarfile
 
 import pytest
+import clientflow_release_format.bundle as bundle_module
 
 from clientflow_release_format.constants import (
     ARTIFACT_TYPE_RUNTIME_RELEASE,
@@ -18,6 +19,7 @@ from clientflow_release_format.constants import (
     MANIFEST_SCHEMA,
     PRODUCT,
 )
+from service1.clientflow_release_artifacts import open_artifact_matches_deployment
 from service1.clientflow_releases import ClientFlowArtifactUnavailable, deployment_release_snapshot
 
 
@@ -131,3 +133,78 @@ def test_deployment_release_snapshot_rejects_catalog_artifact_identity_mismatch(
             "release_id": "clientflow-1.3.0-seq-1300",
             "release_sequence": 1300,
         })
+
+
+def test_bundle_hash_and_manifest_stay_bound_to_same_open_file_when_path_is_replaced(tmp_path, monkeypatch):
+    bundle, first_manifest = _published_bundle(tmp_path)
+    replacement_dir = tmp_path / "replacement"
+    replacement_dir.mkdir()
+    replacement, second_manifest = _published_bundle(replacement_dir)
+
+    # Preserve the same release identity while making provenance observably different.
+    with tarfile.open(replacement, "r", format=tarfile.PAX_FORMAT) as archive:
+        replacement_payload = archive.extractfile("clientflow-payload.tar").read()
+    second_manifest = dict(second_manifest)
+    second_manifest["release_approval"] = {
+        "reference": "approval-other",
+        "candidate_sha256": "d" * 64,
+    }
+    second_manifest["source"] = {"commit": "e" * 40, "dirty": False}
+    with tarfile.open(replacement, "w", format=tarfile.PAX_FORMAT) as archive:
+        manifest_bytes = (json.dumps(second_manifest, sort_keys=True) + "\n").encode("utf-8")
+        for name, raw in (("manifest.json", manifest_bytes), ("clientflow-payload.tar", replacement_payload)):
+            member = tarfile.TarInfo(name)
+            member.size = len(raw)
+            member.mode = 0o644
+            member.uid = member.gid = 0
+            archive.addfile(member, io.BytesIO(raw))
+
+    original_sha256_fd = bundle_module.sha256_fd
+    swapped = False
+
+    def swap_path_after_first_hash(descriptor, *, max_bytes=None):
+        nonlocal swapped
+        result = original_sha256_fd(descriptor, max_bytes=max_bytes)
+        if not swapped:
+            swapped = True
+            replacement.replace(bundle)
+        return result
+
+    monkeypatch.setattr(bundle_module, "sha256_fd", swap_path_after_first_hash)
+    manifest, _payload, _size, _digest = bundle_module.verify_bundle_structure(
+        bundle,
+        require_deployable=True,
+        required_install_mode=INSTALL_MODE_UPDATE,
+    )
+    assert manifest["release_approval"] == first_manifest["release_approval"]
+    assert manifest["source"] == first_manifest["source"]
+
+
+def test_download_handle_stays_bound_to_verified_bytes_after_path_replacement(tmp_path, monkeypatch):
+    bundle, _manifest = _published_bundle(tmp_path)
+    monkeypatch.setenv("CLIENTFLOW_RELEASE_ARTIFACT_DIR", str(tmp_path))
+    expected_bytes = bundle.read_bytes()
+    expected_digest = hashlib.sha256(expected_bytes).hexdigest()
+
+    artifact, handle = open_artifact_matches_deployment(
+        {
+            "version": "1.3.0",
+            "release_id": "clientflow-1.3.0-seq-1300",
+            "release_sequence": 1300,
+        },
+        deployment_release_id="clientflow-1.3.0-seq-1300",
+        bundle_sha256=expected_digest,
+        bundle_size=len(expected_bytes),
+        approval_reference="approval-1300",
+    )
+    replacement = tmp_path / "replacement.tmp"
+    replacement.write_bytes(b"not-the-authorized-artifact")
+    replacement.replace(bundle)
+    try:
+        streamed = handle.read()
+    finally:
+        handle.close()
+
+    assert hashlib.sha256(streamed).hexdigest() == artifact.bundle_sha256
+    assert streamed == expected_bytes
+    assert bundle.read_bytes() != streamed

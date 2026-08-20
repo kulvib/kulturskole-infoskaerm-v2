@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 import tarfile
 import tempfile
+from typing import BinaryIO
 
-from .archive import ArchiveError, inspect_payload_tar, read_bundle
+from .archive import ArchiveError, inspect_payload_tar, read_bundle_fd
 from .constants import MAX_BUNDLE_BYTES
-from .crypto import sha256_file
+from .crypto import sha256_fd
 from .manifest import validate_manifest
 
 
@@ -15,18 +17,23 @@ class BundleFormatError(RuntimeError):
     pass
 
 
-def verify_bundle_structure(
+def open_verified_bundle_structure(
     bundle: Path,
     *,
     require_deployable: bool = True,
     required_install_mode: str | None = None,
-) -> tuple[dict, bytes, int, str]:
-    """Verify immutable bundle bytes and canonical manifest/archive structure."""
+) -> tuple[dict, bytes, int, str, BinaryIO]:
+    """Verify one opened bundle identity and return a handle to those exact bytes."""
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    descriptor = -1
     try:
-        size, bundle_sha256 = sha256_file(bundle, max_bytes=MAX_BUNDLE_BYTES)
+        descriptor = os.open(bundle, flags)
+        size, bundle_sha256 = sha256_fd(descriptor, max_bytes=MAX_BUNDLE_BYTES)
         if size <= 0:
             raise BundleFormatError("Releasebundlen er tom")
-        manifest, payload = read_bundle(bundle)
+        manifest, payload = read_bundle_fd(descriptor)
         validated = validate_manifest(
             manifest,
             require_deployable=require_deployable,
@@ -40,8 +47,35 @@ def verify_bundle_structure(
             temporary.write(payload)
             temporary.flush()
             inspect_payload_tar(Path(temporary.name), expected_root=str(validated["payload"]["root"]))
-        return validated, payload, size, bundle_sha256
+        # Hash once more after structural parsing so the manifest/payload and
+        # the returned immutable identity are proven against the same open inode.
+        final_size, final_sha256 = sha256_fd(descriptor, max_bytes=MAX_BUNDLE_BYTES)
+        if (final_size, final_sha256) != (size, bundle_sha256):
+            raise BundleFormatError("Releasebundlen ændrede bytes under verifikation")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        handle = os.fdopen(descriptor, "rb", closefd=True)
+        descriptor = -1
+        return validated, payload, size, bundle_sha256, handle
     except (ArchiveError, ValueError, OSError, tarfile.TarError) as exc:
         if isinstance(exc, BundleFormatError):
             raise
         raise BundleFormatError(str(exc)) from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def verify_bundle_structure(
+    bundle: Path,
+    *,
+    require_deployable: bool = True,
+    required_install_mode: str | None = None,
+) -> tuple[dict, bytes, int, str]:
+    """Verify immutable bundle bytes and canonical manifest/archive structure."""
+    validated, payload, size, bundle_sha256, handle = open_verified_bundle_structure(
+        bundle,
+        require_deployable=require_deployable,
+        required_install_mode=required_install_mode,
+    )
+    handle.close()
+    return validated, payload, size, bundle_sha256
