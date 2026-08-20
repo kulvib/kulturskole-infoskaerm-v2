@@ -74,7 +74,8 @@ jobs:
       - name: Static Python checks
         run: |
           python -m ruff check backend/service1 backend/scripts scripts --select F
-          python -m compileall -q backend/service1 backend/migrations client/runtime client/release/lib scripts
+          python -m ruff check backend/clientflow_release_format --select F
+          python -m compileall -q backend/clientflow_release_format backend/service1 backend/migrations client/runtime client/release/lib scripts
 
       - name: Audit production Python dependencies
         run: python -m pip_audit --disable-pip --no-deps --progress-spinner off -r backend/requirements.lock.txt
