@@ -56,7 +56,7 @@ ClientFlow uses a keyless runtime-release model with explicit fresh-install and 
 - source version: `client/VERSION`
 - monotonically increasing sequence: `client/release/release-input.json`
 - canonical runtime wheel is rebuilt from `client/runtime/` for every release candidate
-- source-independent Python/runtime platform inputs are transported separately but must match `client/release/runtime-platform-inputs.lock.json` byte-for-byte
+- source-independent Python/runtime platform inputs are packaged by the deterministic `scripts/build_clientflow_runtime_input_transport.py` helper and must match `client/release/runtime-platform-inputs.lock.json` byte-for-byte
 - canonical release builds run in `.github/workflows/release-build.yml` from an exact CI-green source SHA with a pinned Python/pip/setuptools build toolchain
 - two independent GitHub runners must produce byte-identical release output before an unapproved candidate is handed to the separate approval gate
 - release candidates are non-deployable by default

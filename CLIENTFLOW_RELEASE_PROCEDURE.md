@@ -32,6 +32,16 @@ The dispatch requires:
 
 The platform artifacts inside the transport TAR must match `client/release/runtime-platform-inputs.lock.json` byte-for-byte. That repo lock contains only source-independent platform bytes (`python-runtime-amd64.tar` plus third-party wheels); `clientflow_runtime-*.whl` is forbidden and is always rebuilt from the exact source commit.
 
+The transport TAR itself is produced with the repository's canonical deterministic transport builder rather than an ad-hoc `tar` invocation:
+
+```bash
+python scripts/build_clientflow_runtime_input_transport.py \
+  --input-dir /path/to/verified/platform-inputs \
+  --output /path/to/clientflow-runtime-inputs-python-3.13.14-amd64.tar
+```
+
+The input directory must contain exactly `python-runtime-amd64.tar` and the locked third-party wheels under `wheelhouse/`. The builder opens each source artifact with no-follow semantics, verifies size/SHA-256 against the repo lock, writes a deterministic USTAR archive with normalized ownership/mode/mtime metadata, re-verifies every member in the completed TAR, and uses no-replace publication for the output path. Two builds from the same locked bytes must therefore produce the same transport SHA-256. The resulting TAR may be hosted on any ordinary public HTTPS asset service (for example a repository release asset); the hosting location is transport only because the workflow independently requires both the exact outer TAR SHA-256 and every repo-locked inner artifact hash/size.
+
 Before building, the workflow:
 
 1. checks out exactly `expected_source_sha` with persisted Git credentials disabled;

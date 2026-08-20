@@ -72,3 +72,13 @@ Local validation:
 - 110 source/scripts contracts PASS
 - compileall PASS
 - dependency contract PASS
+
+Step 51L — canonical runtime-input transport production
+
+Scope:
+- deterministic USTAR transport builder for repo-locked Python/runtime platform inputs
+- source artifacts are opened no-follow and verified against the repo size/SHA-256 lock before packaging
+- output archive normalizes uid/gid, names, modes and mtime and is re-verified member-by-member before no-replace publication
+- runtime-input asset hosting remains transport only; release-build still verifies outer TAR SHA-256 plus every inner repo-locked artifact
+- no ClientFlow kiosk runtime, systemd, activation or frozen-domain behavior changes
+

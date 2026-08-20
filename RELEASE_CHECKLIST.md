@@ -28,6 +28,7 @@ This checklist is for the current correctness/isolation phase. Production-readin
 
 - [ ] `client/VERSION` and `client/release/release-input.json` are intentional.
 - [ ] Release build is dispatched from the exact source SHA that already has a successful canonical CI push run.
+- [ ] Runtime-input transport is produced by `scripts/build_clientflow_runtime_input_transport.py`; rebuilding from the same locked platform bytes yields the same TAR SHA-256.
 - [ ] Canonical runtime-input transport SHA-256 is recorded and every platform file matches `client/release/runtime-platform-inputs.lock.json`; no prebuilt `clientflow_runtime` wheel is accepted as a platform input.
 - [ ] Python/pip/setuptools match `client/release/release-build-toolchain.json`, and setuptools is installed from the hash-locked build requirements.
 - [ ] Canonical runtime wheel is built from `client/runtime/`.
