@@ -317,7 +317,7 @@ def build(repo: Path, output_dir: Path, *, runtime_inputs: Path | None, allow_di
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build a deterministic unapproved ClientFlow 1.2.0 release candidate")
+    parser = argparse.ArgumentParser(description="Build a deterministic unapproved ClientFlow release candidate")
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--runtime-inputs", type=Path)

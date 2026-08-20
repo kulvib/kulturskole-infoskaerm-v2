@@ -185,7 +185,14 @@ def prepare_runtime(release_root: Path, manifest: dict) -> None:
         [
             str(runtime_python),
             "-c",
-            "import clientflow_runtime; assert clientflow_runtime.__version__",
+            (
+                "import sys; import clientflow_runtime; "
+                "from importlib.metadata import version; "
+                "expected=sys.argv[1]; "
+                "assert clientflow_runtime.__version__ == expected; "
+                "assert version('clientflow-runtime') == expected"
+            ),
+            str(manifest["version"]),
         ],
         timeout=30,
     )

@@ -1,4 +1,4 @@
-# ClientFlow 1.2 canonical release procedure
+# ClientFlow 1.3 canonical release procedure
 
 This procedure describes the current v2 source/release contract. Historical multi-version installers and signed catalog flows are not part of the canonical repository.
 
@@ -18,6 +18,8 @@ Canonical source:
 
 Offline runtime inputs are supplied separately through `--runtime-inputs`. They must contain the validated Python runtime and dependency wheelhouse. The ClientFlow runtime wheel itself is always rebuilt from `client/runtime/`; a supplied stale ClientFlow wheel is removed before packaging.
 
+`client/VERSION` is the only manually maintained product-version value. The runtime wheel derives its PEP 621 version dynamically from that same authority, while `release_sequence` remains the separate monotonic anti-rollback identity component. For the current canonical bootstrap release these values are `1.3.0` and `1201`, producing `clientflow-1.3.0-seq-1201`.
+
 ## 2. Build a release candidate
 
 Use a clean reviewed commit. Set `SOURCE_DATE_EPOCH` from the source commit and build:
@@ -27,7 +29,7 @@ SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" \
 python scripts/build_clientflow_release.py \
   --repo . \
   --runtime-inputs /secure/path/runtime-inputs \
-  --output-dir ./build/clientflow-1.2.0
+  --output-dir ./build/clientflow-1.3.0
 ```
 
 A normal candidate is always `deployable: false`. The builder verifies source identity, manifest structure, payload integrity and offline runtime completeness.
@@ -35,7 +37,7 @@ A normal candidate is always `deployable: false`. The builder verifies source id
 Record the exact candidate SHA-256:
 
 ```bash
-sha256sum ./build/clientflow-1.2.0/clientflow-1.2.0-seq-1200-candidate.tar
+sha256sum ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-candidate.tar
 ```
 
 ## 3. Approve one exact candidate
@@ -44,8 +46,8 @@ Approval uses no release signing key. It is an explicit gate bound to the exact 
 
 ```bash
 python scripts/approve_clientflow_release.py \
-  ./build/clientflow-1.2.0/clientflow-1.2.0-seq-1200-candidate.tar \
-  --output ./build/clientflow-1.2.0/clientflow-1.2.0-seq-1200-approved.tar \
+  ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-candidate.tar \
+  --output ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-approved.tar \
   --expected-candidate-sha256 <EXACT_CANDIDATE_SHA256> \
   --expected-source-commit <FULL_40_CHARACTER_GIT_SHA> \
   --approval-reference <CHANGE_OR_RELEASE_REFERENCE> \
@@ -62,7 +64,7 @@ Use the generated `clientflow-installer` together with the exact approved bundle
 
 ```bash
 clientflow-installer verify \
-  --bundle ./build/clientflow-1.2.0/clientflow-1.2.0-seq-1200-approved.tar \
+  --bundle ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-approved.tar \
   --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256>
 ```
 
@@ -74,7 +76,7 @@ Installation is for a clean Ubuntu Desktop 26.04 `amd64` client with an existing
 
 ```bash
 sudo clientflow-installer install \
-  --bundle ./build/clientflow-1.2.0/clientflow-1.2.0-seq-1200-approved.tar \
+  --bundle ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-approved.tar \
   --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
   --backend-url https://<backend-origin> \
   --enrollment-code <one-time-code> \
@@ -89,7 +91,7 @@ Activation is explicit:
 
 ```bash
 clientflow-installer activate \
-  --release-id clientflow-1.2.0-seq-1200 \
+  --release-id clientflow-1.3.0-seq-1201 \
   --approval-reference <CHANGE_OR_RELEASE_REFERENCE>
 ```
 

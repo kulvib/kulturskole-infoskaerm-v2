@@ -1,12 +1,14 @@
-# ClientFlow 1.2.0 — keyless release, godkendelse og rollback
+# ClientFlow 1.3.0 — keyless release, godkendelse og rollback
 
 ## Én versionskilde
 
-`VERSION` indeholder `1.2.0` og er den eneste manuelt vedligeholdte produktversion. Filnavne, payload-root, release-ID og manifestværdier genereres. Release sequence vedligeholdes separat i `release/release-input.json`, fordi den er en monoton anti-rollback-værdi og ikke en alternativ versionskilde.
+`VERSION` indeholder `1.3.0` og er den eneste manuelt vedligeholdte produktversion. Filnavne, payload-root, release-ID og manifestværdier genereres. Release sequence vedligeholdes separat i `release/release-input.json`, fordi den er en monoton anti-rollback-værdi og ikke en alternativ versionskilde.
+
+Runtime-wheelets PEP 621-version er også dynamisk bundet til denne authority via `clientflow_runtime.version.VERSION`; `client/runtime/pyproject.toml` indeholder derfor ingen separat statisk produktversion. I source/build-kontekst læser modulet `client/VERSION`; i installeret runtime rapporterer det versionen fra wheelets egen distributionsmetadata. Dermed kan en staged runtime ikke arve versionsnummeret fra et ældre `/opt/clientflow/active`-target.
 
 ## Sikkerhedsmodel uden release-signeringsnøgler
 
-ClientFlow 1.2.0 bruger **ingen privat eller offentlig release-signeringsnøgle**. Der oprettes, gemmes eller anvendes ingen release-signatur. SHA-256 bruges til integritetsbinding, mens releasegodkendelse er en eksplicit procesgate bundet til den eksakte kandidat-SHA-256 og det eksakte source commit.
+ClientFlow 1.3.0 bruger **ingen privat eller offentlig release-signeringsnøgle**. Der oprettes, gemmes eller anvendes ingen release-signatur. SHA-256 bruges til integritetsbinding, mens releasegodkendelse er en eksplicit procesgate bundet til den eksakte kandidat-SHA-256 og det eksakte source commit.
 
 Denne model giver fail-closed integritetskontrol og sporbarhed, men den påstår ikke kryptografisk signer-identitet. Tillidsgrænsen er derfor den kontrollerede GitHub-proces, branch/review-beskyttelse, adgang til build-artifacts, HTTPS-transport og den eksplicitte manuelle releasegodkendelse.
 
@@ -18,7 +20,7 @@ Andre ClientFlow-nøgler, eksempelvis enrollment/systemkryptering og kortlivede 
 SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" \
 python scripts/build_clientflow_release.py \
   --repo . \
-  --output-dir ./build/clientflow-1.2.0
+  --output-dir ./build/clientflow-1.3.0
 ```
 
 Et almindeligt build har altid:
@@ -59,8 +61,8 @@ Godkendelse er et separat trin og bruger ingen secret eller signing key. Godkend
 
 ```bash
 python scripts/approve_clientflow_release.py \
-  ./clientflow-1.2.0-seq-1200-candidate.tar \
-  --output ./clientflow-1.2.0-seq-1200-approved.tar \
+  ./clientflow-1.3.0-seq-1201-candidate.tar \
+  --output ./clientflow-1.3.0-seq-1201-approved.tar \
   --expected-candidate-sha256 <EXACT_CANDIDATE_SHA256> \
   --expected-source-commit <FULL_40_CHARACTER_GIT_SHA> \
   --approval-reference <CHANGE_OR_RELEASE_REFERENCE> \
@@ -97,7 +99,7 @@ Backend beregner desuden SHA-256 for hele den publicerede bundle og kopierer rel
 
 ```bash
 python scripts/publish_clientflow_release.py \
-  ./clientflow-1.2.0-seq-1200-approved.tar \
+  ./clientflow-1.3.0-seq-1201-approved.tar \
   --artifact-dir /srv/clientflow-release-artifacts \
   --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
   --expected-approval-reference <CHANGE_OR_RELEASE_REFERENCE> \
@@ -114,7 +116,7 @@ Den stabile updater skal først hente en kortlivet deployment-bound artifact-aut
 En verificeret bundle stages i et immutable katalog:
 
 ```text
-/opt/clientflow/releases/clientflow-1.2.0-seq-<sequence>/
+/opt/clientflow/releases/clientflow-1.3.0-seq-<sequence>/
 ```
 
 En release sequence, der ikke er større end den højeste tidligere accepterede sequence, afvises. Stage ændrer ikke `active` og starter ingen services.
@@ -127,7 +129,7 @@ Installerens `verify` og `install` kræver den eksakte, på forhånd kendte SHA-
 
 ```bash
 clientflow-installer verify \
-  --bundle ./clientflow-1.2.0-seq-1200-approved.tar \
+  --bundle ./clientflow-1.3.0-seq-1201-approved.tar \
   --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256>
 ```
 

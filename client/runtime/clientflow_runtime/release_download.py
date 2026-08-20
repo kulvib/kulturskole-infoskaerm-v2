@@ -14,6 +14,7 @@ from urllib.parse import urljoin, urlparse
 
 from .config import DomainCredential
 from .net import DomainTransport
+from .version import VERSION
 
 _RELEASE_ID_RE = re.compile(r"^clientflow-\d+\.\d+\.\d+-seq-[1-9]\d*$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -136,7 +137,7 @@ def download_release_bundle(
             headers={
                 "Accept": "application/octet-stream",
                 "Authorization": f"Bearer {transport.access_token()}",
-                "User-Agent": "ClientFlow/1.2.0 system-agent",
+                "User-Agent": f"ClientFlow/{VERSION} system-agent",
             },
         )
         context = ssl.create_default_context(cafile=transport.credential.tls_ca_file)

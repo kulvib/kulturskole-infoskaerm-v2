@@ -54,7 +54,7 @@ def _post_json(url: str, payload: dict[str, Any], *, ca_file: Path | None, timeo
         url,
         data=body,
         method="POST",
-        headers={"Accept": "application/json", "Content-Type": "application/json", "User-Agent": "ClientFlow-Installer/1.2.0"},
+        headers={"Accept": "application/json", "Content-Type": "application/json", "User-Agent": "ClientFlow-Installer"},
     )
     context = ssl.create_default_context(cafile=str(ca_file) if ca_file else None)
     context.minimum_version = ssl.TLSVersion.TLSv1_2

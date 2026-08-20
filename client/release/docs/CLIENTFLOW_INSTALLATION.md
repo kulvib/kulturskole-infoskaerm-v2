@@ -1,10 +1,12 @@
-# ClientFlow 1.2.0 — fresh installation from a canonical runtime release
+# ClientFlow 1.3.0 — fresh installation from a canonical runtime release
 
 ## Sikkerhedsstatus
 
-ClientFlow 1.2.0 bruger en **keyless release-model**. Der oprettes, gemmes eller anvendes ingen privat eller offentlig release-signeringsnøgle. En normal build er en reproducerbar, verificeret release candidate med `deployable: false`. Kun en separat manuel godkendelsesgate kan producere en `deployable: true`-bundle.
+ClientFlow 1.3.0 bruger en **keyless release-model**. Der oprettes, gemmes eller anvendes ingen privat eller offentlig release-signeringsnøgle. En normal build er en reproducerbar, verificeret release candidate med `deployable: false`. Kun en separat manuel godkendelsesgate kan producere en `deployable: true`-bundle.
 
 Ingen fysisk installation må ske, før en konkret pilotklient er udpeget og installationen er særskilt godkendt.
+
+ClientFlow 1.3.0 er den canonical bootstrap-baseline for den nye updater-plane. Backendens releasekatalog afviser derfor in-place deployment af 1.3.0 til pre-1.3 installationer; disse skal installeres fresh. Senere canonical releases kan eksplicit åbne update-kompatibilitet fra 1.3.0.
 
 ## Forudsætninger for en senere godkendt installation
 
@@ -22,7 +24,7 @@ Ingen fysisk installation må ske, før en konkret pilotklient er udpeget og ins
 
    ```bash
    clientflow-installer verify \
-     --bundle ./clientflow-1.2.0-seq-1200-approved.tar \
+     --bundle ./clientflow-1.3.0-seq-1201-approved.tar \
      --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256>
    ```
 
@@ -30,7 +32,7 @@ Ingen fysisk installation må ske, før en konkret pilotklient er udpeget og ins
 
    ```bash
    sudo clientflow-installer install \
-     --bundle ./clientflow-1.2.0-seq-1200-approved.tar \
+     --bundle ./clientflow-1.3.0-seq-1201-approved.tar \
      --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
      --backend-url https://<backend-origin> \
      --enrollment-code <one-time-code> \
@@ -55,7 +57,7 @@ Aktivering er et separat trin og kræver en konkret approval-reference:
 
 ```bash
 clientflow-installer activate \
-  --release-id clientflow-1.2.0-seq-1200 \
+  --release-id clientflow-1.3.0-seq-1201 \
   --approval-reference CHANGE-REFERENCE
 ```
 
