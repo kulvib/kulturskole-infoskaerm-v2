@@ -5,10 +5,9 @@ import re
 import tempfile
 from pathlib import Path
 
-from .archive import read_bundle
-from .bundle import extract_verified_payload, verify_bundle
+from .bundle import extract_verified_payload, open_verified_bundle, verify_bundle
 from .builder import _create_bundle
-from .constants import MAX_BUNDLE_BYTES, MAX_FRESH_INSTALLER_BYTES
+from .constants import MAX_FRESH_INSTALLER_BYTES
 from .crypto import sha256_file
 from .manifest import validate_manifest
 from .runtime_artifacts import validate_runtime_artifacts
@@ -34,7 +33,7 @@ def approve_bundle(
     expected_source_commit: str,
     installer: Path,
 ) -> dict:
-    """Promote one verified CI candidate to deployable without creating or using signing keys."""
+    """Promote one exact, verified CI candidate to deployable without signing keys."""
     approval_reference = approval_reference.strip()
     expected_candidate_sha256 = expected_candidate_sha256.strip().lower()
     expected_installer_sha256 = expected_installer_sha256.strip().lower()
@@ -47,75 +46,84 @@ def approve_bundle(
         raise ApprovalError("expected_installer_sha256 skal være præcis SHA-256")
     if not _COMMIT_RE.fullmatch(expected_source_commit):
         raise ApprovalError("expected_source_commit skal være et fuldt Git commit-SHA")
-    try:
-        _size, actual_candidate_sha256 = sha256_file(candidate_bundle, max_bytes=MAX_BUNDLE_BYTES)
-    except (OSError, ValueError) as exc:
-        raise ApprovalError(f"Kandidatbundlen er ugyldig: {exc}") from exc
-    if actual_candidate_sha256 != expected_candidate_sha256:
-        raise ApprovalError("Kandidatbundlens SHA-256 matcher ikke den eksplicit godkendte hash")
 
-    manifest, payload = read_bundle(candidate_bundle)
-    validate_manifest(manifest, require_deployable=False)
-    installer_contract = manifest.get("fresh_installer") or {}
-    if installer.name != str(installer_contract.get("file") or ""):
-        raise ApprovalError("Fresh installer-filnavnet matcher ikke release candidate-manifestet")
+    candidate_handle = None
     try:
-        installer_size, actual_installer_sha256 = sha256_file(
-            installer, max_bytes=MAX_FRESH_INSTALLER_BYTES
-        )
-    except (OSError, ValueError) as exc:
-        raise ApprovalError(f"Fresh installer-artifactet er ugyldigt: {exc}") from exc
-    if actual_installer_sha256 != expected_installer_sha256:
-        raise ApprovalError("Fresh installerens SHA-256 matcher ikke den eksplicit godkendte hash")
-    if (
-        installer_size != int(installer_contract.get("size") or 0)
-        or actual_installer_sha256 != str(installer_contract.get("sha256") or "")
-    ):
-        raise ApprovalError("Fresh installer-artifactet matcher ikke release candidate-manifestet")
-    if manifest.get("deployable") is not False:
-        raise ApprovalError("Inputbundlen skal være en ikke-deployable release candidate")
-    approval = manifest.get("release_approval") or {}
-    if approval.get("reference") not in {None, ""} or approval.get("candidate_sha256") not in {None, ""}:
-        raise ApprovalError("Release candidate må ikke allerede have approval metadata")
-    if manifest.get("runtime", {}).get("offline_wheelhouse_complete") is not True:
-        raise ApprovalError("Godkendelse afvises: offline runtime/wheelhouse er ikke komplet")
-    source = manifest.get("source") or {}
-    if source.get("dirty") is not False:
-        raise ApprovalError("Godkendelse afvises: kandidaten kommer ikke fra et rent commit")
-    if source.get("commit") != expected_source_commit:
-        raise ApprovalError("Godkendelse afvises: source commit matcher ikke det eksplicit forventede commit")
-
-    try:
-        validate_runtime_artifacts(payload, manifest)
-        with tempfile.TemporaryDirectory(prefix="clientflow-approval-preflight-") as directory:
-            release_root = extract_verified_payload(
-                payload,
-                Path(directory) / "payload",
-                expected_root=str(manifest["payload"]["root"]),
+        try:
+            manifest, payload, _candidate_size, actual_candidate_sha256, candidate_handle = open_verified_bundle(
+                candidate_bundle,
+                require_deployable=False,
             )
-            prepare_runtime(release_root, manifest)
-    except (ValueError, RuntimeError, OSError) as exc:
-        raise ApprovalError(f"Godkendelse afvises: runtime-preflight fejlede: {exc}") from exc
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise ApprovalError(f"Kandidatbundlen er ugyldig: {exc}") from exc
 
-    approved = dict(manifest)
-    approved["deployable"] = True
-    approved["release_approval"] = {
-        "reference": approval_reference,
-        "candidate_sha256": actual_candidate_sha256,
-    }
-    validate_manifest(approved, require_deployable=True)
+        if actual_candidate_sha256 != expected_candidate_sha256:
+            raise ApprovalError("Kandidatbundlens SHA-256 matcher ikke den eksplicit godkendte hash")
 
-    with tempfile.NamedTemporaryFile(prefix="clientflow-payload-", suffix=".tar", delete=False) as temporary:
-        temporary.write(payload)
-        temporary.flush()
-        payload_path = Path(temporary.name)
-    try:
-        _create_bundle(output_bundle, approved, payload_path, epoch=int(approved["source_date_epoch"]))
+        installer_contract = manifest.get("fresh_installer") or {}
+        if installer.name != str(installer_contract.get("file") or ""):
+            raise ApprovalError("Fresh installer-filnavnet matcher ikke release candidate-manifestet")
+        try:
+            installer_size, actual_installer_sha256 = sha256_file(
+                installer, max_bytes=MAX_FRESH_INSTALLER_BYTES
+            )
+        except (OSError, ValueError) as exc:
+            raise ApprovalError(f"Fresh installer-artifactet er ugyldigt: {exc}") from exc
+        if actual_installer_sha256 != expected_installer_sha256:
+            raise ApprovalError("Fresh installerens SHA-256 matcher ikke den eksplicit godkendte hash")
+        if (
+            installer_size != int(installer_contract.get("size") or 0)
+            or actual_installer_sha256 != str(installer_contract.get("sha256") or "")
+        ):
+            raise ApprovalError("Fresh installer-artifactet matcher ikke release candidate-manifestet")
+
+        if manifest.get("deployable") is not False:
+            raise ApprovalError("Inputbundlen skal være en ikke-deployable release candidate")
+        approval = manifest.get("release_approval") or {}
+        if approval.get("reference") not in {None, ""} or approval.get("candidate_sha256") not in {None, ""}:
+            raise ApprovalError("Release candidate må ikke allerede have approval metadata")
+        if manifest.get("runtime", {}).get("offline_wheelhouse_complete") is not True:
+            raise ApprovalError("Godkendelse afvises: offline runtime/wheelhouse er ikke komplet")
+        source = manifest.get("source") or {}
+        if source.get("dirty") is not False:
+            raise ApprovalError("Godkendelse afvises: kandidaten kommer ikke fra et rent commit")
+        if source.get("commit") != expected_source_commit:
+            raise ApprovalError("Godkendelse afvises: source commit matcher ikke det eksplicit forventede commit")
+
+        try:
+            validate_runtime_artifacts(payload, manifest)
+            with tempfile.TemporaryDirectory(prefix="clientflow-approval-preflight-") as directory:
+                release_root = extract_verified_payload(
+                    payload,
+                    Path(directory) / "payload",
+                    expected_root=str(manifest["payload"]["root"]),
+                )
+                prepare_runtime(release_root, manifest)
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise ApprovalError(f"Godkendelse afvises: runtime-preflight fejlede: {exc}") from exc
+
+        approved = dict(manifest)
+        approved["deployable"] = True
+        approved["release_approval"] = {
+            "reference": approval_reference,
+            "candidate_sha256": actual_candidate_sha256,
+        }
+        validate_manifest(approved, require_deployable=True)
+
+        with tempfile.NamedTemporaryFile(prefix="clientflow-payload-", suffix=".tar", delete=False) as temporary:
+            temporary.write(payload)
+            temporary.flush()
+            payload_path = Path(temporary.name)
+        try:
+            _create_bundle(output_bundle, approved, payload_path, epoch=int(approved["source_date_epoch"]))
+        finally:
+            payload_path.unlink(missing_ok=True)
+
+        verify_bundle(output_bundle, require_deployable=True)
+        return approved
     finally:
-        payload_path.unlink(missing_ok=True)
-
-    verify_bundle(output_bundle, require_deployable=True)
-    return approved
+        if candidate_handle is not None:
+            candidate_handle.close()
 
 
 def main(argv: list[str] | None = None) -> int:

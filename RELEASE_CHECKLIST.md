@@ -32,7 +32,9 @@ This checklist is for the current correctness/isolation phase. Production-readin
 - [ ] Candidate is `deployable: false` before approval.
 - [ ] Candidate manifest binds the exact fresh-installer file name, size and SHA-256.
 - [ ] Approval is bound to exact candidate SHA-256, source commit and fresh-installer SHA-256.
+- [ ] Approval reads hash/manifest/payload from one pinned candidate file identity; candidate pathname replacement cannot change promoted bytes.
 - [ ] Approved bundle verifies with its exact whole-bundle SHA-256.
+- [ ] Backend publication streams from the same pinned approved-bundle identity that was verified and uses atomic no-replace publication into a pinned secure artifact directory.
 - [ ] Before any root installer code executes, installer file name/size/SHA-256 is externally verified from the already hash-verified approved bundle manifest.
 - [ ] Installer/systemd/sysusers/tmpfiles inputs are present in the generated payload.
 - [ ] Kiosk-user-dependent definitions are rendered from the installation identity, not hardcoded to one physical host.

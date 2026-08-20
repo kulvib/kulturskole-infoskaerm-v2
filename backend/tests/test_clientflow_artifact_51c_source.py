@@ -39,7 +39,8 @@ def test_publication_is_explicit_immutable_and_refuses_byte_replacement():
     assert "--expected-bundle-sha256" in source
     assert "--expected-approval-reference" in source
     assert "--expected-source-commit" in source
-    assert "verify_bundle(" in source
+    assert "open_verified_bundle(" in source
     assert "required_install_mode=INSTALL_MODE_UPDATE" in source
-    assert "os.link(temporary, destination" in source
+    assert "src_dir_fd=directory_fd" in source
+    assert "dst_dir_fd=directory_fd" in source
     assert "Artifact-ID er allerede publiceret med andre bytes" in source

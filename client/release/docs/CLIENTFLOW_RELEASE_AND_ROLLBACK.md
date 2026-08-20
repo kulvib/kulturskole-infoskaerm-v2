@@ -71,7 +71,7 @@ python scripts/approve_clientflow_release.py \
   --approve-release
 ```
 
-Godkendelsesgaten afviser kandidaten, hvis SHA-256 eller source commit afviger, source er dirty, offline runtime ikke er komplet, eller runtime-preflight fejler. Først derefter sættes:
+Godkendelsesgaten afviser kandidaten, hvis SHA-256 eller source commit afviger, source er dirty, offline runtime ikke er komplet, eller runtime-preflight fejler. Kandidaten åbnes én gang med no-follow semantics; dens hash, manifest, payload og runtime-preflight er derfor bundet til samme åbne filidentitet, også hvis pathname udskiftes under approval. Først derefter sættes:
 
 ```yaml
 deployable: true
@@ -109,7 +109,7 @@ python scripts/publish_clientflow_release.py \
   --publish-release
 ```
 
-Publicering er idempotent for identiske bytes og afviser, hvis samme release-ID allerede findes med en anden bundle.
+Publicering holder både den verificerede approved bundle og artifact-store-kataloget åbent som pinned file descriptors gennem hele operationen. Copy sker fra den samme source-handle, som leverede manifest, payload og whole-bundle SHA-256; source og staged copy hashes igen før atomic no-replace link. Publicering er kun idempotent for identiske allerede-publicerede bytes, når den eksisterende fil samtidig er en sikker regular file med korrekt ownership/mode. Samme release-ID med andre bytes eller usikre metadata afvises.
 
 ## Download, stage og anti-rollback
 

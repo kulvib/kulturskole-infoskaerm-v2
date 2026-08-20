@@ -58,7 +58,7 @@ python scripts/approve_clientflow_release.py \
   --approve-release
 ```
 
-Only the approved output may have `deployable: true`. The approved manifest preserves the exact `fresh_installer` descriptor from the approved candidate.
+Only the approved output may have `deployable: true`. The approval gate opens the candidate once with no-follow semantics and keeps that exact file identity pinned while whole-bundle SHA-256, manifest/payload, runtime preflight and promotion are evaluated. Replacing the candidate pathname during approval cannot change the bytes being approved. The approved manifest preserves the exact `fresh_installer` descriptor from the approved candidate.
 
 Record the SHA-256 of the approved bundle. That hash is the external trust anchor for the physical handoff.
 
