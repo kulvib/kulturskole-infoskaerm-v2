@@ -1,12 +1,54 @@
-Step 51B CI Ruff F841 fix
+Step 51C — canonical release/artifact authority
 
-Repo file changed:
-- backend/service1/clientflow_update_auth.py
+Repo files in this delta:
+- README.md
+- scripts/approve_clientflow_release.py
+- scripts/publish_clientflow_release.py
+- scripts/build_clientflow_release.py
+- scripts/validate_dependency_contract.py
+- client/release/docs/CLIENTFLOW_RELEASE_AND_ROLLBACK.md
+- client/release/docs/CLIENTFLOW_INSTALLATION.md
+- client/release/lib/clientflow_release/crypto.py
+- client/release/lib/clientflow_release/transaction.py
+- client/release/lib/clientflow_release/archive.py
+- client/release/lib/clientflow_release/constants.py
+- client/release/lib/clientflow_release/bundle.py
+- client/release/lib/clientflow_release/cli.py
+- client/release/lib/clientflow_release/manifest.py
+- client/release/lib/clientflow_release/builder.py
+- .github/workflows/ci.yml
+- backend/service1/clientflow_release_catalog.json
+- backend/service1/clientflow_release_artifacts.py
+- backend/service1/clientflow_releases.py
+- backend/service1/clientflow_artifact_auth.py
+- backend/tests/test_clientflow_release_format_51c.py
+- backend/tests/test_clientflow_artifact_51c_source.py
+- backend/tests/test_clientflow_release_snapshot.py
+- backend/tests/test_clientflow_artifact_auth.py
+- backend/clientflow_release_format/crypto.py
+- backend/clientflow_release_format/archive.py
+- backend/clientflow_release_format/constants.py
+- backend/clientflow_release_format/__init__.py
+- backend/clientflow_release_format/bundle.py
+- backend/clientflow_release_format/manifest.py
+- backend/service1/routers/clientflow_update.py
 
-Change:
-- Remove the unused local binding `current` while preserving the call to
-  active_update_credential(..., for_update=True).
-- The call is intentionally retained because its SELECT ... FOR UPDATE row-lock
-  side effect serializes provisioning with credential rotation/recovery.
+Deletions:
+- none
 
-No runtime/auth contract is weakened; no frozen-domain files are changed.
+Scope:
+- canonical schema-6 runtime release format shared by backend, installer and release tooling
+- backend artifact store verifies exact approved bundle bytes
+- deployment snapshot derives bundle sha256/size/approval/source identity from published artifact
+- DPoP-bound, deployment-bound short-lived artifact authorization and download endpoint
+- immutable publication tool bound to approved SHA, approval reference and source commit
+- explicit fresh_install / in_place_update semantics; fresh_only retired
+- no systemd/root activation changes; no Livestream/Terminal/Remote Desktop runtime changes
+
+Local validation:
+- compileall PASS
+- dependency contract PASS
+- 12 lightweight workflow/release/artifact tests PASS
+- AST parse of changed Python files PASS
+
+GitHub CI remains authoritative for full dependency-backed FastAPI/SQLModel tests, Ruff, pip-audit and PostgreSQL 18 integration.

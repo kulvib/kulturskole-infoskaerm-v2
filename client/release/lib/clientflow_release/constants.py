@@ -2,26 +2,47 @@ from __future__ import annotations
 
 from pathlib import Path
 
-PRODUCT = "ClientFlow"
-MANIFEST_SCHEMA = 5
-CHANNEL = "fresh-only-release"
-INTEGRITY_ALGORITHM = "sha256"
+from clientflow_release_format.constants import (
+    ARTIFACT_TYPE_RUNTIME_RELEASE,
+    CHANNEL,
+    DOMAIN_NAMES,
+    INSTALL_MODE_FRESH,
+    INSTALL_MODE_UPDATE,
+    INTEGRITY_ALGORITHM,
+    MANIFEST_SCHEMA,
+    MAX_BUNDLE_BYTES,
+    MAX_MANIFEST_BYTES,
+    MAX_MEMBER_BYTES,
+    MAX_PATH_LENGTH,
+    MAX_PAYLOAD_BYTES,
+    MAX_PAYLOAD_FILES,
+    PRODUCT,
+)
+
 DEFAULT_INSTALL_ROOT = Path("/opt/clientflow")
 DEFAULT_ETC_ROOT = Path("/etc/clientflow")
 DEFAULT_STATE_ROOT = Path("/var/lib/clientflow/release")
 DEFAULT_INCOMING_ROOT = Path("/var/lib/clientflow/system-agent/incoming")
-MAX_BUNDLE_BYTES = 2 * 1024 * 1024 * 1024
-MAX_MANIFEST_BYTES = 1024 * 1024
-MAX_PAYLOAD_FILES = 20_000
-MAX_PAYLOAD_BYTES = 4 * 1024 * 1024 * 1024
-MAX_MEMBER_BYTES = 1024 * 1024 * 1024
-MAX_PATH_LENGTH = 240
-DOMAIN_NAMES = (
-    "status",
-    "display",
-    "livestream",
-    "remote_desktop",
-    "terminal",
-    "system",
-)
 MANAGED_UNIT_PREFIX = "clientflow-"
+
+__all__ = [
+    "ARTIFACT_TYPE_RUNTIME_RELEASE",
+    "CHANNEL",
+    "DEFAULT_ETC_ROOT",
+    "DEFAULT_INCOMING_ROOT",
+    "DEFAULT_INSTALL_ROOT",
+    "DEFAULT_STATE_ROOT",
+    "DOMAIN_NAMES",
+    "INSTALL_MODE_FRESH",
+    "INSTALL_MODE_UPDATE",
+    "INTEGRITY_ALGORITHM",
+    "MANAGED_UNIT_PREFIX",
+    "MANIFEST_SCHEMA",
+    "MAX_BUNDLE_BYTES",
+    "MAX_MANIFEST_BYTES",
+    "MAX_MEMBER_BYTES",
+    "MAX_PATH_LENGTH",
+    "MAX_PAYLOAD_BYTES",
+    "MAX_PAYLOAD_FILES",
+    "PRODUCT",
+]

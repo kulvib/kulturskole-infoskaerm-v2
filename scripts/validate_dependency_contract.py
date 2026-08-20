@@ -199,6 +199,7 @@ def main() -> int:
         "python -m pip_audit --disable-pip --no-deps --progress-spinner off -r backend/requirements.lock.txt",
         "python scripts/validate_dependency_contract.py",
         "python -m ruff check backend/service1 backend/scripts scripts --select F",
+        "python -m ruff check backend/clientflow_release_format --select F",
         "npm run audit:dependencies",
         "npm run test:dependency-runtime",
         "npm run test:mui-react-upgrade",

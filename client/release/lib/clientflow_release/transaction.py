@@ -16,7 +16,7 @@ import time
 from typing import Any
 
 from .bundle import extract_verified_payload, verify_bundle
-from .constants import MAX_BUNDLE_BYTES
+from .constants import INSTALL_MODE_UPDATE, MAX_BUNDLE_BYTES
 from .crypto import sha256_file
 from .filesystem import (
     atomic_symlink,
@@ -279,6 +279,7 @@ def _validate_release_tree(release_root: Path, manifest: dict[str, Any]) -> None
         "client-runtime/tmpfiles.d/clientflow.conf",
         "release/bin/clientflow-release-transaction",
         "release/lib/clientflow_release/transaction.py",
+        "release/lib/clientflow_release_format/manifest.py",
     )
     for relative in required:
         path = release_root / relative
@@ -324,6 +325,7 @@ def stage_bundle(
     *,
     release_id: str,
     expected_bundle_sha256: str,
+    install_mode: str = INSTALL_MODE_UPDATE,
     layout: Layout = Layout(),
 ) -> dict[str, Any]:
     release_id = _validate_release_id(release_id)
@@ -336,7 +338,9 @@ def stage_bundle(
     if actual_bundle_sha256 != expected_bundle_sha256:
         raise TransactionError("Releasebundlens SHA-256 matcher ikke den godkendte bundle-hash")
     with TransactionLock(layout):
-        manifest, payload = verify_bundle(bundle, require_deployable=True)
+        manifest, payload = verify_bundle(
+            bundle, require_deployable=True, required_install_mode=install_mode
+        )
         if manifest["release_id"] != release_id:
             raise TransactionError("Bundle og release_id matcher ikke")
         state = load_state(layout)

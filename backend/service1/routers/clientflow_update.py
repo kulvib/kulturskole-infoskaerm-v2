@@ -6,10 +6,20 @@ from typing import Any, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field as PydanticField
 from sqlmodel import Session
 
 from ..audit import add_audit_log
+from ..clientflow_artifact_auth import (
+    ClientFlowArtifactAuthorizationError,
+    authenticate_artifact_request,
+    issue_artifact_access_token,
+)
+from ..clientflow_release_artifacts import (
+    ClientFlowReleaseArtifactError,
+    verify_artifact_matches_deployment,
+)
 from ..auth import get_current_superadmin_user
 from ..clientflow_deployments import (
     ClientFlowDeploymentConflict,
@@ -108,6 +118,16 @@ class UpdateActivationRequest(BaseModel):
 class UpdateDeploymentReportResponse(BaseModel):
     deployment: ClientFlowDeploymentRead
     replayed: bool = False
+
+
+class UpdateArtifactAuthorizationResponse(BaseModel):
+    access_token: str
+    token_type: str = "DPoP"
+    expires_in: int
+    release_id: str
+    bundle_sha256: str
+    bundle_size: int
+    artifact_url: str
 
 
 def _client_or_404(session: Session, client_id: int) -> Client:
@@ -378,6 +398,94 @@ def rotate_clientflow_update_credential(
     except ClientFlowUpdateAuthError as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/clientflow-update/deployments/{deployment_id}/artifact-authorization",
+    response_model=UpdateArtifactAuthorizationResponse,
+)
+def authorize_clientflow_artifact_download(
+    deployment_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    principal = _principal(session, request, scope="artifact:authorize")
+    deployment = _deployment_for_principal(
+        session,
+        deployment_id=deployment_id,
+        client_id=int(principal.client.id),
+    )
+    release = {
+        "release_id": deployment.target_release_id,
+        "version": deployment.target_version,
+        "release_sequence": deployment.target_release_sequence,
+    }
+    try:
+        verify_artifact_matches_deployment(
+            release,
+            deployment_release_id=deployment.target_release_id,
+            bundle_sha256=deployment.bundle_sha256,
+            bundle_size=deployment.bundle_size,
+            approval_reference=deployment.release_approval_reference,
+        )
+        token, ttl = issue_artifact_access_token(principal=principal, deployment=deployment)
+    except ClientFlowReleaseArtifactError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ClientFlowArtifactAuthorizationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return UpdateArtifactAuthorizationResponse(
+        access_token=token,
+        expires_in=ttl,
+        release_id=deployment.target_release_id,
+        bundle_sha256=deployment.bundle_sha256,
+        bundle_size=deployment.bundle_size,
+        artifact_url=f"/api/clientflow/release-artifacts/{deployment.target_release_id}",
+    )
+
+
+@router.get("/clientflow/release-artifacts/{release_id}")
+def download_clientflow_release_artifact(
+    release_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    try:
+        principal = authenticate_artifact_request(
+            session,
+            request=request,
+            release_id=release_id,
+        )
+        # DPoP replay consumption and credential last_used belong to auth and
+        # remain consumed even if the separately published artifact is missing.
+        session.commit()
+        deployment = principal.deployment
+        artifact = verify_artifact_matches_deployment(
+            {
+                "release_id": deployment.target_release_id,
+                "version": deployment.target_version,
+                "release_sequence": deployment.target_release_sequence,
+            },
+            deployment_release_id=deployment.target_release_id,
+            bundle_sha256=deployment.bundle_sha256,
+            bundle_size=deployment.bundle_size,
+            approval_reference=deployment.release_approval_reference,
+        )
+    except ClientFlowArtifactAuthorizationError as exc:
+        session.rollback()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    except ClientFlowReleaseArtifactError as exc:
+        session.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return FileResponse(
+        path=artifact.path,
+        media_type="application/octet-stream",
+        filename=f"{artifact.release_id}.tar",
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "ETag": f'"sha256-{artifact.bundle_sha256}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/clientflow-update/deployments/active", response_model=Optional[ClientFlowDeploymentRead])

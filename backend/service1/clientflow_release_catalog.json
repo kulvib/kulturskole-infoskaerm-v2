@@ -36,6 +36,12 @@
       "notes": [
         "Canonical isolated runtime for Display, Status, System, Livestream, Terminal and Remote Desktop.",
         "Source baseline derived from physically validated clientflow-1.2.0-seq-1200 runtime."
+      ],
+      "release_id": "clientflow-1.2.0-seq-1200",
+      "artifact_type": "runtime_release",
+      "install_modes": [
+        "fresh_install",
+        "in_place_update"
       ]
     }
   ]

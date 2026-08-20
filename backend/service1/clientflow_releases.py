@@ -11,6 +11,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from .clientflow_release_artifacts import (
+    ClientFlowReleaseArtifactError,
+    inspect_published_release_artifact,
+)
+
 CATALOG_PATH = Path(__file__).with_name("clientflow_release_catalog.json")
 SELECTABLE_STATUSES = {"stable", "supported"}
 KNOWN_STATUSES = SELECTABLE_STATUSES | {"deprecated", "blocked"}
@@ -96,6 +101,20 @@ def load_catalog() -> dict[str, Any]:
         versions.add(version)
         if status not in KNOWN_STATUSES:
             raise ClientFlowCatalogError(f"Ukendt release-status for {version}: {status}")
+        release_id = str(release.get("release_id") or release.get("revision") or "").strip()
+        if not re.fullmatch(r"clientflow-\d+\.\d+\.\d+-seq-[1-9]\d*", release_id):
+            raise ClientFlowCatalogError(f"Ugyldigt release_id for {version}")
+        try:
+            sequence = int(release.get("release_sequence"))
+        except (TypeError, ValueError) as exc:
+            raise ClientFlowCatalogError(f"Ugyldig release_sequence for {version}") from exc
+        if release_id != f"clientflow-{version}-seq-{sequence}":
+            raise ClientFlowCatalogError(f"release_id/version/release_sequence matcher ikke for {version}")
+        if release.get("artifact_type") != "runtime_release":
+            raise ClientFlowCatalogError(f"Ugyldig artifact_type for {version}")
+        install_modes = release.get("install_modes")
+        if not isinstance(install_modes, list) or "in_place_update" not in install_modes:
+            raise ClientFlowCatalogError(f"Release {version} understøtter ikke in-place update")
         policy = release.get("ubuntu_compatibility") or {}
         if policy:
             if policy.get("policy") != "ubuntu-desktop-lts-minimum":
@@ -173,7 +192,10 @@ def public_catalog() -> dict[str, Any]:
             "version": item.get("version"),
             "status": item.get("status"),
             "release_sequence": item.get("release_sequence"),
+            "release_id": item.get("release_id") or item.get("revision"),
             "revision": item.get("revision"),
+            "artifact_type": item.get("artifact_type"),
+            "install_modes": item.get("install_modes") or [],
             "client_version_patch": item.get("client_version_patch"),
             "created_at": item.get("created_at"),
             "installable": item.get("installable") is True,
@@ -199,63 +221,20 @@ def public_catalog() -> dict[str, Any]:
 
 
 class ClientFlowArtifactUnavailable(ClientFlowCatalogError):
-    """The release exists, but lacks immutable artifact authority metadata."""
+    """The release exists, but no verified immutable artifact is published."""
 
 
 def deployment_release_snapshot(release: dict[str, Any]) -> dict[str, Any]:
-    """Return immutable artifact/approval identity for one deployment authorization.
-
-    Deployment authorization must never trust artifact identity supplied by an
-    admin request or an unprivileged client.  The values are read only from the
-    backend release catalog and copied into the durable deployment row.
-
-    The current catalog has not yet been migrated to the final artifact schema;
-    this helper therefore accepts both the future nested ``artifact`` shape and
-    the legacy flat names, but fails closed when the actual bytes are not
-    identified by SHA-256 and size.
-    """
-    artifact = release.get("artifact") if isinstance(release.get("artifact"), dict) else {}
-    approval = release.get("release_approval") if isinstance(release.get("release_approval"), dict) else {}
-
-    release_id = str(release.get("release_id") or release.get("revision") or "").strip()
-    bundle_sha256 = str(artifact.get("sha256") or release.get("bundle_sha256") or "").strip().lower()
-    raw_size = artifact.get("size") if artifact.get("size") is not None else release.get("bundle_size")
-    approval_reference = str(
-        release.get("release_approval_reference") or approval.get("reference") or ""
-    ).strip()
-    candidate_sha256 = str(
-        release.get("release_candidate_sha256") or approval.get("candidate_sha256") or ""
-    ).strip().lower() or None
-    source_commit = str(release.get("source_commit") or approval.get("source_commit") or "").strip() or None
-
+    """Resolve exact approved artifact bytes and return an immutable deployment snapshot."""
     try:
-        bundle_size = int(raw_size)
-    except (TypeError, ValueError):
-        bundle_size = 0
-
-    missing: list[str] = []
-    if not release_id:
-        missing.append("release_id/revision")
-    if not re.fullmatch(r"[0-9a-f]{64}", bundle_sha256):
-        missing.append("bundle_sha256")
-    if bundle_size <= 0:
-        missing.append("bundle_size")
-    if not approval_reference:
-        missing.append("release_approval_reference")
-    if candidate_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", candidate_sha256):
-        missing.append("release_candidate_sha256")
-    if source_commit is not None and not re.fullmatch(r"[0-9a-f]{40,64}", source_commit):
-        missing.append("source_commit")
-    if missing:
-        raise ClientFlowArtifactUnavailable(
-            "ClientFlow-releasen mangler autoritativ artifact metadata: " + ", ".join(missing)
-        )
-
+        artifact = inspect_published_release_artifact(release)
+    except ClientFlowReleaseArtifactError as exc:
+        raise ClientFlowArtifactUnavailable(str(exc)) from exc
     return {
-        "target_release_id": release_id,
-        "bundle_sha256": bundle_sha256,
-        "bundle_size": bundle_size,
-        "release_approval_reference": approval_reference,
-        "release_candidate_sha256": candidate_sha256,
-        "source_commit": source_commit,
+        "target_release_id": artifact.release_id,
+        "bundle_sha256": artifact.bundle_sha256,
+        "bundle_size": artifact.bundle_size,
+        "release_approval_reference": artifact.approval_reference,
+        "release_candidate_sha256": artifact.candidate_sha256,
+        "source_commit": artifact.source_commit,
     }

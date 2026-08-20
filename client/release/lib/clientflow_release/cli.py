@@ -14,7 +14,7 @@ import subprocess
 import uuid
 
 from .bundle import verify_bundle
-from .constants import DOMAIN_NAMES, MAX_BUNDLE_BYTES
+from .constants import DOMAIN_NAMES, INSTALL_MODE_FRESH, MAX_BUNDLE_BYTES
 from .crypto import sha256_file
 from .enrollment import claim, complete, generate_system_key, persist_enrollment, validate_backend_url
 from .update_auth import generate_update_key, public_material as update_public_material
@@ -247,7 +247,9 @@ def install_fresh(args: argparse.Namespace) -> dict:
     kiosk_user = _validate_kiosk_user(args.kiosk_user, layout)
     backend_url = validate_backend_url(args.backend_url)
     approved_bundle_sha256 = _verify_expected_bundle_hash(args.bundle, args.expected_bundle_sha256)
-    manifest, _payload = verify_bundle(args.bundle, require_deployable=True)
+    manifest, _payload = verify_bundle(
+        args.bundle, require_deployable=True, required_install_mode=INSTALL_MODE_FRESH
+    )
     release_id = manifest["release_id"]
     state_path = _install_state_path(layout)
     if state_path.exists():
@@ -270,7 +272,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
         conflicts = _fresh_conflicts(layout)
         if conflicts:
             raise RuntimeError(
-                "Fresh-only install afviste eksisterende ClientFlow-spor: " + ", ".join(conflicts)
+                "Fresh install afviste eksisterende ClientFlow-spor: " + ", ".join(conflicts)
                 + ". Brug den separate eksplicitte wipe-procedure."
             )
         ensure_real_directory(layout.state_root, mode=0o700)
@@ -296,6 +298,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
         args.bundle,
         release_id=release_id,
         expected_bundle_sha256=approved_bundle_sha256,
+        install_mode=INSTALL_MODE_FRESH,
         layout=layout,
     )
     install_staged_definitions(release_id, layout=layout, kiosk_user=kiosk_user)
@@ -370,7 +373,7 @@ def _common_transaction_parser(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="ClientFlow 1.2.0 trusted fresh-only installer")
+    parser = argparse.ArgumentParser(description="ClientFlow trusted runtime-release installer")
     sub = parser.add_subparsers(dest="operation", required=True)
     verify = sub.add_parser("verify")
     verify.add_argument("--bundle", type=Path, required=True)
@@ -407,7 +410,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.operation == "verify":
         bundle_sha256 = _verify_expected_bundle_hash(args.bundle, args.expected_bundle_sha256)
-        manifest, _ = verify_bundle(args.bundle, require_deployable=True)
+        manifest, _ = verify_bundle(
+            args.bundle, require_deployable=True, required_install_mode=INSTALL_MODE_FRESH
+        )
         result = {
             "status": "verified",
             "release_id": manifest["release_id"],

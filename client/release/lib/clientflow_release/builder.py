@@ -10,7 +10,16 @@ import subprocess
 import tarfile
 import zipfile
 
-from .constants import CHANNEL, DOMAIN_NAMES, INTEGRITY_ALGORITHM, MANIFEST_SCHEMA, PRODUCT
+from .constants import (
+    ARTIFACT_TYPE_RUNTIME_RELEASE,
+    CHANNEL,
+    DOMAIN_NAMES,
+    INSTALL_MODE_FRESH,
+    INSTALL_MODE_UPDATE,
+    INTEGRITY_ALGORITHM,
+    MANIFEST_SCHEMA,
+    PRODUCT,
+)
 from .crypto import sha256_file
 from .manifest import validate_manifest
 
@@ -84,6 +93,9 @@ def _create_payload(repo: Path, output: Path, *, version: str, epoch: int, runti
     package_root = repo / "client/release/lib/clientflow_release"
     for path in _iter_files(package_root):
         sources.append((path, PurePosixPath(root) / "release/lib/clientflow_release" / path.relative_to(package_root).as_posix()))
+    format_root = repo / "backend/clientflow_release_format"
+    for path in _iter_files(format_root):
+        sources.append((path, PurePosixPath(root) / "release/lib/clientflow_release_format" / path.relative_to(format_root).as_posix()))
     wrapper = repo / "client/release/bin/clientflow-release-transaction"
     sources.append((wrapper, PurePosixPath(root) / "release/bin/clientflow-release-transaction"))
     sources.append((repo / "client/VERSION", PurePosixPath(root) / "VERSION"))
@@ -148,6 +160,9 @@ def _create_installer_pyz(repo: Path, output: Path, *, epoch: int) -> None:
     entries: list[tuple[str, bytes, int]] = []
     for path in _iter_files(package_root):
         entries.append((f"clientflow_release/{path.relative_to(package_root).as_posix()}", path.read_bytes(), _source_mode(path)))
+    format_root = repo / "backend/clientflow_release_format"
+    for path in _iter_files(format_root):
+        entries.append((f"clientflow_release_format/{path.relative_to(format_root).as_posix()}", path.read_bytes(), _source_mode(path)))
     entries.append(("__main__.py", b"from clientflow_release.cli import main\nraise SystemExit(main())\n", 0o644))
     timestamp = __import__("datetime").datetime.fromtimestamp(max(epoch, 315532800), tz=__import__("datetime").timezone.utc)
     date_time = (timestamp.year, timestamp.month, timestamp.day, timestamp.hour, timestamp.minute, timestamp.second)
@@ -189,7 +204,8 @@ def build(repo: Path, output_dir: Path, *, runtime_inputs: Path | None, allow_di
         "release_id": release_id,
         "release_sequence": sequence,
         "source_date_epoch": epoch,
-        "fresh_only": True,
+        "artifact_type": ARTIFACT_TYPE_RUNTIME_RELEASE,
+        "install_modes": [INSTALL_MODE_FRESH, INSTALL_MODE_UPDATE],
         "deployable": False,
         "integrity_algorithm": INTEGRITY_ALGORITHM,
         "release_approval": {"reference": None, "candidate_sha256": None},

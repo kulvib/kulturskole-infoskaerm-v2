@@ -10,6 +10,7 @@ import sys
 import tempfile
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "backend"))
 sys.path.insert(0, str(REPO / "client" / "release" / "lib"))
 from clientflow_release.builder import build  # noqa: E402
 

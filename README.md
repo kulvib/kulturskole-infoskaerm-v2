@@ -51,13 +51,16 @@ The canonical shared-foundations base is `20260819_50a_canonical`; the current r
 
 ## ClientFlow release model
 
-ClientFlow 1.2.0 uses a fresh-install/keyless release model:
+ClientFlow uses a keyless runtime-release model with explicit fresh-install and in-place-update modes:
 
 - source version: `client/VERSION`
 - monotonically increasing sequence: `client/release/release-input.json`
 - canonical runtime wheel is rebuilt from `client/runtime/` for every release candidate
 - offline Python/runtime dependency inputs are supplied separately and are not committed as source
 - release candidates are non-deployable by default
+- manifest schema 6 declares `artifact_type: runtime_release` and explicit `install_modes`
+- backend deployment authority is derived from the exact approved bytes published in `CLIENTFLOW_RELEASE_ARTIFACT_DIR`
+- artifact download requires a deployment-bound, DPoP-bound updater authorization; legacy System-domain bearer tokens are not accepted
 - a separate explicit approval step binds approval to the exact candidate SHA-256 and source commit
 - installation/activation is manual; no automatic reboot or automatic activation is permitted
 

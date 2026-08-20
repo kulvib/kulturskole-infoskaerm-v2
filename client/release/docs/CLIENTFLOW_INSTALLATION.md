@@ -1,4 +1,4 @@
-# ClientFlow 1.2.0 — fresh-only installation
+# ClientFlow 1.2.0 — fresh installation from a canonical runtime release
 
 ## Sikkerhedsstatus
 
@@ -16,7 +16,7 @@ Ingen fysisk installation må ske, før en konkret pilotklient er udpeget og ins
 - Gyldig one-time enrollmentkode og HTTPS-forbindelse til backend.
 - Eventuel privat CA leveres som PEM og kopieres til `/etc/clientflow/tls/ca.pem`.
 
-## Fresh-only flow
+## Fresh-install flow
 
 1. Kør installerens `verify` med den eksakte forventede bundle-SHA-256:
 
@@ -38,7 +38,7 @@ Ingen fysisk installation må ske, før en konkret pilotklient er udpeget og ins
    ```
 
 3. Installeren afviser alle eksisterende ClientFlow-spor. En geninstallation kræver den separate wipe-procedure med eksakt destruktiv bekræftelse.
-4. Hele bundlens SHA-256 verificeres før bundlefortolkning. Derefter verificeres manifest-schema, produkt, fresh-only, deployable-gate, keyless release approval, payloadstørrelse/-SHA-256, arkivstier, dubletter, links, specialfiler og komplet offline runtime.
+4. Hele bundlens SHA-256 verificeres før bundlefortolkning. Derefter verificeres manifest-schema, produkt, `runtime_release`, `fresh_install` install-mode, deployable-gate, keyless release approval, payloadstørrelse/-SHA-256, arkivstier, dubletter, links, specialfiler og komplet offline runtime.
 5. Releasen stages i `/opt/clientflow/releases/<release-id>` og gøres immutable.
 6. Separate sysusers, kataloger og systemd-definitioner materialiseres, men `clientflow.target` forbliver disabled og inaktiv.
 7. Installeren genererer en lokal RSA 3072-**systemkrypteringsnøgle** til enrollment. Det er ikke en release-signeringsnøgle.

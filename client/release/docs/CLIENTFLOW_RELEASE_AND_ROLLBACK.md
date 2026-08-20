@@ -24,6 +24,10 @@ python scripts/build_clientflow_release.py \
 Et almindeligt build har altid:
 
 ```yaml
+artifact_type: runtime_release
+install_modes:
+  - fresh_install
+  - in_place_update
 deployable: false
 integrity_algorithm: sha256
 release_approval:
@@ -76,12 +80,12 @@ Outputbundlens egen SHA-256 skal derefter registreres og bruges som den eksakte 
 
 ## Publicering og verificeret releasekatalog
 
-Backendvariablen `CLIENTFLOW_RELEASE_ARTIFACT_DIR` skal pege på et eksisterende, root-ejet katalog med **godkendte keyless `.tar`-bundles**. Kataloget må ikke være et symlink eller være gruppe-/verdensskrivbart. Uden denne konfiguration returnerer katalogendpointet HTTP 503, og Control Room kan ikke stage en release.
+Backendvariablen `CLIENTFLOW_RELEASE_ARTIFACT_DIR` skal pege på et eksisterende katalog, ejet af root eller backend-processens UID, med **godkendte keyless `.tar`-bundles**. Kataloget må ikke være et symlink eller være gruppe-/verdensskrivbart. Releasekatalogets metadata kan fortsat læses uden artifact-store, men en deployment kan ikke autoriseres, og artifact-endpointet returnerer fail-closed, før den eksakte approved bundle er publiceret.
 
 Der findes ingen `CLIENTFLOW_RELEASE_PUBLIC_KEY_PATH` og ingen release trust key. Frontend modtager aldrig en release, før backend har verificeret:
 
 - eksakt archive-layout og sikre metadata;
-- produkt, `fresh-only-release`-kanal og release-ID;
+- produkt, `clientflow-runtime-release`-kanal, `runtime_release` artifact-type, eksplicit `in_place_update` install-mode og release-ID;
 - `deployable: true`;
 - `integrity_algorithm: sha256`;
 - gyldig `release_approval.reference` og kandidat-SHA-256;
@@ -89,11 +93,23 @@ Der findes ingen `CLIENTFLOW_RELEASE_PUBLIC_KEY_PATH` og ingen release trust key
 - komplet offline wheelhouse og ren source-commit;
 - manuel aktivering og ingen automatisk reboot.
 
-Backend beregner desuden SHA-256 for hele den publicerede bundle. Systemkommandoen binder release-ID, størrelse og denne bundle-SHA-256 til downloadet. Artifactet skal publiceres immutabelt af en separat godkendt proces; backend/frontend bygger eller godkender ikke selv releasen.
+Backend beregner desuden SHA-256 for hele den publicerede bundle og kopierer release-ID, størrelse, bundle-SHA-256, approval-reference, candidate-SHA og source commit ind i den immutable deployment-authorization. Artifactet publiceres eksplicit med en separat gate; backend/frontend bygger eller godkender ikke selv releasen:
+
+```bash
+python scripts/publish_clientflow_release.py \
+  ./clientflow-1.2.0-seq-1200-approved.tar \
+  --artifact-dir /srv/clientflow-release-artifacts \
+  --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
+  --expected-approval-reference <CHANGE_OR_RELEASE_REFERENCE> \
+  --expected-source-commit <FULL_40_CHARACTER_GIT_SHA> \
+  --publish-release
+```
+
+Publicering er idempotent for identiske bytes og afviser, hvis samme release-ID allerede findes med en anden bundle.
 
 ## Download, stage og anti-rollback
 
-Systemagenten downloader kun den eksakte same-origin-sti `/api/clientflow/release-artifacts/<release-id>` og verificerer den forventede størrelse og bundle-SHA-256. Root-transaktionen kræver den samme SHA-256 igen via `--expected-bundle-sha256` **før ekstraktion**.
+Den stabile updater skal først hente en kortlivet deployment-bound artifact-authorization og downloader derefter kun den eksakte same-origin-sti `/api/clientflow/release-artifacts/<release-id>` med DPoP-bound artifact-token. Legacy System-domain Bearer-token accepteres ikke af endpointet. Den senere root-controller skal derefter binde de samme release-ID/size/SHA-værdier til secure ingest før ekstraktion.
 
 En verificeret bundle stages i et immutable katalog:
 
