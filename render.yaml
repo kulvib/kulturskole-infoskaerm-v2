@@ -4,8 +4,19 @@ services:
   - type: web
     name: infoskaerm-backend
     runtime: python
+    plan: starter
+    numInstances: 1
     rootDir: backend
     buildCommand: "python -m pip install --upgrade pip==26.1.2 && python -m pip install --require-hashes --no-cache-dir -r requirements.lock.txt"
+
+    # Canonical ClientFlow release artifacts are runtime state. Render services
+    # otherwise have an ephemeral filesystem, so the backend owns one persistent
+    # disk and one runtime instance. Pre-deploy runs on separate compute and must
+    # never be used to publish or inspect this artifact store.
+    disk:
+      name: clientflow-release-artifacts
+      mountPath: /var/data/clientflow-release-artifacts
+      sizeGB: 1
 
     # VIGTIGT for HLS/livestream:
     # Kør 1 worker, fordi livestream health/manifest/timestamp-state ellers kan
@@ -130,6 +141,11 @@ services:
 
       - key: AUDIT_LOG_RETENTION_DAYS
         value: "90"
+
+      # 51M: exact runtime authority for approved immutable ClientFlow bundles.
+      # This must equal the persistent disk mountPath above.
+      - key: CLIENTFLOW_RELEASE_ARTIFACT_DIR
+        value: "/var/data/clientflow-release-artifacts"
 
       - key: DB_POOL_SIZE
         value: "5"
