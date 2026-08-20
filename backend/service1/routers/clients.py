@@ -11,7 +11,7 @@ from ..models import Client, ClientRead, ClientCreate, ClientUpdate, CalendarMar
 from ..auth import get_current_user, get_current_admin_user, get_current_superadmin_user, get_current_user_or_client, require_client_self_or_user, principal_is_client, get_password_hash, validate_password_strength
 from ..models import utcnow
 from ..observability import log_safe_exception
-from ..lifecycle import prepare_client_for_permanent_delete
+from ..lifecycle import ClientPurgeBlocked, prepare_client_for_permanent_delete
 from ..terminal_v2_models import TerminalClient, TerminalCredential
 from ..remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
 from ..season_service import (
@@ -428,8 +428,6 @@ CLIENT_SELF_UPDATE_FIELDS = {
     "client_update_started_at",
     "client_update_finished_at",
     "client_update_error",
-    "client_update_target_version",
-    "client_update_deployment_sequence",
     "client_update_applied_deployment_sequence",
     "desktop_lockdown_status",
     "desktop_lockdown_message",
@@ -3173,6 +3171,9 @@ async def purge_client(
             "terminal_decommissioned": stats.terminal_decommissioned,
             "remote_desktop_decommissioned": stats.remote_desktop_decommissioned,
         }
+    except ClientPurgeBlocked as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         session.rollback()
         log_safe_exception(

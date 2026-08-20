@@ -1,1 +1,3 @@
-Ingen repo-filer skal slettes.
+CHANGE_SUMMARY.txt
+DELETE_FILES.txt
+backend/tests/test_canonical_foundations_50_source_fixed.py

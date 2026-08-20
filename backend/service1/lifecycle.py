@@ -16,6 +16,11 @@ from sqlmodel import Session, select
 
 from .client_activity_models import ClientActivityLease
 from .client_domain_models import ClientCommand, ClientDomainCredential, ClientDomainStatus
+from .clientflow_update_models import (
+    ClientFlowDeployment,
+    ClientFlowDeploymentEvent,
+    ClientFlowUpdateCredential,
+)
 from .enrollment_models import ClientEnrollmentReceipt, ClientSystemEncryptionKey
 from .livestream_v2_models import (
     LivestreamV2AgentStatus,
@@ -45,6 +50,23 @@ class ClientPurgeStats:
     unlinked_enrollment_tokens: int = 0
     terminal_decommissioned: bool = False
     remote_desktop_decommissioned: bool = False
+
+
+class ClientPurgeBlocked(RuntimeError):
+    """Permanent purge cannot destroy authority state for an active deployment."""
+
+
+def _reject_active_clientflow_deployment(session: Session, *, client_id: int) -> None:
+    active = session.exec(
+        select(ClientFlowDeployment).where(
+            ClientFlowDeployment.client_id == client_id,
+            ClientFlowDeployment.completed_at.is_(None),
+        )
+    ).first()
+    if active is not None:
+        raise ClientPurgeBlocked(
+            f"Klienten har en aktiv ClientFlow-deployment ({active.id}, state={active.state})"
+        )
 
 
 def decommission_isolated_client_domains(
@@ -160,6 +182,20 @@ def delete_platform_client_state(session: Session, *, client_id: int) -> int:
     session.exec(delete(ClientCommand).where(ClientCommand.client_id == client_id))
     session.exec(delete(ClientDomainCredential).where(ClientDomainCredential.client_id == client_id))
 
+    # First-class ClientFlow deployment history belongs to the platform client.
+    # Events reference both deployment and update credential, so remove them first.
+    deployment_ids = list(session.exec(
+        select(ClientFlowDeployment.id).where(ClientFlowDeployment.client_id == client_id)
+    ).all())
+    if deployment_ids:
+        session.exec(
+            delete(ClientFlowDeploymentEvent).where(
+                ClientFlowDeploymentEvent.deployment_id.in_(deployment_ids)
+            )
+        )
+    session.exec(delete(ClientFlowDeployment).where(ClientFlowDeployment.client_id == client_id))
+    session.exec(delete(ClientFlowUpdateCredential).where(ClientFlowUpdateCredential.client_id == client_id))
+
     # Canonical enrollment/setup state has non-cascading FKs to client.id.
     # Remove it before the platform Client row so permanent deletion remains
     # valid for fresh 1.2 enrollments as well as adopted clients.
@@ -184,6 +220,7 @@ def prepare_client_for_permanent_delete(
     reason: str = "platform_client_permanently_deleted",
 ) -> ClientPurgeStats:
     """Decommission isolated domains and clear platform-owned FK children."""
+    _reject_active_clientflow_deployment(session, client_id=client_id)
     terminal_disabled, rd_disabled = decommission_isolated_client_domains(
         session, client_id=client_id, reason=reason
     )

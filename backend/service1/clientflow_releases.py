@@ -196,3 +196,66 @@ def public_catalog() -> dict[str, Any]:
         "retention_policy": catalog.get("retention_policy") or {},
         "releases": releases,
     }
+
+
+class ClientFlowArtifactUnavailable(ClientFlowCatalogError):
+    """The release exists, but lacks immutable artifact authority metadata."""
+
+
+def deployment_release_snapshot(release: dict[str, Any]) -> dict[str, Any]:
+    """Return immutable artifact/approval identity for one deployment authorization.
+
+    Deployment authorization must never trust artifact identity supplied by an
+    admin request or an unprivileged client.  The values are read only from the
+    backend release catalog and copied into the durable deployment row.
+
+    The current catalog has not yet been migrated to the final artifact schema;
+    this helper therefore accepts both the future nested ``artifact`` shape and
+    the legacy flat names, but fails closed when the actual bytes are not
+    identified by SHA-256 and size.
+    """
+    artifact = release.get("artifact") if isinstance(release.get("artifact"), dict) else {}
+    approval = release.get("release_approval") if isinstance(release.get("release_approval"), dict) else {}
+
+    release_id = str(release.get("release_id") or release.get("revision") or "").strip()
+    bundle_sha256 = str(artifact.get("sha256") or release.get("bundle_sha256") or "").strip().lower()
+    raw_size = artifact.get("size") if artifact.get("size") is not None else release.get("bundle_size")
+    approval_reference = str(
+        release.get("release_approval_reference") or approval.get("reference") or ""
+    ).strip()
+    candidate_sha256 = str(
+        release.get("release_candidate_sha256") or approval.get("candidate_sha256") or ""
+    ).strip().lower() or None
+    source_commit = str(release.get("source_commit") or approval.get("source_commit") or "").strip() or None
+
+    try:
+        bundle_size = int(raw_size)
+    except (TypeError, ValueError):
+        bundle_size = 0
+
+    missing: list[str] = []
+    if not release_id:
+        missing.append("release_id/revision")
+    if not re.fullmatch(r"[0-9a-f]{64}", bundle_sha256):
+        missing.append("bundle_sha256")
+    if bundle_size <= 0:
+        missing.append("bundle_size")
+    if not approval_reference:
+        missing.append("release_approval_reference")
+    if candidate_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", candidate_sha256):
+        missing.append("release_candidate_sha256")
+    if source_commit is not None and not re.fullmatch(r"[0-9a-f]{40,64}", source_commit):
+        missing.append("source_commit")
+    if missing:
+        raise ClientFlowArtifactUnavailable(
+            "ClientFlow-releasen mangler autoritativ artifact metadata: " + ", ".join(missing)
+        )
+
+    return {
+        "target_release_id": release_id,
+        "bundle_sha256": bundle_sha256,
+        "bundle_size": bundle_size,
+        "release_approval_reference": approval_reference,
+        "release_candidate_sha256": candidate_sha256,
+        "source_commit": source_commit,
+    }

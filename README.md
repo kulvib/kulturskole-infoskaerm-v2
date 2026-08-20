@@ -47,7 +47,7 @@ Run migrations from `backend/` through:
 python scripts/run_migrations.py
 ```
 
-The canonical foundations head is `20260819_50a_canonical`.
+The canonical shared-foundations base is `20260819_50a_canonical`; the current reviewed head is `20260819_51a_update_control`, which adds first-class ClientFlow deployment authority and the stable update-credential schema.
 
 ## ClientFlow release model
 

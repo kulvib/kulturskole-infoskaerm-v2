@@ -59,6 +59,11 @@ from canonical_foundations_schema_contract import (
     CANONICAL_FOUNDATION_TABLES,
     CANONICAL_RETIRED_CLIENT_COLUMNS,
 )
+from clientflow_deployment_schema_contract import (
+    CLIENTFLOW_DEPLOYMENT_CONSTRAINTS,
+    CLIENTFLOW_DEPLOYMENT_INDEXES,
+    CLIENTFLOW_DEPLOYMENT_TABLES,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = ROOT / "alembic.ini"
@@ -67,7 +72,7 @@ ADVISORY_LOCK_KEY = -614927384150371204
 # Baseline adoption is deliberately reviewed only for this exact graph. If a
 # later migration changes the head, the adoption path fails closed until the
 # baseline delta is reviewed again.
-REVIEWED_BASELINE_ADOPTION_HEAD = "20260819_50a_canonical"
+REVIEWED_BASELINE_ADOPTION_HEAD = "20260819_51a_update_control"
 REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 
 # Production was observed at this Alembic label before Step 40A was deployed,
@@ -76,7 +81,7 @@ REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 # 39A schema; otherwise deployment fails closed without stamping or DDL.
 RECOVERABLE_LEGACY_REVISION = "20260730_41a"
 RECOVERABLE_LEGACY_TARGET = "20260717_39a_livestream_leases"
-REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260819_50a_canonical"
+REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260819_51a_update_control"
 REVIEWED_LIVESTREAM_V2_PREDECESSOR = "20260814_40a_livestream_control"
 REVIEWED_LIVESTREAM_V2_REVISION = "20260814_41a_livestream_v2"
 REVIEWED_TERMINAL_V2_REVISION = "20260816_42a_terminal_v2"
@@ -88,6 +93,7 @@ REVIEWED_CLIENT_ACTIVITY_REVISION = "20260818_47a_client_activity"
 REVIEWED_LIFECYCLE_REVISION = "20260818_48a_lifecycle"
 REVIEWED_DATABASE_CONTRACT_REVISION = "20260819_49a_db_contract"
 REVIEWED_CANONICAL_FOUNDATIONS_REVISION = "20260819_50a_canonical"
+REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION = "20260819_51a_update_control"
 LIVESTREAM_V2_TABLES = frozenset({
     "livestream_v2_agent_status",
     "livestream_v2_command",
@@ -267,9 +273,9 @@ def _normalise(value: str | None) -> str | None:
 def _normalise_constraint(value: str | None) -> str | None:
     """Normalise PostgreSQL-equivalent constraint deparsing across majors.
 
-    PostgreSQL can deparse ``text = ANY(text[])`` constants either by casting
-    each varchar literal to text or by casting the completed varchar array to
-    ``text[]``.  Those forms are semantically identical, but a byte-for-byte
+    PostgreSQL can deparse ``text = ANY(text[])`` / ``text <> ALL(text[])``
+    constants either by casting each varchar literal to text or by casting the
+    completed varchar array to ``text[]``.  Those forms are semantically identical, but a byte-for-byte
     catalog comparison would treat them as drift.  Keep this deliberately
     narrow to CHECK/ANY/ARRAY renderings so meaningful constraint differences
     still fail closed.
@@ -278,7 +284,7 @@ def _normalise_constraint(value: str | None) -> str | None:
     if (
         normalised is None
         or not normalised.startswith("CHECK (")
-        or " = ANY (ARRAY[" not in normalised
+        or (" ANY (ARRAY[" not in normalised and " ALL (ARRAY[" not in normalised)
     ):
         return normalised
 
@@ -405,6 +411,27 @@ def _catalog_snapshot(connection) -> dict:
     }
 
 
+def _without_clientflow_deployment_schema(
+    columns: dict[str, dict],
+    constraints: dict[str, str],
+    indexes: dict[str, str],
+) -> tuple[dict[str, dict], dict[str, str], dict[str, str]]:
+    """Remove Step 51A objects when reconstructing earlier reviewed schemas."""
+    cleaned_columns = {
+        table: values for table, values in columns.items()
+        if table not in CLIENTFLOW_DEPLOYMENT_TABLES
+    }
+    cleaned_constraints = {
+        name: definition for name, definition in constraints.items()
+        if name not in CLIENTFLOW_DEPLOYMENT_CONSTRAINTS
+    }
+    cleaned_indexes = {
+        name: definition for name, definition in indexes.items()
+        if name not in CLIENTFLOW_DEPLOYMENT_INDEXES
+    }
+    return cleaned_columns, cleaned_constraints, cleaned_indexes
+
+
 def _without_canonical_foundations_schema(
     columns: dict[str, dict],
     constraints: dict[str, str],
@@ -461,10 +488,13 @@ def _baseline_schema_contract() -> tuple[dict[str, dict], dict[str, str], dict[s
             "Display baseline-adoption er ikke gennemgået for den aktuelle Alembic-kæde"
         )
 
-    columns, constraints, indexes = _without_canonical_foundations_schema(
+    columns, constraints, indexes = _without_clientflow_deployment_schema(
         {table: dict(values) for table, values in EXPECTED_COLUMNS.items()},
         dict(EXPECTED_CONSTRAINTS),
         dict(EXPECTED_INDEXES),
+    )
+    columns, constraints, indexes = _without_canonical_foundations_schema(
+        columns, constraints, indexes
     )
     columns, constraints, indexes = _without_adopted_runtime_schema(
         columns, constraints, indexes
@@ -566,10 +596,13 @@ def _pre_livestream_control_schema_contract() -> tuple[dict[str, dict], dict[str
             "Legacy-revision reconciliation er ikke gennemgået for den aktuelle Alembic-kæde"
         )
 
-    columns, constraints, indexes = _without_canonical_foundations_schema(
+    columns, constraints, indexes = _without_clientflow_deployment_schema(
         {table: dict(values) for table, values in EXPECTED_COLUMNS.items()},
         dict(EXPECTED_CONSTRAINTS),
         dict(EXPECTED_INDEXES),
+    )
+    columns, constraints, indexes = _without_canonical_foundations_schema(
+        columns, constraints, indexes
     )
     columns, constraints, indexes = _without_adopted_runtime_schema(
         columns, constraints, indexes
@@ -854,6 +887,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
             lifecycle_revision = script.get_revision(REVIEWED_LIFECYCLE_REVISION)
             database_contract_revision = script.get_revision(REVIEWED_DATABASE_CONTRACT_REVISION)
             canonical_foundations_revision = script.get_revision(REVIEWED_CANONICAL_FOUNDATIONS_REVISION)
+            clientflow_deployment_revision = script.get_revision(REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION)
             head_revision = script.get_revision(head)
             if any(
                 item is None
@@ -861,7 +895,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                     target_revision, predecessor_revision, livestream_v2_revision,
                     terminal_v2_revision, terminal_policy_revision, terminal_storage_revision,
                     terminal_client_revision, remote_desktop_revision, client_activity_revision, lifecycle_revision,
-                    database_contract_revision, canonical_foundations_revision, head_revision,
+                    database_contract_revision, canonical_foundations_revision, clientflow_deployment_revision, head_revision,
                 )
             ):
                 raise RuntimeError("Legacy-revision reconciliation mangler kendte Alembic-noder")
@@ -877,10 +911,11 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                 or lifecycle_revision.down_revision != REVIEWED_CLIENT_ACTIVITY_REVISION
                 or database_contract_revision.down_revision != REVIEWED_LIFECYCLE_REVISION
                 or canonical_foundations_revision.down_revision != REVIEWED_DATABASE_CONTRACT_REVISION
-                or head != REVIEWED_CANONICAL_FOUNDATIONS_REVISION
+                or clientflow_deployment_revision.down_revision != REVIEWED_CANONICAL_FOUNDATIONS_REVISION
+                or head != REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION
             ):
                 raise RuntimeError(
-                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A-kæde"
+                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A-kæde"
                 )
             legacy_columns, legacy_constraints, legacy_indexes = (
                 _pre_livestream_control_schema_contract()
