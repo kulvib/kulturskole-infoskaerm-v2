@@ -1,0 +1,30 @@
+Step 51B – update-auth + provisioning
+
+This delta is relative to the fresh all-green agent/shared-foundations-canonicalization repo supplied on 2026-08-20.
+
+Scope:
+- Separate Ed25519 ClientFlow update identity generated locally by the client; private key never sent to backend.
+- Enrollment/resume binds update public-key identity.
+- Persistent private_key_jwt/DPoP replay state and short-lived client-bound bootstrap/recovery provisioning tokens.
+- Distinct typed/scoped update access tokens and per-request credential/client revalidation.
+- Admin provisioning/revoke, updater rotation, active-deployment read, updater event reporting and atomic activation-start.
+- Backend-owned deployment transition map with target-release success verification and UTC-normalized event timestamps.
+- Step 51B migration/schema/head contract; Step 51A historical schema contract remains unchanged.
+- Direct cryptography dependency pinned in production and CI locks.
+- Fresh installer persists update identity under /etc/clientflow/update with 0700 directory / 0600 files and verifies key-id continuity.
+
+Not included:
+- Artifact download/authorization implementation.
+- Stable root update controller / secure ingest.
+- systemd activation/journal/recovery.
+- Changes to Livestream, Terminal or Remote Desktop runtime implementations.
+
+Validation in local tool environment:
+- compileall: PASS
+- dependency contract: PASS
+- exact schema structural fingerprint: PASS
+- Step 51A schema contract byte-for-byte unchanged: PASS
+- selected source/migration/client-crypto tests: 84 PASS
+- changed-file unused-import static scan: PASS
+
+Full dependency-backed pytest, PostgreSQL 18 migrations, Ruff and pip-audit remain authoritative in GitHub Actions.

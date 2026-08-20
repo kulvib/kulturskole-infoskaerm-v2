@@ -13,9 +13,9 @@ def test_step51_follows_canonical_foundations_and_is_new_head():
     runner = read("scripts/run_migrations.py")
     assert 'revision = "20260819_51a_update_control"' in migration
     assert 'down_revision = "20260819_50a_canonical"' in migration
-    assert 'EXPECTED_HEAD_REVISION = "20260819_51a_update_control"' in contract
+    assert 'EXPECTED_HEAD_REVISION = "20260820_51b_update_auth"' in contract
     assert 'REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION = "20260819_51a_update_control"' in runner
-    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260819_51a_update_control"' in runner
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260820_51b_update_auth"' in runner
 
 
 def test_step51_has_separate_update_identity_and_first_class_deployment_tables():

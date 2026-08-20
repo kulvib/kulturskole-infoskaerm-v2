@@ -145,6 +145,7 @@ def claim(
     install_id: str,
     seed: bytes,
     public_key_pem: str,
+    update_auth_public_key_pem: str,
     name: str | None,
     locality: str | None,
     ca_file: Path | None,
@@ -157,12 +158,13 @@ def claim(
         "credential_seed_b64": _encode(seed),
         "resume_proof": derive_resume_proof(seed, install_id),
         "system_encryption_public_key_pem": public_key_pem,
+        "update_auth_public_key_pem": update_auth_public_key_pem,
         "name": name,
         "locality": locality,
         **facts,
     }
     response = _post_json(f"{backend}/api/enrollment/claim", payload, ca_file=ca_file)
-    required = {"client_id", "credentials", "root_terminal_broker", "system_encryption_key_id"}
+    required = {"client_id", "credentials", "root_terminal_broker", "system_encryption_key_id", "update_auth"}
     if not required.issubset(response):
         raise EnrollmentError("Enrollment-responsen mangler obligatoriske felter")
     rows = response.get("credentials")
@@ -185,6 +187,7 @@ def persist_enrollment(
     kiosk_user: str,
     etc_root: Path,
     private_key: Path,
+    update_private_key: Path,
     tls_ca_file: str | None = None,
 ) -> None:
     client_id = int(response["client_id"])
@@ -219,6 +222,35 @@ def persist_enrollment(
             "client_id": client_id,
             "terminal_credential_id": terminal_credential_id,
             "kiosk_user": kiosk_user,
+        },
+        mode=0o600,
+    )
+    update_auth = response.get("update_auth")
+    if not isinstance(update_auth, dict):
+        raise EnrollmentError("Enrollment-responsen mangler update-auth identity")
+    update_credential_id = str(uuid.UUID(str(update_auth.get("credential_id"))))
+    update_key_id = str(update_auth.get("key_id") or "").strip()
+    if update_auth.get("algorithm") != "Ed25519" or not update_key_id or len(update_key_id) > 64:
+        raise EnrollmentError("Enrollment update-auth kontrakten er ugyldig")
+    from .update_auth import public_material
+    _update_public_pem, local_update_key_id, _jwk, _jkt = public_material(update_private_key)
+    if local_update_key_id != update_key_id:
+        raise EnrollmentError("Backendens update key ID matcher ikke den lokale private key")
+    update_root = etc_root / "update"
+    ensure_real_directory(update_root, mode=0o700)
+    atomic_write_json(
+        update_root / "credential.json",
+        {
+            "schema_version": 1,
+            "backend_url": validate_backend_url(backend_url),
+            "client_id": client_id,
+            "credential_id": update_credential_id,
+            "key_id": update_key_id,
+            "algorithm": "Ed25519",
+            "token_audience": str(update_auth.get("token_audience") or ""),
+            "access_token_issuer": str(update_auth.get("access_token_issuer") or ""),
+            "access_token_audience": str(update_auth.get("access_token_audience") or ""),
+            **({"tls_ca_file": tls_ca_file} if tls_ca_file else {}),
         },
         mode=0o600,
     )

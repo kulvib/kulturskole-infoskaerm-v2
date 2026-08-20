@@ -51,6 +51,7 @@ from service1.routers.clients import (
     rotate_client_secret,
 )
 from service1.enrollment_models import ClientEnrollmentReceipt, ClientSystemEncryptionKey
+from service1.clientflow_update_models import ClientFlowUpdateCredential
 from service1.remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
 from service1.terminal_v2_models import TerminalClient, TerminalCredential
 from service1.routers.enrollment import (
@@ -79,6 +80,11 @@ eQIDAQAB
 -----END PUBLIC KEY-----
 """
 
+TEST_UPDATE_PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAzU6003WsShJbh/Yk3H4tAwXd4ep+A128YEJSAYemC68=
+-----END PUBLIC KEY-----
+"""
+
 
 def _canonical_enrollment_claim(*, code: str, hostname: str, machine_id: str | None = None) -> EnrollmentClaimRequest:
     install_id = str(uuid.uuid4())
@@ -90,6 +96,7 @@ def _canonical_enrollment_claim(*, code: str, hostname: str, machine_id: str | N
         credential_seed_b64=seed_b64,
         resume_proof=_derive_resume_proof(seed, install_id),
         system_encryption_public_key_pem=TEST_SYSTEM_PUBLIC_KEY_PEM,
+        update_auth_public_key_pem=TEST_UPDATE_PUBLIC_KEY_PEM,
         hostname=hostname,
         machine_id=machine_id,
     )
@@ -375,6 +382,16 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_client)
         self.assertIsNotNone(self.session.exec(select(ClientEnrollmentReceipt).where(ClientEnrollmentReceipt.client_id == stored_client.id)).first())
         self.assertIsNotNone(self.session.exec(select(ClientSystemEncryptionKey).where(ClientSystemEncryptionKey.client_id == stored_client.id)).first())
+        update_credential = self.session.exec(
+            select(ClientFlowUpdateCredential).where(
+                ClientFlowUpdateCredential.client_id == stored_client.id,
+                ClientFlowUpdateCredential.revoked_at == None,
+            )
+        ).one_or_none()
+        self.assertIsNotNone(update_credential)
+        self.assertEqual(response.update_auth.credential_id, update_credential.id)
+        self.assertEqual(response.update_auth.key_id, update_credential.key_id)
+        self.assertEqual(response.update_auth.algorithm, "Ed25519")
         self.assertIsNotNone(self.session.get(TerminalClient, stored_client.id))
         self.assertIsNotNone(self.session.get(RemoteDesktopClient, stored_client.id))
         self.assertIsNotNone(self.session.exec(select(TerminalCredential).where(TerminalCredential.client_id == stored_client.id)).first())

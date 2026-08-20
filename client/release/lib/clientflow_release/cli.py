@@ -17,6 +17,7 @@ from .bundle import verify_bundle
 from .constants import DOMAIN_NAMES, MAX_BUNDLE_BYTES
 from .crypto import sha256_file
 from .enrollment import claim, complete, generate_system_key, persist_enrollment, validate_backend_url
+from .update_auth import generate_update_key, public_material as update_public_material
 from .filesystem import atomic_write_bytes, atomic_write_json, ensure_real_directory, load_secure_json
 from .transaction import (
     Layout,
@@ -161,6 +162,23 @@ def _all_credentials_present(layout: Layout) -> bool:
             raise RuntimeError("Root-grant-konfiguration er ugyldig")
         _secure_regular_file(etc / "system-private-key.pem")
         _secure_regular_file(etc / "system-public-key.pem", secret=False)
+        update_private_key = etc / "update/private-key.pem"
+        _secure_regular_file(update_private_key)
+        update_credential = _secure_json(etc / "update/credential.json")
+        if (
+            update_credential.get("schema_version") != 1
+            or int(update_credential.get("client_id", 0)) != client_id
+            or update_credential.get("algorithm") != "Ed25519"
+            or not update_credential.get("credential_id")
+            or not update_credential.get("key_id")
+            or not update_credential.get("token_audience")
+            or not update_credential.get("access_token_issuer")
+            or not update_credential.get("access_token_audience")
+        ):
+            raise RuntimeError("Update-auth credentialkontrakten er ugyldig")
+        _update_public_pem, local_update_key_id, _update_jwk, _update_jkt = update_public_material(update_private_key)
+        if local_update_key_id != str(update_credential.get("key_id")):
+            raise RuntimeError("Update-auth credential matcher ikke lokal private key")
         _secure_json(etc / "livestream.json")
         _secure_json(etc / "remote-desktop.json")
     except (KeyError, TypeError, ValueError, RuntimeError):
@@ -293,6 +311,12 @@ def install_fresh(args: argparse.Namespace) -> dict:
     else:
         public_key_pem = (etc_root / "system-public-key.pem").read_text(encoding="ascii")
 
+    update_private_key = etc_root / "update/private-key.pem"
+    if not update_private_key.exists():
+        update_public_key_pem, _update_key_id, _update_jwk, _update_jkt = generate_update_key(update_private_key)
+    else:
+        update_public_key_pem, _update_key_id, _update_jwk, _update_jkt = update_public_material(update_private_key)
+
     if not _all_credentials_present(layout):
         response = claim(
             backend_url=backend_url,
@@ -300,6 +324,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
             install_id=install_id,
             seed=seed,
             public_key_pem=public_key_pem,
+            update_auth_public_key_pem=update_public_key_pem,
             name=args.name,
             locality=args.locality,
             ca_file=request_ca_file,
@@ -311,6 +336,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
             kiosk_user=kiosk_user,
             etc_root=etc_root,
             private_key=private_key,
+            update_private_key=update_private_key,
             tls_ca_file=stored_ca_path,
         )
         install_state["status"] = "credentials_persisted"

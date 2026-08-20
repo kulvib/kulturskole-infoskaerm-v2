@@ -76,9 +76,9 @@ def test_models_match_reviewed_production_lengths_and_rd_indexes():
 def test_head_contract_promotes_adopted_runtime_tables_out_of_opaque_preservation():
     display = read("scripts/display_schema_contract.py")
     runner = read("scripts/run_migrations.py")
-    assert 'EXPECTED_HEAD_REVISION = "20260819_51a_update_control"' in display
+    assert 'EXPECTED_HEAD_REVISION = "20260820_51b_update_auth"' in display
     assert "EXPECTED_TABLES |= ADOPTED_RUNTIME_TABLES" in display
-    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260819_51a_update_control"' in runner
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260820_51b_update_auth"' in runner
     assert 'REVIEWED_DATABASE_CONTRACT_REVISION = "20260819_49a_db_contract"' in runner
     assert "- ADOPTED_RUNTIME_TABLES" in runner
     assert "- CANONICAL_FOUNDATION_TABLES" in runner

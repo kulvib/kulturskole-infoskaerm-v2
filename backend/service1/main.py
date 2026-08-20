@@ -32,6 +32,7 @@ from .routers.terminal_auth import router as terminal_auth_router
 from .routers import enrollment
 from .routers import clientflow_releases
 from .routers import clientflow_deployments
+from .routers import clientflow_update
 from .routers import websocket_tickets
 from .routers.remote_desktop_auth import router as remote_desktop_auth_router
 from .routers.remote_desktop_v2 import router as remote_desktop_v2_router
@@ -569,6 +570,7 @@ app.include_router(users.router,      prefix="/api")
 app.include_router(enrollment.router, prefix="/api")
 app.include_router(clientflow_releases.router, prefix="/api")
 app.include_router(clientflow_deployments.router, prefix="/api")
+app.include_router(clientflow_update.router, prefix="/api")
 app.include_router(websocket_tickets.router, prefix="/api")
 app.include_router(livestream_media.router, prefix="/api")
 app.include_router(client_auth_compat_router, prefix="/api")

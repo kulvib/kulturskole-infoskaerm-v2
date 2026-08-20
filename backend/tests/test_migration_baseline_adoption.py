@@ -290,6 +290,8 @@ class BaselineAdoptionTests(unittest.TestCase):
                     return Revision(runner.REVIEWED_DATABASE_CONTRACT_REVISION)
                 if revision == runner.REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION:
                     return Revision(runner.REVIEWED_CANONICAL_FOUNDATIONS_REVISION)
+                if revision == runner.REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION:
+                    return Revision(runner.REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION)
                 raise AssertionError(f"unexpected revision lookup: {revision}")
 
         def verify(_connection, **kwargs):
@@ -689,6 +691,8 @@ class BaselineAdoptionTests(unittest.TestCase):
                     return Revision(runner.REVIEWED_DATABASE_CONTRACT_REVISION)
                 if revision == runner.REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION:
                     return Revision(runner.REVIEWED_CANONICAL_FOUNDATIONS_REVISION)
+                if revision == runner.REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION:
+                    return Revision(runner.REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION)
                 raise AssertionError(f"unexpected revision lookup: {revision}")
 
         with patch.object(

@@ -29,7 +29,10 @@ def fsync_directory(path: Path) -> None:
 
 
 def atomic_write_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:
-    ensure_real_directory(path.parent, mode=0o700 if path.parent.name in {"credentials", "release"} else 0o755)
+    ensure_real_directory(
+        path.parent,
+        mode=0o700 if path.parent.name in {"credentials", "release", "update"} else 0o755,
+    )
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temp_path = Path(temporary)
     try:

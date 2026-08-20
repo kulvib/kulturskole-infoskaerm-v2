@@ -18,6 +18,16 @@ from sqlmodel import Session, select
 from ..audit import add_audit_log
 from ..auth import get_current_superadmin_user, get_password_hash, verify_password
 from ..client_domain_models import ClientDomainCredential
+from ..clientflow_update_auth import (
+    ClientFlowUpdateAuthError,
+    UPDATE_ACCESS_TOKEN_AUDIENCE,
+    UPDATE_ACCESS_TOKEN_ISSUER,
+    UPDATE_CREDENTIAL_ALGORITHM,
+    UPDATE_TOKEN_AUDIENCE,
+    active_update_credential,
+    canonical_update_public_key,
+    create_update_credential,
+)
 from ..db import get_session
 from ..enrollment_models import ClientEnrollmentReceipt, ClientSystemEncryptionKey
 from ..livestream_v2 import TOKEN_ISSUER as LIVESTREAM_TOKEN_ISSUER, credential_digest
@@ -192,12 +202,22 @@ class EnrollmentRootBrokerRead(BaseModel):
     verification_key_b64: str
 
 
+class EnrollmentUpdateAuthRead(BaseModel):
+    credential_id: str
+    key_id: str
+    algorithm: str
+    token_audience: str
+    access_token_issuer: str
+    access_token_audience: str
+
+
 class EnrollmentClaimRequest(BaseModel):
     enrollment_code: str = PydanticField(min_length=1, max_length=128)
     install_id: str = PydanticField(min_length=36, max_length=36)
     credential_seed_b64: str = PydanticField(min_length=40, max_length=64)
     resume_proof: str = PydanticField(min_length=32, max_length=128)
     system_encryption_public_key_pem: str = PydanticField(min_length=128, max_length=16_384)
+    update_auth_public_key_pem: str = PydanticField(min_length=80, max_length=4096)
     name: Optional[str] = None
     locality: Optional[str] = None
     hostname: Optional[str] = None
@@ -215,6 +235,7 @@ class EnrollmentClaimResponse(BaseModel):
     credentials: list[EnrollmentCredentialRead]
     root_terminal_broker: EnrollmentRootBrokerRead
     system_encryption_key_id: str
+    update_auth: EnrollmentUpdateAuthRead
     status: str
     name: str
 
@@ -416,11 +437,22 @@ def _credential_response(
         )
         for domain in DOMAIN_NAMES
     ]
+    update_credential = active_update_credential(session, client_id=int(client.id))
+    if update_credential is None:
+        raise HTTPException(status_code=409, detail="Enrollment mangler update-auth credential")
     return EnrollmentClaimResponse(
         client_id=int(client.id),
         credentials=credentials,
         root_terminal_broker=EnrollmentRootBrokerRead(**_root_terminal_broker(rows["terminal"])),
         system_encryption_key_id=system_key.id,
+        update_auth=EnrollmentUpdateAuthRead(
+            credential_id=update_credential.id,
+            key_id=update_credential.key_id,
+            algorithm=UPDATE_CREDENTIAL_ALGORITHM,
+            token_audience=UPDATE_TOKEN_AUDIENCE,
+            access_token_issuer=UPDATE_ACCESS_TOKEN_ISSUER,
+            access_token_audience=UPDATE_ACCESS_TOKEN_AUDIENCE,
+        ),
         status=client.status or "pending",
         name=client.name,
     )
@@ -434,6 +466,8 @@ def _resume_existing(
     resume_proof: str,
     public_key_pem: str,
     system_key_id: str,
+    update_public_key_pem: str,
+    update_key_id: str,
 ) -> EnrollmentClaimResponse:
     if receipt.expires_at < utcnow() and receipt.completed_at is None:
         raise HTTPException(status_code=410, detail="Enrollment resume-vinduet er udløbet")
@@ -447,6 +481,13 @@ def _resume_existing(
         raise HTTPException(status_code=409, detail="Enrollment persistence er ufuldstændig")
     if system_key.id != system_key_id or system_key.public_key_pem != public_key_pem:
         raise HTTPException(status_code=409, detail="Enrollment system key matcher ikke oprindelig installation")
+    update_credential = active_update_credential(session, client_id=int(receipt.client_id))
+    if (
+        update_credential is None
+        or update_credential.key_id != update_key_id
+        or update_credential.public_key_pem != update_public_key_pem
+    ):
+        raise HTTPException(status_code=409, detail="Enrollment update key matcher ikke oprindelig installation")
     return _credential_response(session, client=client, seed=seed, system_key=system_key)
 
 
@@ -469,6 +510,12 @@ def claim_enrollment_token(
     if not secrets.compare_digest(expected_proof, data.resume_proof):
         raise HTTPException(status_code=422, detail="resume_proof matcher ikke install_id/credential_seed")
     public_key_pem, system_key_id = _canonical_public_key(data.system_encryption_public_key_pem)
+    try:
+        update_public_key_pem, update_key_id, _update_jwk, _update_jkt = canonical_update_public_key(
+            data.update_auth_public_key_pem
+        )
+    except ClientFlowUpdateAuthError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     receipt = session.get(ClientEnrollmentReceipt, install_id)
     if receipt is not None:
@@ -479,6 +526,8 @@ def claim_enrollment_token(
             resume_proof=data.resume_proof,
             public_key_pem=public_key_pem,
             system_key_id=system_key_id,
+            update_public_key_pem=update_public_key_pem,
+            update_key_id=update_key_id,
         )
 
     code = (data.enrollment_code or "").strip().upper()
@@ -553,6 +602,14 @@ def claim_enrollment_token(
     )
     session.add(receipt)
     session.add(system_key)
+    try:
+        create_update_credential(
+            session,
+            client_id=client_id,
+            public_key_pem=update_public_key_pem,
+        )
+    except ClientFlowUpdateAuthError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     terminal_identity = TerminalClient(id=client_id, display_name=name, status="disabled", created_at=now)
     rd_identity = RemoteDesktopClient(id=client_id, display_name=name, status="disabled", created_at=now)
@@ -618,6 +675,7 @@ def claim_enrollment_token(
             "enrollment_token_id": token.id,
             "install_id": install_id,
             "credential_domains": list(DOMAIN_NAMES),
+            "update_auth_key_id": update_key_id,
             "machine_id_present": bool(client.machine_id),
             "hostname_present": bool(hostname),
         },

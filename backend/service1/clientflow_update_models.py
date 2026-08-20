@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import Boolean, CheckConstraint, Column, ForeignKey, Index, Integer, JSON, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, Column, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -185,3 +185,70 @@ class ClientFlowDeploymentEvent(SQLModel, table=True):
     occurred_at: Optional[datetime] = None
     received_at: datetime
     payload: dict[str, Any] = Field(default_factory=dict, sa_column=Column(_jsonb_type(), nullable=False))
+
+
+class ClientFlowUpdateReplay(SQLModel, table=True):
+    """Persistent replay guard for private-key assertions and DPoP proofs."""
+
+    __tablename__ = "clientflow_update_replay"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('client_assertion','dpop')",
+            name="ck_clientflow_update_replay_kind",
+        ),
+        Index("ix_clientflow_update_replay_expires_at", "expires_at"),
+        Index("ix_clientflow_update_replay_credential_id", "credential_id"),
+        UniqueConstraint("jti_hash", name="uq_clientflow_update_replay_jti_hash"),
+    )
+
+    id: str = Field(primary_key=True, max_length=36)
+    credential_id: str = Field(
+        sa_column=Column(
+            String(36),
+            ForeignKey("clientflow_update_credential.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    kind: str = Field(max_length=24)
+    jti_hash: str = Field(max_length=64)
+    created_at: datetime
+    expires_at: datetime
+
+
+class ClientFlowUpdateProvisioningToken(SQLModel, table=True):
+    """Short-lived client-bound bootstrap/recovery grant for an update public key."""
+
+    __tablename__ = "clientflow_update_provisioning_token"
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('bootstrap','recovery')",
+            name="ck_clientflow_update_provisioning_token_purpose",
+        ),
+        CheckConstraint(
+            "expires_at > created_at",
+            name="ck_clientflow_update_provisioning_token_expiry",
+        ),
+        Index("ix_clientflow_update_provisioning_token_client_id", "client_id"),
+        Index("ix_clientflow_update_provisioning_token_expires_at", "expires_at"),
+        Index("uq_clientflow_update_provisioning_token_code_hash", "code_hash", unique=True),
+        Index(
+            "uq_clientflow_update_provisioning_token_active_client",
+            "client_id",
+            unique=True,
+            postgresql_where=text("used_at IS NULL AND revoked_at IS NULL"),
+            sqlite_where=text("used_at IS NULL AND revoked_at IS NULL"),
+        ),
+    )
+
+    id: str = Field(primary_key=True, max_length=36)
+    client_id: int = Field(foreign_key="client.id")
+    code_hash: str = Field(max_length=64)
+    purpose: str = Field(max_length=20)
+    created_by_user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("user.id", ondelete="SET NULL"), nullable=True),
+    )
+    created_at: datetime
+    expires_at: datetime
+    used_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None

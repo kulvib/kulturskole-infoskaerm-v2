@@ -20,6 +20,8 @@ from .clientflow_update_models import (
     ClientFlowDeployment,
     ClientFlowDeploymentEvent,
     ClientFlowUpdateCredential,
+    ClientFlowUpdateProvisioningToken,
+    ClientFlowUpdateReplay,
 )
 from .enrollment_models import ClientEnrollmentReceipt, ClientSystemEncryptionKey
 from .livestream_v2_models import (
@@ -194,6 +196,12 @@ def delete_platform_client_state(session: Session, *, client_id: int) -> int:
             )
         )
     session.exec(delete(ClientFlowDeployment).where(ClientFlowDeployment.client_id == client_id))
+    session.exec(delete(ClientFlowUpdateProvisioningToken).where(ClientFlowUpdateProvisioningToken.client_id == client_id))
+    credential_ids = list(session.exec(
+        select(ClientFlowUpdateCredential.id).where(ClientFlowUpdateCredential.client_id == client_id)
+    ).all())
+    if credential_ids:
+        session.exec(delete(ClientFlowUpdateReplay).where(ClientFlowUpdateReplay.credential_id.in_(credential_ids)))
     session.exec(delete(ClientFlowUpdateCredential).where(ClientFlowUpdateCredential.client_id == client_id))
 
     # Canonical enrollment/setup state has non-cascading FKs to client.id.
