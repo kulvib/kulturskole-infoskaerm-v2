@@ -1,0 +1,247 @@
+name: Canonical ClientFlow release candidate build
+
+"on":
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Full 40-character Git SHA to build; must equal the dispatched workflow SHA
+        required: true
+        type: string
+      runtime_inputs_url:
+        description: Public HTTPS URL for the canonical runtime-input transport tar
+        required: true
+        type: string
+      runtime_inputs_sha256:
+        description: SHA-256 of the runtime-input transport tar
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: clientflow-release-build-${{ inputs.expected_source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Pin source, CI and runtime-input transport
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      source_date_epoch: ${{ steps.source.outputs.source_date_epoch }}
+    steps:
+      - name: Checkout exact source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up canonical Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+          pip-version: "26.1.2"
+
+      - name: Require exact dispatched source and clean checkout
+        id: source
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]]
+          echo "source_date_epoch=$SOURCE_DATE_EPOCH" >> "$GITHUB_OUTPUT"
+
+      - name: Require successful canonical CI for exact source commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        run: >-
+          python scripts/verify_github_ci_run.py
+          --repository "$GITHUB_REPOSITORY"
+          --sha "$EXPECTED_SOURCE_SHA"
+          --workflow ci.yml
+          --head-branch "$GITHUB_REF_NAME"
+
+      - name: Fetch exact runtime-input transport
+        env:
+          RUNTIME_INPUTS_URL: ${{ inputs.runtime_inputs_url }}
+          RUNTIME_INPUTS_SHA256: ${{ inputs.runtime_inputs_sha256 }}
+        run: >-
+          python scripts/fetch_clientflow_runtime_inputs.py
+          --url "$RUNTIME_INPUTS_URL"
+          --expected-sha256 "$RUNTIME_INPUTS_SHA256"
+          --output "$RUNNER_TEMP/runtime-inputs.tar"
+
+      - name: Verify transport contents against repo-pinned platform lock
+        run: >-
+          python scripts/materialize_clientflow_runtime_inputs.py
+          --archive "$RUNNER_TEMP/runtime-inputs.tar"
+          --output-dir "$RUNNER_TEMP/runtime-inputs-preflight"
+
+      - name: Preserve exact verified runtime-input transport for both builders
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: clientflow-runtime-inputs-${{ inputs.expected_source_sha }}
+          path: ${{ runner.temp }}/runtime-inputs.tar
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: Independent release build ${{ matrix.replica }}
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [a, b]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up canonical Python and pip
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+          pip-version: "26.1.2"
+
+      - name: Install hash-locked release build backend
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          --no-deps
+          --require-hashes
+          --only-binary=:all:
+          -r client/release/release-build-requirements.lock.txt
+
+      - name: Verify release build toolchain
+        run: python scripts/verify_release_build_toolchain.py --repo .
+
+      - name: Download exact preflight runtime-input transport
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: clientflow-runtime-inputs-${{ inputs.expected_source_sha }}
+          path: ${{ runner.temp }}/runtime-input-transport
+
+      - name: Reverify and materialize platform runtime inputs
+        shell: bash
+        env:
+          RUNTIME_INPUTS_SHA256: ${{ inputs.runtime_inputs_sha256 }}
+        run: |
+          set -euo pipefail
+          TRANSPORT="$RUNNER_TEMP/runtime-input-transport/runtime-inputs.tar"
+          printf '%s  %s\n' "$RUNTIME_INPUTS_SHA256" "$TRANSPORT" | sha256sum --check --strict -
+          python scripts/materialize_clientflow_runtime_inputs.py \
+            --archive "$TRANSPORT" \
+            --output-dir "$RUNNER_TEMP/runtime-inputs"
+
+      - name: Build unapproved candidate from exact source and epoch
+        env:
+          SOURCE_DATE_EPOCH: ${{ needs.preflight.outputs.source_date_epoch }}
+        run: >-
+          python scripts/build_clientflow_release.py
+          --repo "$GITHUB_WORKSPACE"
+          --runtime-inputs "$RUNNER_TEMP/runtime-inputs"
+          --output-dir "$RUNNER_TEMP/release-output"
+
+      - name: Require checkout remained clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ inputs.expected_source_sha }}"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Upload independent build output
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: clientflow-candidate-${{ matrix.replica }}-${{ inputs.expected_source_sha }}
+          path: ${{ runner.temp }}/release-output/
+          if-no-files-found: error
+          retention-days: 7
+
+  reproducibility:
+    name: Require byte-identical independent builds
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout exact source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up canonical Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+          pip-version: "26.1.2"
+
+      - name: Download build A
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: clientflow-candidate-a-${{ inputs.expected_source_sha }}
+          path: ${{ runner.temp }}/build-a
+
+      - name: Download build B
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: clientflow-candidate-b-${{ inputs.expected_source_sha }}
+          path: ${{ runner.temp }}/build-b
+
+      - name: Verify byte-for-byte reproducibility and write handoff record
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          SOURCE_DATE_EPOCH: ${{ needs.preflight.outputs.source_date_epoch }}
+          RUNTIME_INPUTS_SHA256: ${{ inputs.runtime_inputs_sha256 }}
+        run: >-
+          python scripts/verify_clientflow_reproducible_builds.py
+          --repo "$GITHUB_WORKSPACE"
+          --left "$RUNNER_TEMP/build-a"
+          --right "$RUNNER_TEMP/build-b"
+          --expected-source-sha "$EXPECTED_SOURCE_SHA"
+          --expected-source-date-epoch "$SOURCE_DATE_EPOCH"
+          --runtime-inputs-transport-sha256 "$RUNTIME_INPUTS_SHA256"
+          --output-record "$RUNNER_TEMP/REPRODUCIBILITY.json"
+
+      - name: Materialize one canonical unapproved handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/handoff"
+          cp -a "$RUNNER_TEMP/build-a/." "$RUNNER_TEMP/handoff/"
+          install -m 0444 "$RUNNER_TEMP/REPRODUCIBILITY.json" "$RUNNER_TEMP/handoff/REPRODUCIBILITY.json"
+
+      - name: Attest reproducible candidate provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: ${{ runner.temp }}/handoff/*-candidate.tar
+
+      - name: Upload reproducible unapproved handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: clientflow-reproducible-unapproved-${{ inputs.expected_source_sha }}
+          path: ${{ runner.temp }}/handoff/
+          if-no-files-found: error
+          retention-days: 30
