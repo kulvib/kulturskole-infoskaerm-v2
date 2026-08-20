@@ -52,3 +52,23 @@ Local validation:
 - AST parse of changed Python files PASS
 
 GitHub CI remains authoritative for full dependency-backed FastAPI/SQLModel tests, Ruff, pip-audit and PostgreSQL 18 integration.
+
+Step 51K — canonical release build plane
+
+Scope:
+- release candidates are produced outside the ClientFlow kiosk by a manual GitHub Actions build-only workflow
+- exact source SHA must equal the dispatched workflow SHA and have a successful canonical CI push run
+- source-independent Python/runtime platform inputs are hash/size pinned in repo and materialized fail-closed from an untrusted HTTPS transport tar
+- ClientFlow runtime wheel is always rebuilt from exact source; prebuilt clientflow_runtime wheels are not platform inputs
+- release-build Python/pip/setuptools toolchain is explicit and hash-locked; setuptools is updated to 83.0.0
+- two independent GitHub-hosted runners must produce byte-identical candidate, installer, payload, manifest and checksum outputs
+- reproducibility record binds source SHA/epoch, runtime-input transport hash, build toolchain and exact output hashes
+- GitHub provenance attestation is supplemental; approval/publication remain separate authority gates
+- no physical-client runtime, systemd, activation, Livestream, Terminal or Remote Desktop behavior changes
+
+Local validation:
+- targeted 51K/workflow contracts PASS
+- 55 targeted 51C-51K release/update contracts PASS
+- 110 source/scripts contracts PASS
+- compileall PASS
+- dependency contract PASS

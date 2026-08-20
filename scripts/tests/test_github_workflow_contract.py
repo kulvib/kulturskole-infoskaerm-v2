@@ -33,7 +33,7 @@ def _external_actions(source: str) -> list[str]:
 
 
 def test_external_actions_are_immutable_and_checkout_drops_credentials():
-    for workflow in ("ci.yml", "deployment-smoke.yml"):
+    for workflow in ("ci.yml", "deployment-smoke.yml", "release-build.yml"):
         source, _ = _load(workflow)
         actions = _external_actions(source)
         assert actions

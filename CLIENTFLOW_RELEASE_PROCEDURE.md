@@ -20,31 +20,41 @@ Offline runtime inputs are supplied separately through `--runtime-inputs`. They 
 
 `client/VERSION` is the only manually maintained product-version value. The runtime wheel derives its PEP 621 version dynamically from that same authority, while `release_sequence` remains the separate monotonic anti-rollback identity component. For the current canonical bootstrap release these values are `1.3.0` and `1201`, producing `clientflow-1.3.0-seq-1201`.
 
-## 2. Build a release candidate
+## 2. Build one canonical reproducible release candidate
 
-Use a clean reviewed commit. Set `SOURCE_DATE_EPOCH` from the source commit and build:
+Release candidates are produced by `.github/workflows/release-build.yml`, not on a ClientFlow kiosk and not from an arbitrary developer worktree. The manual workflow is a **build-only** authority: it can produce an unapproved candidate but cannot approve or publish a release.
 
-```bash
-SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" \
-python scripts/build_clientflow_release.py \
-  --repo . \
-  --runtime-inputs /secure/path/runtime-inputs \
-  --output-dir ./build/clientflow-1.3.0
+The dispatch requires:
+
+- `expected_source_sha`: the exact 40-character commit SHA. It must equal the workflow-dispatch SHA.
+- `runtime_inputs_url`: a public HTTPS transport URL for a plain TAR containing the platform runtime inputs. The URL is transport only and is not an authority.
+- `runtime_inputs_sha256`: the exact SHA-256 of that transport TAR.
+
+The platform artifacts inside the transport TAR must match `client/release/runtime-platform-inputs.lock.json` byte-for-byte. That repo lock contains only source-independent platform bytes (`python-runtime-amd64.tar` plus third-party wheels); `clientflow_runtime-*.whl` is forbidden and is always rebuilt from the exact source commit.
+
+Before building, the workflow:
+
+1. checks out exactly `expected_source_sha` with persisted Git credentials disabled;
+2. requires the dispatched workflow SHA and checkout HEAD to equal that SHA and the worktree to be clean;
+3. queries GitHub Actions read-only and requires a successful canonical `CI` **push** run for the same SHA and branch;
+4. fetches the runtime-input transport over HTTPS, verifies its outer SHA-256, and materializes only the exact regular files declared by the repo lock;
+5. pins Python `3.13.14`, pip `26.1.2` and setuptools `83.0.0`; setuptools is installed from `client/release/release-build-requirements.lock.txt` with `--require-hashes --only-binary=:all:`.
+
+Two independent GitHub-hosted runners then build the same commit with the commit timestamp as `SOURCE_DATE_EPOCH`. A third job downloads both outputs and requires byte-identical candidate bundle, embedded/loose installer, payload, candidate manifest and checksum file. It also verifies manifest source provenance and writes `REPRODUCIBILITY.json`. Only after this comparison is one **unapproved reproducible handoff** uploaded as a workflow artifact. GitHub build provenance attestation is supplemental evidence; it does not replace ClientFlow approval.
+
+The canonical handoff artifact is named:
+
+```text
+clientflow-reproducible-unapproved-<FULL_SOURCE_SHA>
 ```
 
-A normal candidate is always `deployable: false`. The builder verifies source identity, manifest structure, payload integrity and offline runtime completeness.
+Download that artifact from the successful release-build workflow. Its candidate remains `deployable: false`. Record the exact candidate and embedded fresh-installer SHA-256 values from `REPRODUCIBILITY.json` / `SHA256SUMS`; those exact values are inputs to the separate approval gate.
 
-Record the exact candidate and fresh-installer SHA-256 values. The candidate manifest also binds the fresh installer by file name, size and SHA-256:
-
-```bash
-sha256sum \
-  ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-candidate.tar \
-  ./build/clientflow-1.3.0/clientflow-installer-1.3.0.pyz
-```
+For local development only, `scripts/build_clientflow_release.py` remains available, but it fails unless the exact release-build toolchain is installed and its output is **not** a canonical release handoff unless it has passed the two-runner workflow gate above.
 
 ## 3. Approve one exact candidate
 
-Approval uses no release signing key. It is an explicit gate bound to the exact candidate hash, exact source commit and an approval reference:
+Approval uses no release signing key. It is an explicit gate bound to the exact reproducible candidate hash, exact source commit and an approval reference:
 
 ```bash
 python scripts/approve_clientflow_release.py \

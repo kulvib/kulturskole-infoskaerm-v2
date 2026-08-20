@@ -13,6 +13,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "backend"))
 sys.path.insert(0, str(REPO / "client" / "release" / "lib"))
 from clientflow_release.builder import build  # noqa: E402
+from verify_release_build_toolchain import validate_toolchain  # noqa: E402
 
 
 def main() -> int:
@@ -24,6 +25,7 @@ def main() -> int:
     args = parser.parse_args()
 
     repo = args.repo.resolve()
+    validate_toolchain(repo)
     base_inputs = (args.runtime_inputs or (repo / "client" / "runtime-inputs")).resolve()
     if not base_inputs.is_dir():
         raise SystemExit(

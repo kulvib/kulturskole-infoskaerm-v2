@@ -16,14 +16,11 @@ Andre ClientFlow-nøgler, eksempelvis enrollment/systemkryptering og kortlivede 
 
 ## Reproducerbar keyless release candidate
 
-```bash
-SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" \
-python scripts/build_clientflow_release.py \
-  --repo . \
-  --output-dir ./build/clientflow-1.3.0
-```
+Canonical release candidates bygges i `.github/workflows/release-build.yml`. Workflowet er manuelt, men accepterer kun en eksakt source SHA, som er workflowets egen dispatch-SHA og allerede har en successful canonical CI push-run. Buildet bruger repoets hash-låste platform-inputs og den eksplicit pinnede Python/pip/setuptools-toolchain.
 
-Et almindeligt build har altid:
+To uafhængige GitHub runners bygger samme commit med commit-timestamp som `SOURCE_DATE_EPOCH`. En separat reproducibility-job kræver byte-identiske candidate-, installer-, payload-, manifest- og checksum-bytes, skriver `REPRODUCIBILITY.json` og uploader først derefter én unapproved handoff. Approval og publication er fortsat separate gates og findes ikke i release-build workflowet.
+
+Et almindeligt candidate-manifest har altid:
 
 ```yaml
 artifact_type: runtime_release
@@ -40,7 +37,7 @@ activation:
   automatic_reboot: false
 ```
 
-Builderen kræver normalt et rent Git-worktree. TAR- og ZIP-metadata normaliseres til fast epoch, root-ejerskab, deterministisk rækkefølge og kontrollerede modes. Installerpayloaden indeholder kun de nødvendige runtime-definitioner, helpers, konfiguration, releasekode og driftsdokumentation; backend-, frontend-, runtime-source- og testtræer installeres ikke på klienten.
+Builderen kræver et rent Git-worktree og den eksakte toolchain fra `client/release/release-build-toolchain.json`. TAR- og ZIP-metadata normaliseres til fast epoch, root-ejerskab, deterministisk rækkefølge og kontrollerede modes. Installerpayloaden indeholder kun de nødvendige runtime-definitioner, helpers, konfiguration, releasekode og driftsdokumentation; backend-, frontend-, runtime-source- og testtræer installeres ikke på klienten.
 
 ## Offline runtime
 
@@ -79,7 +76,7 @@ release_approval:
   candidate_sha256: <exact candidate SHA-256>
 ```
 
-Outputbundlens egen SHA-256 skal derefter registreres og bruges som den eksakte transport-/installationsbinding. Kandidat- og approved-manifestet binder samtidig fresh-installerens eksakte filnavn, størrelse og SHA-256; approval-gaten kræver den konkrete installerfil og dens eksplicit forventede hash.
+Outputbundlens egen SHA-256 skal derefter registreres og bruges som den eksakte transport-/installationsbinding. Kandidat- og approved-manifestet binder samtidig fresh-installerens eksakte filnavn, størrelse og SHA-256; schema 8 læser installer-bytes fra den samme pinned bundle, og approval-gaten kræver den eksplicit forventede installer-hash.
 
 ## Publicering og verificeret releasekatalog
 

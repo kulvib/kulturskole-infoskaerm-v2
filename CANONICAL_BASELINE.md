@@ -8,7 +8,7 @@ This repository represents the consolidated ClientFlow v2 source baseline derive
 - `client/runtime/` is the source representation of the validated runtime.
 - `client/systemd/` represents the validated service topology; host-specific values that must vary on fresh installation are rendered by the installer.
 - `client/release/`, `client/sysusers.d/` and `client/tmpfiles.d/` are the canonical release/install source.
-- Runtime binaries are external release inputs; hashes for the physically validated artifact set are documented separately in `client/runtime-artifacts.lock.json`.
+- Runtime binaries are external release inputs. `client/runtime-artifacts.lock.json` retains the physically validated historical 1.2.0 set, while the current source-independent platform inputs used for canonical release builds are separately pinned in `client/release/runtime-platform-inputs.lock.json`.
 
 ## Domain ownership
 

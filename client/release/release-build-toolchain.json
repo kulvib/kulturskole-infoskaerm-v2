@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "python": "3.13.14",
+  "pip": "26.1.2",
+  "setuptools": "83.0.0"
+}

@@ -26,6 +26,12 @@ python -m pytest -q backend/tests scripts/tests
 
 Lockfiler skal genereres fra rene Python 3.13-miljøer og må ikke indeholde interne index-URL'er eller credentials.
 
+## ClientFlow release-build toolchain
+
+Release artifact production has its own narrower deterministic toolchain contract in `client/release/release-build-toolchain.json`. The canonical workflow pins Python `3.13.14`, pip `26.1.2`, and setuptools `83.0.0`; the setuptools wheel is installed with hashes from `client/release/release-build-requirements.lock.txt`. `client/runtime/pyproject.toml` must declare the same setuptools build backend version.
+
+Changing this toolchain is a release-format/build-input change: update the toolchain contract, hash lock, pyproject build requirement and release-build tests together, then prove two-runner byte-for-byte reproducibility before approving a candidate.
+
 ## Frontend
 
 `npm ci` er den eneste installation i CI og Render. `frontend/package-lock.json` er source of truth.

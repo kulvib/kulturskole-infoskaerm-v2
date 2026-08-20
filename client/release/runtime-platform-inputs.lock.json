@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "runtime_python": "3.13.14",
+  "architecture": "amd64",
+  "artifacts": [
+    {
+      "file": "evdev-1.9.3-cp313-cp313-linux_x86_64.whl",
+      "sha256": "8fa20b121c58bf286520f65149d1dd9f37c1e8eedea3811a5e1e1f5755d8f71d",
+      "size": 76711
+    },
+    {
+      "file": "pip-26.1.2-py3-none-any.whl",
+      "sha256": "382ff9f685ee3bc25864f820aa50505825f10f5458ffff07e30a6d96e5715cab",
+      "size": 1813144
+    },
+    {
+      "file": "pyjwt-2.13.0-py3-none-any.whl",
+      "sha256": "aacb2c3c08263deeb6278cf9211cffcf835604346421f9fa1dc36d971762cb79",
+      "size": 31273
+    },
+    {
+      "file": "python-runtime-amd64.tar",
+      "sha256": "a57cd52a31a466a9c3290cf05cf20bf10e293afae736526d76d3593ca3ea0d15",
+      "size": 77547520
+    },
+    {
+      "file": "websockets-12.0-cp313-cp313-linux_x86_64.whl",
+      "sha256": "98b9b9088ca8dca67bf538fad84b14f69196a534f21d6a363ad1f4f1f50b0243",
+      "size": 122647
+    }
+  ]
+}
