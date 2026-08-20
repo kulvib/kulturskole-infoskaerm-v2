@@ -56,15 +56,15 @@ Der er **ingen automatisk reboot**, ingen automatisk aktivering, ingen åbning a
 
 ## Manuel aktivering
 
-Aktivering er et separat trin og kræver en konkret approval-reference:
+Aktivering er et separat trin. Operatøren skal angive den **forventede immutable release-approval reference** fra den approved bundle; værdien er en kontrol mod artifactets provenance og er ikke fri audit-tekst:
 
 ```bash
 sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \
   --release-id clientflow-1.3.0-seq-1201 \
-  --approval-reference CHANGE-REFERENCE
+  --expected-release-approval-reference <RELEASE_APPROVAL_REFERENCE>
 ```
 
-Aktivering opdaterer systemd-definitioner, skifter det atomiske `active`-symlink, starter `clientflow.target` og gennemfører health checks. Fejl udløser automatisk rollback.
+Staging gemmer bundle SHA-256/size, candidate SHA-256, source commit og release-approval reference i root-ejet release-state. Aktivering afvises, hvis state, staged manifest og den eksplicit forventede release-approval ikke matcher. Først derefter opdateres systemd-definitioner, det atomiske `active`-symlink skiftes, `clientflow.target` startes og health checks gennemføres. Fejl udløser automatisk rollback.
 
 ## Eksplicit wipe
 

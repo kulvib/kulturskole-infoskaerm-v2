@@ -326,7 +326,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
             return {
                 "status": "pending_manual_activation",
                 "release_id": release_id,
-                "next_command": f"clientflow-installer activate --release-id {release_id} --approval-reference <reference>",
+                "next_command": f"clientflow-installer activate --release-id {release_id} --expected-release-approval-reference <release-approval-reference>",
                 "automatic_reboot": False,
             }
     else:
@@ -426,7 +426,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
     return {
         "status": "pending_manual_activation",
         "release_id": release_id,
-        "next_command": f"clientflow-installer activate --release-id {release_id} --approval-reference <reference>",
+        "next_command": f"clientflow-installer activate --release-id {release_id} --expected-release-approval-reference <release-approval-reference>",
         "automatic_reboot": False,
     }
 
@@ -453,11 +453,11 @@ def build_parser() -> argparse.ArgumentParser:
     _common_transaction_parser(install)
     activate = sub.add_parser("activate")
     activate.add_argument("--release-id", required=True)
-    activate.add_argument("--approval-reference", required=True)
+    activate.add_argument("--expected-release-approval-reference", required=True)
     _common_transaction_parser(activate)
     rollback = sub.add_parser("rollback")
     rollback.add_argument("--release-id")
-    rollback.add_argument("--approval-reference", required=True)
+    rollback.add_argument("--expected-release-approval-reference", required=True)
     rollback.add_argument("--reason", required=True)
     _common_transaction_parser(rollback)
     status_parser = sub.add_parser("status")
@@ -484,11 +484,15 @@ def main(argv: list[str] | None = None) -> int:
     elif args.operation == "install":
         result = install_fresh(args)
     elif args.operation == "activate":
-        result = activate_release(args.release_id, approval_reference=args.approval_reference, layout=_layout(args.root))
+        result = activate_release(
+            args.release_id,
+            expected_release_approval_reference=args.expected_release_approval_reference,
+            layout=_layout(args.root),
+        )
     elif args.operation == "rollback":
         result = rollback_release(
             release_id=args.release_id,
-            approval_reference=args.approval_reference,
+            expected_release_approval_reference=args.expected_release_approval_reference,
             reason=args.reason,
             layout=_layout(args.root),
         )
@@ -512,10 +516,10 @@ def transaction_main(argv: list[str] | None = None) -> int:
     stage.add_argument("--expected-bundle-sha256", required=True)
     activate = sub.add_parser("activate")
     activate.add_argument("--release-id", required=True)
-    activate.add_argument("--approval-reference", required=True)
+    activate.add_argument("--expected-release-approval-reference", required=True)
     rollback = sub.add_parser("rollback")
     rollback.add_argument("--release-id")
-    rollback.add_argument("--approval-reference", required=True)
+    rollback.add_argument("--expected-release-approval-reference", required=True)
     rollback.add_argument("--reason", required=True)
     sub.add_parser("status")
     args = parser.parse_args(argv)
@@ -526,11 +530,14 @@ def transaction_main(argv: list[str] | None = None) -> int:
             expected_bundle_sha256=args.expected_bundle_sha256,
         )
     elif args.operation == "activate":
-        result = activate_release(args.release_id, approval_reference=args.approval_reference)
+        result = activate_release(
+            args.release_id,
+            expected_release_approval_reference=args.expected_release_approval_reference,
+        )
     elif args.operation == "rollback":
         result = rollback_release(
             release_id=args.release_id,
-            approval_reference=args.approval_reference,
+            expected_release_approval_reference=args.expected_release_approval_reference,
             reason=args.reason,
         )
     else:

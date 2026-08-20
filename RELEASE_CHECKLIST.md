@@ -39,6 +39,7 @@ This checklist is for the current correctness/isolation phase. Production-readin
 - [ ] Before any installer code executes, the canonical host-bootstrap verifies one pinned approved-bundle identity, extracts the embedded installer from that same open bundle, and materializes root-owned private bundle/installer copies under `/run`.
 - [ ] Installer/systemd/sysusers/tmpfiles inputs are present in the generated payload.
 - [ ] Kiosk-user-dependent definitions are rendered from the installation identity, not hardcoded to one physical host.
+- [ ] Confirm staged release-state records whole-bundle SHA-256/size, candidate SHA-256, source commit and immutable release-approval reference; activation uses `--expected-release-approval-reference` and must reject any mismatch.
 
 ## Physical regression gate
 

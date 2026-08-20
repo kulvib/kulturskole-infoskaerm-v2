@@ -140,7 +140,7 @@ sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" verify \
 
 ## Aktivering
 
-`/opt/clientflow/active` er et atomisk active-symlink til den valgte immutable release. Aktivering kræver approval-reference, opdaterer managed systemd/sysusers/tmpfiles-definitioner, starter target og kører health checks.
+`/opt/clientflow/active` er et atomisk active-symlink til den valgte immutable release. Staging bruger én pinned bundle-identitet og persisterer whole-bundle SHA-256/size, candidate SHA-256, source commit og immutable release-approval reference i release-state. Aktivering kræver `--expected-release-approval-reference`, som skal matche artifactets allerede bundne approval-reference; operatøren kan ikke omskrive provenance ved activation. Derefter opdateres managed systemd/sysusers/tmpfiles-definitioner, target startes og health checks køres.
 
 ## Automatisk rollback
 
@@ -157,7 +157,7 @@ Hvis også rollback fejler, markeres transaktionen eksplicit som fejlet; der for
 
 ## Manuel rollback
 
-Manuel rollback kræver både approval-reference og begrundelse. Rollback kan kun gå til en allerede installeret, verificeret release. Anti-rollback forhindrer genindlæsning af gamle bundles, men forhindrer ikke kontrolleret rollback til en allerede installeret immutable release.
+Manuel rollback kræver både målreleaseens eksakte `--expected-release-approval-reference` og en begrundelse. Referencen skal matche den immutable approval, som allerede er gemt for rollbackmålet; den er ikke en ny fri rollback-reference. Rollback kan kun gå til en allerede installeret, verificeret release. Anti-rollback forhindrer genindlæsning af gamle bundles, men forhindrer ikke kontrolleret rollback til en allerede installeret immutable release.
 
 ## Offline runtime input
 

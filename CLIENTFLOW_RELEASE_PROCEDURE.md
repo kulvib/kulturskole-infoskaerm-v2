@@ -194,10 +194,10 @@ Activation is explicit:
 ```bash
 sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \
   --release-id clientflow-1.3.0-seq-1201 \
-  --approval-reference <CHANGE_OR_RELEASE_REFERENCE>
+  --expected-release-approval-reference <RELEASE_APPROVAL_REFERENCE>
 ```
 
-Activation switches `/opt/clientflow/active`, applies managed definitions and runs health checks. Failure triggers the transaction's rollback behavior.
+Staging has already persisted the approved bundle SHA-256/size, candidate SHA-256, source commit and immutable release-approval reference. Activation first requires the operator-provided expected release-approval reference to match that staged provenance; it is not a new free-form approval. It then switches `/opt/clientflow/active`, applies managed definitions and runs health checks. Failure triggers the transaction's rollback behavior.
 
 ## 7. Validation before deployment
 
