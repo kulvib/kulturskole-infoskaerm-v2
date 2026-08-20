@@ -18,8 +18,8 @@ const read = (relativePath) => fs.readFileSync(new URL(`../${relativePath}`, imp
 
 test("direct backend origin is normalized to WSS without carrying paths", () => {
   assert.equal(
-    normalizeBrowserWsOrigin("https://kulturskole-infosk-rm.onrender.com/api/"),
-    "wss://kulturskole-infosk-rm.onrender.com",
+    normalizeBrowserWsOrigin("https://api.display.planiq.dk/api/"),
+    "wss://api.display.planiq.dk",
   );
   assert.equal(normalizeBrowserWsOrigin("http://localhost:8000"), "ws://localhost:8000");
 });
@@ -57,5 +57,5 @@ test("production source requests a ticket before opening direct browser sockets"
   assert.match(remoteSource, /createBrowserWsTicket/);
   assert.match(remoteSource, /getBrowserWsProtocols/);
   assert.match(renderSource, /VITE_WS_API_URL/);
-  assert.match(renderSource, /https:\/\/kulturskole-infosk-rm\.onrender\.com/);
+  assert.match(renderSource, /https:\/\/api\.display\.planiq\.dk/);
 });
