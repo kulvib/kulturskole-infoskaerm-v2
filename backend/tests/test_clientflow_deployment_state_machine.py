@@ -1,5 +1,3 @@
-from datetime import datetime
-
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, SQLModel, create_engine
@@ -9,6 +7,7 @@ from service1.clientflow_deployments import (
     authorize_activation,
     cancel_deployment,
     create_authorized_deployment,
+    utcnow,
 )
 from service1.clientflow_update_models import ClientFlowDeployment
 from service1.models import Client, User
@@ -76,7 +75,7 @@ def test_activation_gate_is_atomic_and_cannot_be_cancelled_after_activation(sess
     deployment = _create(value, client, user)
     value.commit()
     deployment.state = "staged"
-    deployment.state_updated_at = datetime.utcnow()
+    deployment.state_updated_at = utcnow()
     value.add(deployment)
     value.commit()
 

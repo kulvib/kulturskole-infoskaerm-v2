@@ -40,10 +40,13 @@ LIVESTREAM_BACKEND_STATE_FIELDS = {
     
 }
 
-CLIENT_REPORTABLE_VERSION_FIELDS = {
+CLIENT_REPORTABLE_UPDATE_RESULT_FIELDS = {
+    "client_update_applied_deployment_sequence",
+}
+
+BACKEND_AUTHORITATIVE_UPDATE_TARGET_FIELDS = {
     "client_update_target_version",
     "client_update_deployment_sequence",
-    "client_update_applied_deployment_sequence",
 }
 
 
@@ -60,7 +63,8 @@ class ClientRuntimeContractTests(unittest.TestCase):
     def test_runtime_fields_are_present_in_database_and_api_models(self) -> None:
         for model in (Client, ClientRead, ClientUpdate):
             self.assertTrue(RUNTIME_FIELDS.issubset(model.model_fields))
-        self.assertTrue(CLIENT_REPORTABLE_VERSION_FIELDS.issubset(CLIENT_SELF_UPDATE_FIELDS))
+        self.assertTrue(CLIENT_REPORTABLE_UPDATE_RESULT_FIELDS.issubset(CLIENT_SELF_UPDATE_FIELDS))
+        self.assertTrue(BACKEND_AUTHORITATIVE_UPDATE_TARGET_FIELDS.isdisjoint(CLIENT_SELF_UPDATE_FIELDS))
         for model in (Client, ClientRead):
             self.assertTrue(LIVESTREAM_BACKEND_STATE_FIELDS.issubset(model.model_fields))
         self.assertTrue(LIVESTREAM_BACKEND_STATE_FIELDS.isdisjoint(ClientUpdate.model_fields))
