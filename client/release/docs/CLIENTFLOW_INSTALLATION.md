@@ -14,24 +14,27 @@ ClientFlow 1.3.0 er den canonical bootstrap-baseline for den nye updater-plane. 
 - Eksisterende interaktiv, uprivilegeret kioskbruger.
 - Ingen eksisterende ClientFlow-filer, systemd-units, Linux-brugere eller state.
 - Godkendt keyless bundle med `deployable: true`, gyldig `release_approval`, SHA-256-integritetsmetadata og monoton release sequence.
-- Den eksakte SHA-256 for **hele** den godkendte bundle skal være kendt via den godkendte releaseproces, før `verify` eller `install` køres.
+- Den eksakte SHA-256 for **hele** den godkendte bundle skal være kendt via den godkendte releaseproces, før nogen installer-kode køres.
+- Den godkendte bundle skal via manifestets `fresh_installer` binde det eksakte installer-filnavn, størrelse og SHA-256; installer-PYZ må først eksekveres efter ekstern hashverifikation mod den allerede verificerede bundle.
 - Gyldig one-time enrollmentkode og HTTPS-forbindelse til backend.
 - Eventuel privat CA leveres som PEM og kopieres til `/etc/clientflow/tls/ca.pem`.
 
 ## Fresh-install flow
 
-1. Kør installerens `verify` med den eksakte forventede bundle-SHA-256:
+1. Verificér først den godkendte bundle mod den eksternt kendte approved bundle-SHA-256 med hostens `sha256sum`. Udpak derefter kun `manifest.json` fra de verificerede bundle-bytes og verificér installer-PYZ'ens filnavn, størrelse og SHA-256 mod manifestets `fresh_installer`. Ingen installer-kode må være kørt endnu. Se `CLIENTFLOW_RELEASE_PROCEDURE.md` for den canonical kommando-blok.
+
+2. Kør derefter den eksternt verificerede installer-PYZ i Python isolated mode og verificér bundlen igen gennem installerens egen release-parser:
 
    ```bash
-   clientflow-installer verify \
+   /usr/bin/python3 -I ./clientflow-installer-1.3.0.pyz verify \
      --bundle ./clientflow-1.3.0-seq-1201-approved.tar \
      --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256>
    ```
 
-2. Kør `install` som root med **samme** bundle-SHA-256, backend-origin, enrollmentkode og kioskbruger:
+3. Kør `install` som root med **samme** verificerede installer, bundle-SHA-256, backend-origin, enrollmentkode og kioskbruger:
 
    ```bash
-   sudo clientflow-installer install \
+   sudo /usr/bin/python3 -I ./clientflow-installer-1.3.0.pyz install \
      --bundle ./clientflow-1.3.0-seq-1201-approved.tar \
      --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
      --backend-url https://<backend-origin> \
@@ -39,15 +42,15 @@ ClientFlow 1.3.0 er den canonical bootstrap-baseline for den nye updater-plane. 
      --kiosk-user <kiosk-user>
    ```
 
-3. Installeren afviser alle eksisterende ClientFlow-spor. En geninstallation kræver den separate wipe-procedure med eksakt destruktiv bekræftelse.
-4. Hele bundlens SHA-256 verificeres før bundlefortolkning. Derefter verificeres manifest-schema, produkt, `runtime_release`, `fresh_install` install-mode, deployable-gate, keyless release approval, payloadstørrelse/-SHA-256, arkivstier, dubletter, links, specialfiler og komplet offline runtime.
-5. Releasen stages i `/opt/clientflow/releases/<release-id>` og gøres immutable.
-6. Separate sysusers, kataloger og systemd-definitioner materialiseres, men `clientflow.target` forbliver disabled og inaktiv.
-7. Installeren genererer en lokal RSA 3072-**systemkrypteringsnøgle** til enrollment. Det er ikke en release-signeringsnøgle.
-8. Seks domænecredentials skrives separat for status, display, livestream, Remote Desktop, terminal og system.
-9. En eventuel privat CA kopieres til den root-ejede ClientFlow-konfiguration og genbruges ved resume; installationen er ikke afhængig af den oprindelige inputfil efter første sikre kopi.
-10. Standardkonfiguration, root-grant-verifikation og credentials valideres med sikre filrettigheder.
-11. Installationen stopper ved status `pending_manual_activation`.
+4. Installeren afviser alle eksisterende ClientFlow-spor. En geninstallation kræver den separate wipe-procedure med eksakt destruktiv bekræftelse.
+5. Hele bundlens SHA-256 verificeres før bundlefortolkning. Derefter verificeres manifest-schema, produkt, `runtime_release`, `fresh_install` install-mode, deployable-gate, keyless release approval, payloadstørrelse/-SHA-256, arkivstier, dubletter, links, specialfiler og komplet offline runtime.
+6. Releasen stages i `/opt/clientflow/releases/<release-id>` og gøres immutable.
+7. Separate sysusers, kataloger og systemd-definitioner materialiseres, men `clientflow.target` forbliver disabled og inaktiv.
+8. Installeren genererer en lokal RSA 3072-**systemkrypteringsnøgle** til enrollment. Det er ikke en release-signeringsnøgle.
+9. Seks domænecredentials skrives separat for status, display, livestream, Remote Desktop, terminal og system.
+10. En eventuel privat CA kopieres til den root-ejede ClientFlow-konfiguration og genbruges ved resume; installationen er ikke afhængig af den oprindelige inputfil efter første sikre kopi.
+11. Standardkonfiguration, root-grant-verifikation og credentials valideres med sikre filrettigheder.
+12. Installationen stopper ved status `pending_manual_activation`.
 
 Der er **ingen automatisk reboot**, ingen automatisk aktivering, ingen åbning af Terminal eller Remote Desktop og ingen start af en livestream.
 
@@ -56,7 +59,7 @@ Der er **ingen automatisk reboot**, ingen automatisk aktivering, ingen åbning a
 Aktivering er et separat trin og kræver en konkret approval-reference:
 
 ```bash
-clientflow-installer activate \
+sudo /usr/bin/python3 -I "$INSTALLER" activate \
   --release-id clientflow-1.3.0-seq-1201 \
   --approval-reference CHANGE-REFERENCE
 ```

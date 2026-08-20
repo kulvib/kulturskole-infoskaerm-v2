@@ -34,10 +34,12 @@ python scripts/build_clientflow_release.py \
 
 A normal candidate is always `deployable: false`. The builder verifies source identity, manifest structure, payload integrity and offline runtime completeness.
 
-Record the exact candidate SHA-256:
+Record the exact candidate and fresh-installer SHA-256 values. The candidate manifest also binds the fresh installer by file name, size and SHA-256:
 
 ```bash
-sha256sum ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-candidate.tar
+sha256sum \
+  ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-candidate.tar \
+  ./build/clientflow-1.3.0/clientflow-installer-1.3.0.pyz
 ```
 
 ## 3. Approve one exact candidate
@@ -49,23 +51,46 @@ python scripts/approve_clientflow_release.py \
   ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-candidate.tar \
   --output ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-approved.tar \
   --expected-candidate-sha256 <EXACT_CANDIDATE_SHA256> \
+  --installer ./build/clientflow-1.3.0/clientflow-installer-1.3.0.pyz \
+  --expected-installer-sha256 <EXACT_INSTALLER_SHA256> \
   --expected-source-commit <FULL_40_CHARACTER_GIT_SHA> \
   --approval-reference <CHANGE_OR_RELEASE_REFERENCE> \
   --approve-release
 ```
 
-Only the approved output may have `deployable: true`.
+Only the approved output may have `deployable: true`. The approved manifest preserves the exact `fresh_installer` descriptor from the approved candidate.
 
-Record the SHA-256 of the approved bundle. That hash is the transport/install binding used by both verifier and installer.
+Record the SHA-256 of the approved bundle. That hash is the external trust anchor for the physical handoff.
 
-## 4. Verify the approved bundle
+## 4. Verify the fresh-install handoff before executing installer code
 
-Use the generated `clientflow-installer` together with the exact approved bundle hash:
+The installer runs with root privileges and must therefore be verified **before it is executed**, using only the already-trusted approved bundle hash plus host tools. First verify the approved bundle bytes, then read the installer descriptor from that verified bundle and verify the installer file:
 
 ```bash
-clientflow-installer verify \
-  --bundle ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-approved.tar \
-  --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256>
+BUNDLE=./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-approved.tar
+INSTALLER=./build/clientflow-1.3.0/clientflow-installer-1.3.0.pyz
+APPROVED_BUNDLE_SHA256=<APPROVED_BUNDLE_SHA256>
+
+printf '%s  %s\n' "$APPROVED_BUNDLE_SHA256" "$BUNDLE" | /usr/bin/sha256sum --check --strict -
+
+read -r EXPECTED_INSTALLER_FILE EXPECTED_INSTALLER_SIZE EXPECTED_INSTALLER_SHA256 < <(
+  /usr/bin/tar -xOf "$BUNDLE" manifest.json |
+  /usr/bin/python3 -I -c 'import json,sys; x=json.load(sys.stdin)["fresh_installer"]; print(x["file"], x["size"], x["sha256"])'
+)
+
+test "$(/usr/bin/basename "$INSTALLER")" = "$EXPECTED_INSTALLER_FILE"
+test "$(/usr/bin/stat -c %s "$INSTALLER")" -eq "$EXPECTED_INSTALLER_SIZE"
+printf '%s  %s\n' "$EXPECTED_INSTALLER_SHA256" "$INSTALLER" | /usr/bin/sha256sum --check --strict -
+```
+
+No installer command may run if any of those checks fails. This closes the root-bootstrap trust boundary: the approved bundle bytes bind the exact executable installer bytes.
+
+After that external verification, use the now-verified installer together with the exact approved bundle hash:
+
+```bash
+/usr/bin/python3 -I "$INSTALLER" verify \
+  --bundle "$BUNDLE" \
+  --expected-bundle-sha256 "$APPROVED_BUNDLE_SHA256"
 ```
 
 Verification must succeed before a physical installation is considered.
@@ -75,9 +100,9 @@ Verification must succeed before a physical installation is considered.
 Installation is for a clean Ubuntu Desktop 26.04 `amd64` client with an existing unprivileged kiosk user and a valid one-time enrollment code:
 
 ```bash
-sudo clientflow-installer install \
-  --bundle ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-approved.tar \
-  --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
+sudo /usr/bin/python3 -I "$INSTALLER" install \
+  --bundle "$BUNDLE" \
+  --expected-bundle-sha256 "$APPROVED_BUNDLE_SHA256" \
   --backend-url https://<backend-origin> \
   --enrollment-code <one-time-code> \
   --kiosk-user <kiosk-user>
@@ -90,7 +115,7 @@ The fresh installer provisions six domain credentials, the client system encrypt
 Activation is explicit:
 
 ```bash
-clientflow-installer activate \
+sudo /usr/bin/python3 -I "$INSTALLER" activate \
   --release-id clientflow-1.3.0-seq-1201 \
   --approval-reference <CHANGE_OR_RELEASE_REFERENCE>
 ```

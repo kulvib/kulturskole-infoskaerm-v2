@@ -58,10 +58,10 @@ ClientFlow uses a keyless runtime-release model with explicit fresh-install and 
 - canonical runtime wheel is rebuilt from `client/runtime/` for every release candidate
 - offline Python/runtime dependency inputs are supplied separately and are not committed as source
 - release candidates are non-deployable by default
-- manifest schema 6 declares `artifact_type: runtime_release` and explicit `install_modes`
+- manifest schema 7 declares `artifact_type: runtime_release`, explicit `install_modes`, and the exact fresh-installer file/size/SHA-256
 - backend deployment authority is derived from the exact approved bytes published in `CLIENTFLOW_RELEASE_ARTIFACT_DIR`
 - artifact download requires a deployment-bound, DPoP-bound updater authorization; legacy System-domain bearer tokens are not accepted
-- a separate explicit approval step binds approval to the exact candidate SHA-256 and source commit
+- a separate explicit approval step binds approval to the exact candidate SHA-256, source commit, and fresh-installer SHA-256
 - installation/activation is manual; no automatic reboot or automatic activation is permitted
 
 See:

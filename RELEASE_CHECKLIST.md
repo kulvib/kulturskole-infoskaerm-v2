@@ -30,8 +30,10 @@ This checklist is for the current correctness/isolation phase. Production-readin
 - [ ] Canonical runtime wheel is built from `client/runtime/`.
 - [ ] Release candidate builds with the approved offline runtime inputs.
 - [ ] Candidate is `deployable: false` before approval.
-- [ ] Approval is bound to exact candidate SHA-256 and source commit.
+- [ ] Candidate manifest binds the exact fresh-installer file name, size and SHA-256.
+- [ ] Approval is bound to exact candidate SHA-256, source commit and fresh-installer SHA-256.
 - [ ] Approved bundle verifies with its exact whole-bundle SHA-256.
+- [ ] Before any root installer code executes, installer file name/size/SHA-256 is externally verified from the already hash-verified approved bundle manifest.
 - [ ] Installer/systemd/sysusers/tmpfiles inputs are present in the generated payload.
 - [ ] Kiosk-user-dependent definitions are rendered from the installation identity, not hardcoded to one physical host.
 

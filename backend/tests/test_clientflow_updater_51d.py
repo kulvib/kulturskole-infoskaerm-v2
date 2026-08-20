@@ -86,6 +86,12 @@ def _valid_bundle_bytes() -> bytes:
             "candidate_sha256": hashlib.sha256(b"candidate").hexdigest(),
         },
         "source": {"commit": "a" * 40, "dirty": False},
+        "fresh_installer": {
+            "file": "clientflow-installer-1.3.0.pyz",
+            "format": "python-zipapp",
+            "size": 123,
+            "sha256": "d" * 64,
+        },
         "payload": {
             "file": "clientflow-payload.tar",
             "format": "tar",

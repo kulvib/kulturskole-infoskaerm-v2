@@ -13,6 +13,7 @@ from .constants import (
     INSTALL_MODE_UPDATE,
     INTEGRITY_ALGORITHM,
     MANIFEST_SCHEMA,
+    MAX_FRESH_INSTALLER_BYTES,
     PRODUCT,
 )
 
@@ -63,7 +64,7 @@ def validate_manifest(
     allowed_keys = {
         "manifest_schema", "product", "channel", "version", "release_id", "release_sequence",
         "source_date_epoch", "artifact_type", "install_modes", "deployable", "integrity_algorithm",
-        "release_approval", "source", "payload", "runtime", "platform", "credential_domains", "activation",
+        "release_approval", "source", "payload", "fresh_installer", "runtime", "platform", "credential_domains", "activation",
     }
     unknown = set(data) - allowed_keys
     if unknown:
@@ -120,6 +121,19 @@ def validate_manifest(
     else:
         if approval_reference not in {None, ""} or candidate_sha256 not in {None, ""}:
             raise ManifestError("Et ikke-deployable build må ikke have release approval metadata")
+
+    fresh_installer = data.get("fresh_installer")
+    if not isinstance(fresh_installer, dict) or set(fresh_installer) != {"file", "format", "size", "sha256"}:
+        raise ManifestError("Manifestets fresh_installer-kontrakt mangler")
+    installer_file = str(fresh_installer.get("file") or "")
+    if installer_file != f"clientflow-installer-{version}.pyz":
+        raise ManifestError("Manifestets fresh installer-fil matcher ikke versionen")
+    if fresh_installer.get("format") != "python-zipapp":
+        raise ManifestError("Manifestets fresh installer-format er ugyldigt")
+    installer_size = _require_int(fresh_installer.get("size"), "fresh_installer.size", minimum=1)
+    if installer_size > MAX_FRESH_INSTALLER_BYTES:
+        raise ManifestError("Manifestets fresh installer er for stor")
+    _require_sha(fresh_installer.get("sha256"), "fresh_installer.sha256")
 
     payload = data.get("payload")
     if not isinstance(payload, dict):

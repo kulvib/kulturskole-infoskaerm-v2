@@ -260,6 +260,9 @@ def build(repo: Path, output_dir: Path, *, runtime_inputs: Path | None, allow_di
     finally:
         updater_pyz.unlink(missing_ok=True)
     payload_size, payload_sha = sha256_file(payload)
+    installer = output_dir / f"clientflow-installer-{version}.pyz"
+    _create_installer_pyz(repo, installer, epoch=epoch)
+    installer_size, installer_sha = sha256_file(installer)
     manifest = {
         "manifest_schema": MANIFEST_SCHEMA,
         "product": PRODUCT,
@@ -280,6 +283,12 @@ def build(repo: Path, output_dir: Path, *, runtime_inputs: Path | None, allow_di
             "root": f"clientflow-{version}",
             "size": payload_size,
             "sha256": payload_sha,
+        },
+        "fresh_installer": {
+            "file": installer.name,
+            "format": "python-zipapp",
+            "size": installer_size,
+            "sha256": installer_sha,
         },
         "runtime": {
             "python": str(release_input["runtime_python"]),
@@ -304,8 +313,6 @@ def build(repo: Path, output_dir: Path, *, runtime_inputs: Path | None, allow_di
     validate_manifest(manifest, require_deployable=False)
     bundle = output_dir / f"{release_id}-candidate.tar"
     _create_bundle(bundle, manifest, payload, epoch=epoch)
-    installer = output_dir / f"clientflow-installer-{version}.pyz"
-    _create_installer_pyz(repo, installer, epoch=epoch)
     manifest_path = output_dir / "manifest.candidate.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     checksums = []

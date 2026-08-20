@@ -64,6 +64,8 @@ python scripts/approve_clientflow_release.py \
   ./clientflow-1.3.0-seq-1201-candidate.tar \
   --output ./clientflow-1.3.0-seq-1201-approved.tar \
   --expected-candidate-sha256 <EXACT_CANDIDATE_SHA256> \
+  --installer ./clientflow-installer-1.3.0.pyz \
+  --expected-installer-sha256 <EXACT_INSTALLER_SHA256> \
   --expected-source-commit <FULL_40_CHARACTER_GIT_SHA> \
   --approval-reference <CHANGE_OR_RELEASE_REFERENCE> \
   --approve-release
@@ -78,7 +80,7 @@ release_approval:
   candidate_sha256: <exact candidate SHA-256>
 ```
 
-Outputbundlens egen SHA-256 skal derefter registreres og bruges som den eksakte transport-/installationsbinding.
+Outputbundlens egen SHA-256 skal derefter registreres og bruges som den eksakte transport-/installationsbinding. Kandidat- og approved-manifestet binder samtidig fresh-installerens eksakte filnavn, størrelse og SHA-256; approval-gaten kræver den konkrete installerfil og dens eksplicit forventede hash.
 
 ## Publicering og verificeret releasekatalog
 
@@ -125,10 +127,12 @@ Hvis processen afbrydes efter den immutable release er flyttet på plads, men f�
 
 ## Fresh installer
 
-Installerens `verify` og `install` kræver den eksakte, på forhånd kendte SHA-256 for hele den godkendte bundle:
+Fresh installer-PYZ'en er root-bootstrapkode og må derfor ikke være den komponent, der etablerer sin egen trust. Før nogen installerkommando køres, verificeres den approved bundle mod den eksternt kendte approved bundle-SHA-256 med hostens `sha256sum`; derefter læses manifestets `fresh_installer` fra de allerede verificerede bundle-bytes, og installerfilens navn, størrelse og SHA-256 verificeres med hostværktøjer. Den konkrete procedure står i `CLIENTFLOW_RELEASE_PROCEDURE.md`.
+
+Først derefter må den verificerede installer køre i isolated mode:
 
 ```bash
-clientflow-installer verify \
+/usr/bin/python3 -I ./clientflow-installer-1.3.0.pyz verify \
   --bundle ./clientflow-1.3.0-seq-1201-approved.tar \
   --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256>
 ```

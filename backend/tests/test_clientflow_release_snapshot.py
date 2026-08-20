@@ -54,6 +54,12 @@ def _published_bundle(root: Path, *, release_id: str = "clientflow-1.3.0-seq-130
         "integrity_algorithm": INTEGRITY_ALGORITHM,
         "release_approval": {"reference": "approval-1300", "candidate_sha256": "b" * 64},
         "source": {"commit": "c" * 40, "dirty": False},
+        "fresh_installer": {
+            "file": f"clientflow-installer-{version}.pyz",
+            "format": "python-zipapp",
+            "size": 123,
+            "sha256": "d" * 64,
+        },
         "payload": {
             "file": "clientflow-payload.tar",
             "format": "tar",
