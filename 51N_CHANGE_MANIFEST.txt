@@ -1,0 +1,45 @@
+51N canonical Render topology + fresh-install entrypoint
+Target branch: agent/render-v2-canonical-51n
+Base commit verified: 9413f5cd47da97051353418edd4e83db2c0954a4
+
+REPLACE EXISTING FILES
+- render.yaml
+- backend/service1/clientflow_release_artifacts.py
+- backend/service1/clientflow_releases.py
+- backend/service1/routers/enrollment.py
+- frontend/src/pages/adminpages/EnrollmentTokensPage.jsx
+
+ADD NEW FILES
+- RENDER_V2_TOPOLOGY_51N.md
+- backend/service1/clientflow_fresh_install_auth.py
+- backend/tests/test_clientflow_fresh_install_authorization_51n.py
+- backend/tests/test_clientflow_fresh_install_contract_51n.py
+- frontend/src/utils/clientflowFreshInstall.js
+- frontend/tests/clientflowFreshInstall51n.test.mjs
+- scripts/tests/test_render_topology_51n.py
+
+DELETE FILES
+- none
+
+FROZEN DOMAIN FILES CHANGED
+- none
+
+DATABASE / MIGRATIONS
+- no schema change
+- no migration added or changed
+- Neon remains external DATABASE_URL authority
+
+LOCAL CHECKS RUN ON THE CHANGE PACKAGE
+- Python py_compile for all modified/new backend Python files: PASS
+- test_clientflow_fresh_install_authorization_51n.py: PASS
+- test_clientflow_fresh_install_contract_51n.py: PASS
+- test_render_topology_51n.py: PASS
+- frontend clientflowFreshInstall51n.test.mjs: PASS
+- render.yaml parsed as YAML: PASS
+- existing 51M Render wiring assertions recreated against new render.yaml: PASS
+
+IMPORTANT
+Full repository CI has NOT been run in this local package because the GitHub connector
+is read-only for repository contents in this chat and the container cannot clone the repo.
+GitHub returned 403 Resource not accessible by integration for create_blob, create_tree,
+and create_file. The remote feature branch was therefore not modified.

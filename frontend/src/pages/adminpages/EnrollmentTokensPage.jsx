@@ -5,7 +5,6 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -34,6 +33,7 @@ import {
   getEnrollmentTokens,
   revokeEnrollmentToken,
 } from "../../api";
+import { buildFreshInstallDownloadCommand } from "../../utils/clientflowFreshInstall";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import { embeddedPageShellSx } from "../../utils/layoutStyles";
 
@@ -116,52 +116,29 @@ function TokenRow({ token, nowMs, revokingId, onRevoke, canManage = true }) {
         bgcolor: status.key === "active" ? "rgba(56,189,248,0.055)" : "rgba(34,197,94,0.05)",
       }}
     >
-      <Stack spacing={0.75} sx={{
-        alignItems: "flex-start"
-      }}>
+      <Stack spacing={0.75} sx={{ alignItems: "flex-start" }}>
         <Chip size="small" icon={status.icon} label={status.label} sx={compactDarkChipSx(status.color)} />
-        <Typography
-          variant="caption"
-          sx={{
-            color: "text.secondary",
-            fontWeight: 800
-          }}>
+        <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 800 }}>
           ID {token.id}
         </Typography>
       </Stack>
-      <Box sx={{
-        minWidth: 0
-      }}>
+      <Box sx={{ minWidth: 0 }}>
         <Typography sx={{ fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis" }}>
           {token.note || "Ingen note"}
         </Typography>
-        <Typography variant="body2" sx={{
-          color: "text.secondary"
-        }}>
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
           Oprettet: {formatDateTime(token.created_at)}
         </Typography>
         {!isUsed && (
-          <Typography variant="body2" sx={{
-            color: "text.secondary"
-          }}>
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
             Udløber: {formatDateTime(token.expires_at)}
           </Typography>
         )}
       </Box>
-      <Stack spacing={0.45} sx={{
-        minWidth: 0
-      }}>
-        <Stack direction="row" spacing={0.75} sx={{
-          alignItems: "center"
-        }}>
+      <Stack spacing={0.45} sx={{ minWidth: 0 }}>
+        <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
           <DevicesIcon sx={{ fontSize: 18, color: isUsed ? "success.light" : "text.secondary" }} />
-          <Typography
-            variant="caption"
-            sx={{
-              color: "text.secondary",
-              fontWeight: 900,
-              textTransform: "uppercase"
-            }}>
+          <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 900, textTransform: "uppercase" }}>
             Klient
           </Typography>
         </Stack>
@@ -169,9 +146,7 @@ function TokenRow({ token, nowMs, revokingId, onRevoke, canManage = true }) {
           {isUsed ? getClientLabel(token) : "Ikke brugt endnu"}
         </Typography>
         {isUsed && (
-          <Typography variant="caption" sx={{
-            color: "text.secondary"
-          }}>
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>
             Brugt: {formatDateTime(token.used_at)}
             {token.used_by_client_status ? ` · Status: ${token.used_by_client_status}` : ""}
           </Typography>
@@ -202,9 +177,7 @@ function TokenSection({ title, count, emptyText, children, collapsible = false, 
     <Stack divider={<Divider />}>{children}</Stack>
   ) : (
     <Box sx={{ p: 3 }}>
-      <Typography sx={{
-        color: "text.secondary"
-      }}>{emptyText}</Typography>
+      <Typography sx={{ color: "text.secondary" }}>{emptyText}</Typography>
     </Box>
   );
 
@@ -213,19 +186,9 @@ function TokenSection({ title, count, emptyText, children, collapsible = false, 
       <Stack
         direction={{ xs: "column", sm: "row" }}
         spacing={1}
-        sx={{
-          alignItems: { xs: "stretch", sm: "center" },
-          justifyContent: "space-between",
-          p: 2
-        }}>
-        <Stack
-          direction="row"
-          spacing={1}
-          useFlexGap
-          sx={{
-            alignItems: "center",
-            flexWrap: "wrap"
-          }}>
+        sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between", p: 2 }}
+      >
+        <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: "center", flexWrap: "wrap" }}>
           <Typography variant="h6" sx={{ fontWeight: 900 }}>{title}</Typography>
           {collapsible && (
             <Button
@@ -276,11 +239,12 @@ export default function EnrollmentTokensPage() {
   const [revokeTarget, setRevokeTarget] = useState(null);
   const [usedTokensExpanded, setUsedTokensExpanded] = useState(false);
 
-  const [snackbar, setSnackbar] = useState({
-    open: false,
-    message: "",
-    severity: "success",
-  });
+  const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" });
+
+  const freshInstallCommand = useMemo(
+    () => buildFreshInstallDownloadCommand(newCode),
+    [newCode],
+  );
 
   const showSnackbar = useCallback((message, severity = "success") => {
     setSnackbar({ open: true, message, severity });
@@ -303,10 +267,7 @@ export default function EnrollmentTokensPage() {
     }
   }, [showSnackbar]);
 
-  useEffect(() => {
-    loadTokens();
-  }, [loadTokens]);
-
+  useEffect(() => { loadTokens(); }, [loadTokens]);
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
     return () => window.clearInterval(timer);
@@ -317,7 +278,6 @@ export default function EnrollmentTokensPage() {
     return tokens
       .filter((token) => {
         const key = getTokenStatus(token, nowMs).key;
-        // Ubrugte udløbne og tilbagekaldte koder holdes ude af standardvisningen.
         if (key !== "active" && key !== "used") return false;
         if (!needle) return true;
         return tokenSearchText(token).includes(needle);
@@ -325,8 +285,14 @@ export default function EnrollmentTokensPage() {
       .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
   }, [tokens, tokenSearch, nowMs]);
 
-  const activeTokens = useMemo(() => visibleTokens.filter((token) => getTokenStatus(token, nowMs).key === "active"), [visibleTokens, nowMs]);
-  const usedTokens = useMemo(() => visibleTokens.filter((token) => getTokenStatus(token, nowMs).key === "used"), [visibleTokens, nowMs]);
+  const activeTokens = useMemo(
+    () => visibleTokens.filter((token) => getTokenStatus(token, nowMs).key === "active"),
+    [visibleTokens, nowMs],
+  );
+  const usedTokens = useMemo(
+    () => visibleTokens.filter((token) => getTokenStatus(token, nowMs).key === "used"),
+    [visibleTokens, nowMs],
+  );
 
   const handleCopy = useCallback(async (text) => {
     if (!text) return;
@@ -351,13 +317,12 @@ export default function EnrollmentTokensPage() {
         expires_in_hours: hours,
         note: note.trim() || null,
       });
-
       setNewCode(created);
       setCreateOpen(false);
       setExpiresInHours("72");
       setNote("");
       setNowMs(Date.now());
-      showSnackbar("Installationskode oprettet");
+      showSnackbar("Installationskode oprettet og bundet til godkendt ClientFlow-release");
       await loadTokens();
     } catch (err) {
       showSnackbar(err?.message || "Kunne ikke oprette installationskode", "error");
@@ -393,9 +358,11 @@ export default function EnrollmentTokensPage() {
   return (
     <Box sx={embeddedPageShellSx}>
       <Stack spacing={2}>
-        <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} sx={{
-          alignItems: { xs: "stretch", md: "center" }
-        }}>
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          spacing={1.5}
+          sx={{ alignItems: { xs: "stretch", md: "center" } }}
+        >
           <Box sx={{ flex: 1 }}>
             <Typography variant="h4" sx={{ fontWeight: 900 }}>Installationskoder</Typography>
           </Box>
@@ -429,7 +396,14 @@ export default function EnrollmentTokensPage() {
 
         <TokenSection title="Aktive koder" count={activeTokens.length} emptyText="Ingen aktive installationskoder.">
           {activeTokens.map((token) => (
-            <TokenRow key={token.id} token={token} nowMs={nowMs} revokingId={revokingId} onRevoke={setRevokeTarget} canManage={canManageTokens} />
+            <TokenRow
+              key={token.id}
+              token={token}
+              nowMs={nowMs}
+              revokingId={revokingId}
+              onRevoke={setRevokeTarget}
+              canManage={canManageTokens}
+            />
           ))}
         </TokenSection>
 
@@ -442,29 +416,33 @@ export default function EnrollmentTokensPage() {
           onToggle={() => setUsedTokensExpanded((value) => !value)}
         >
           {usedTokens.map((token) => (
-            <TokenRow key={token.id} token={token} nowMs={nowMs} revokingId={revokingId} onRevoke={setRevokeTarget} canManage={canManageTokens} />
+            <TokenRow
+              key={token.id}
+              token={token}
+              nowMs={nowMs}
+              revokingId={revokingId}
+              onRevoke={setRevokeTarget}
+              canManage={canManageTokens}
+            />
           ))}
         </TokenSection>
       </Stack>
+
       <Dialog open={createOpen} onClose={() => !creating && setCreateOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Opret installationskode</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <DialogContentText>
-              Koden kan bruges én gang af en ny Ubuntu-klient.
+              Koden kan bruges én gang af en ny Ubuntu-klient. Oprettelsen kræver, at den canonical fresh-install release allerede er publiceret og verificeret i 51M artifact store.
             </DialogContentText>
-
             <TextField
               label="Udløb i timer"
               value={expiresInHours}
               onChange={(e) => setExpiresInHours(e.target.value)}
               type="number"
               fullWidth
-              slotProps={{
-                htmlInput: { min: 1, max: 720 }
-              }}
+              slotProps={{ htmlInput: { min: 1, max: 720 } }}
             />
-
             <TextField
               label="Note"
               value={note}
@@ -481,11 +459,12 @@ export default function EnrollmentTokensPage() {
           </Button>
         </DialogActions>
       </Dialog>
-      <Dialog open={!!newCode} onClose={() => setNewCode(null)} maxWidth="sm" fullWidth>
-        <DialogTitle>Installationskode oprettet</DialogTitle>
+
+      <Dialog open={!!newCode} onClose={() => setNewCode(null)} maxWidth="md" fullWidth>
+        <DialogTitle>Canonical fresh-install handoff oprettet</DialogTitle>
         <DialogContent>
           <Alert severity="warning" sx={{ mb: 2 }}>
-            Koden vises kun fuldt her. Kopiér den nu og send den sikkert til kunden.
+            Den fulde installationskode og den signerede fresh-install authorization vises kun i dette svar. Kopiér handoff-blokken nu og opbevar den sikkert.
           </Alert>
 
           <Paper variant="outlined" sx={{ p: 2, bgcolor: "rgba(15,23,42,0.42)", display: "flex", alignItems: "center", gap: 1 }}>
@@ -500,26 +479,52 @@ export default function EnrollmentTokensPage() {
             >
               {newCode?.code}
             </Typography>
-
             <IconButton onClick={() => handleCopy(newCode?.code)}>
               <ContentCopyIcon />
             </IconButton>
           </Paper>
 
-          <Typography
-            variant="body2"
-            sx={{
-              color: "text.secondary",
-              mt: 2
-            }}>
-            Udløber: {formatDateTime(newCode?.expires_at)}
+          <Stack spacing={0.6} sx={{ mt: 2 }}>
+            <Typography variant="body2"><strong>Release:</strong> {newCode?.release_id || "-"}</Typography>
+            <Typography variant="body2" sx={{ wordBreak: "break-all" }}><strong>Approved bundle SHA-256:</strong> {newCode?.bundle_sha256 || "-"}</Typography>
+            <Typography variant="body2"><strong>Approval:</strong> {newCode?.release_approval_reference || "-"}</Typography>
+            <Typography variant="body2" sx={{ wordBreak: "break-all" }}><strong>Source commit:</strong> {newCode?.source_commit || "-"}</Typography>
+            <Typography variant="body2" sx={{ color: "text.secondary" }}>Udløber: {formatDateTime(newCode?.expires_at)}</Typography>
+          </Stack>
+
+          <Typography variant="subtitle2" sx={{ mt: 2.5, mb: 1, fontWeight: 900 }}>
+            Ubuntu: download og verificér exact approved bundle
           </Typography>
+          <Paper
+            component="pre"
+            variant="outlined"
+            sx={{
+              p: 2,
+              m: 0,
+              maxHeight: 360,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              fontSize: "0.78rem",
+              bgcolor: "rgba(15,23,42,0.42)",
+            }}
+          >
+            {freshInstallCommand}
+          </Paper>
+          <Alert severity="info" sx={{ mt: 2 }}>
+            Blokken downloader kun de bytes, som den signerede authorization peger på, og verificerer hele bundle-SHA-256. Derefter fortsættes den eksisterende 51I-procedure fra <code>CLIENTFLOW_RELEASE_PROCEDURE.md</code> afsnit 4. Kiosk-bruger og manuel aktivering gættes eller udføres ikke automatisk.
+          </Alert>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => handleCopy(newCode?.code)} startIcon={<ContentCopyIcon />}>Kopiér</Button>
+          <Button onClick={() => handleCopy(newCode?.code)} startIcon={<ContentCopyIcon />}>Kopiér kode</Button>
+          <Button onClick={() => handleCopy(freshInstallCommand)} startIcon={<ContentCopyIcon />} disabled={!freshInstallCommand}>
+            Kopiér handoff
+          </Button>
           <Button variant="contained" onClick={() => setNewCode(null)}>Luk</Button>
         </DialogActions>
       </Dialog>
+
       <Dialog open={!!revokeTarget} onClose={() => setRevokeTarget(null)}>
         <DialogTitle>Tilbagekald installationskode?</DialogTitle>
         <DialogContent>
@@ -531,6 +536,7 @@ export default function EnrollmentTokensPage() {
           <Button color="error" variant="contained" onClick={handleRevoke} disabled={!!revokingId}>Tilbagekald</Button>
         </DialogActions>
       </Dialog>
+
       <AppSnackbar
         open={snackbar.open}
         message={snackbar.message}

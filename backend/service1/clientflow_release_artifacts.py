@@ -1,6 +1,6 @@
 """Backend authority over published, approved ClientFlow release artifacts.
 
-The catalog describes release policy.  The exact deployable bytes are derived
+The catalog describes release policy. The exact deployable bytes are derived
 from one immutable approved bundle in CLIENTFLOW_RELEASE_ARTIFACT_DIR and are
 re-verified before deployment authorization and before download.
 """
@@ -17,7 +17,11 @@ from clientflow_release_format.bundle import (
     BundleFormatError,
     open_verified_bundle_structure,
 )
-from clientflow_release_format.constants import INSTALL_MODE_UPDATE, MAX_BUNDLE_BYTES
+from clientflow_release_format.constants import (
+    INSTALL_MODE_FRESH,
+    INSTALL_MODE_UPDATE,
+    MAX_BUNDLE_BYTES,
+)
 
 _RELEASE_ID_RE = re.compile(r"^clientflow-\d+\.\d+\.\d+-seq-[1-9]\d*$")
 
@@ -135,8 +139,11 @@ def _validate_open_artifact_file(handle: BinaryIO) -> None:
         raise ClientFlowReleaseArtifactError("Publiceret ClientFlow artifact har uventet ejer")
 
 
-def open_published_release_artifact(release: dict[str, Any]) -> tuple[PublishedReleaseArtifact, BinaryIO]:
-    """Return verified metadata plus a handle pinned to those exact bundle bytes."""
+def _open_published_release_artifact(
+    release: dict[str, Any],
+    *,
+    required_install_mode: str,
+) -> tuple[PublishedReleaseArtifact, BinaryIO]:
     release_id = _release_id(release)
     path = _artifact_path(release_id)
     handle: BinaryIO | None = None
@@ -144,7 +151,7 @@ def open_published_release_artifact(release: dict[str, Any]) -> tuple[PublishedR
         manifest, _payload, bundle_size, bundle_sha256, handle = open_verified_bundle_structure(
             path,
             require_deployable=True,
-            required_install_mode=INSTALL_MODE_UPDATE,
+            required_install_mode=required_install_mode,
         )
         _validate_open_artifact_file(handle)
         artifact = _artifact_from_verified_bundle(
@@ -163,8 +170,26 @@ def open_published_release_artifact(release: dict[str, Any]) -> tuple[PublishedR
         raise ClientFlowReleaseArtifactError(f"Publiceret ClientFlow artifact er ugyldigt: {exc}") from exc
 
 
+def open_published_release_artifact(release: dict[str, Any]) -> tuple[PublishedReleaseArtifact, BinaryIO]:
+    """Return an update-capable verified artifact and pinned handle."""
+    return _open_published_release_artifact(release, required_install_mode=INSTALL_MODE_UPDATE)
+
+
+def open_published_fresh_install_artifact(
+    release: dict[str, Any],
+) -> tuple[PublishedReleaseArtifact, BinaryIO]:
+    """Return a fresh-install-capable verified artifact and pinned handle."""
+    return _open_published_release_artifact(release, required_install_mode=INSTALL_MODE_FRESH)
+
+
 def inspect_published_release_artifact(release: dict[str, Any]) -> PublishedReleaseArtifact:
     artifact, handle = open_published_release_artifact(release)
+    handle.close()
+    return artifact
+
+
+def inspect_published_fresh_install_artifact(release: dict[str, Any]) -> PublishedReleaseArtifact:
+    artifact, handle = open_published_fresh_install_artifact(release)
     handle.close()
     return artifact
 
@@ -219,5 +244,42 @@ def open_artifact_matches_deployment(
     if actual != expected:
         handle.close()
         raise ClientFlowReleaseArtifactError("Publiceret artifact matcher ikke deploymentens immutable authorization")
+    handle.seek(0)
+    return artifact, handle
+
+
+def open_artifact_matches_fresh_install_authorization(
+    release: dict[str, Any],
+    *,
+    authorization_release_id: str,
+    bundle_sha256: str,
+    bundle_size: int,
+    approval_reference: str,
+    candidate_sha256: str,
+    source_commit: str,
+) -> tuple[PublishedReleaseArtifact, BinaryIO]:
+    """Open the exact 51M bytes named by one immutable fresh-install capability."""
+    artifact, handle = open_published_fresh_install_artifact(release)
+    expected = (
+        str(authorization_release_id),
+        str(bundle_sha256).lower(),
+        int(bundle_size),
+        str(approval_reference),
+        str(candidate_sha256).lower(),
+        str(source_commit).lower(),
+    )
+    actual = (
+        artifact.release_id,
+        artifact.bundle_sha256,
+        artifact.bundle_size,
+        artifact.approval_reference,
+        artifact.candidate_sha256,
+        artifact.source_commit,
+    )
+    if actual != expected:
+        handle.close()
+        raise ClientFlowReleaseArtifactError(
+            "Publiceret artifact matcher ikke fresh-install authorizationens immutable provenance"
+        )
     handle.seek(0)
     return artifact, handle

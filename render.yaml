@@ -1,30 +1,28 @@
 services:
 
-  # ─── Backend ────────────────────────────────────────────────────────────────
+  # ─── Canonical v2 backend ──────────────────────────────────────────────────
   - type: web
-    name: infoskaerm-backend
+    name: planiq-display-v2-backend
     runtime: python
+    region: frankfurt
     plan: starter
     numInstances: 1
     rootDir: backend
     buildCommand: "python -m pip install --upgrade pip==26.1.2 && python -m pip install --require-hashes --no-cache-dir -r requirements.lock.txt"
+    preDeployCommand: "python scripts/run_migrations.py"
+    startCommand: "python -m uvicorn service1.main:app --host 0.0.0.0 --port $PORT --workers 1 --log-level info"
+    healthCheckPath: /health
 
-    # Canonical ClientFlow release artifacts are runtime state. Render services
-    # otherwise have an ephemeral filesystem, so the backend owns one persistent
-    # disk and one runtime instance. Pre-deploy runs on separate compute and must
-    # never be used to publish or inspect this artifact store.
+    domains:
+      - api.display.planiq.dk
+
+    # 51M: canonical runtime authority for approved immutable ClientFlow bundles.
+    # The filesystem-backed authority requires one persistent disk and one
+    # service instance. Publication happens only in the running service context.
     disk:
       name: clientflow-release-artifacts
       mountPath: /var/data/clientflow-release-artifacts
       sizeGB: 1
-
-    # VIGTIGT for HLS/livestream:
-    # Kør 1 worker, fordi livestream health/manifest/timestamp-state ellers kan
-    # ramme forskellige worker-processer. Terminal/remote desktop kan stadig virke.
-    preDeployCommand: "python scripts/run_migrations.py"
-    startCommand: "python -m uvicorn service1.main:app --host 0.0.0.0 --port $PORT --workers 1 --log-level info"
-
-    healthCheckPath: /health
 
     envVars:
       - key: ENVIRONMENT
@@ -41,9 +39,11 @@ services:
       - key: JWT_AUDIENCE
         value: "planiq-display"
 
+      # Neon is the database authority. Render provisions no database resource.
       - key: DATABASE_URL
         sync: false
 
+      # Existing Neon databases are never treated as empty/factory databases by default.
       - key: MIGRATION_ALLOW_EMPTY_DATABASE
         value: "false"
       - key: MIGRATION_ADVISORY_LOCK_TIMEOUT_SECONDS
@@ -53,13 +53,10 @@ services:
       - key: MIGRATION_STATEMENT_TIMEOUT_SECONDS
         value: "300"
 
-      # Kun det aktive produktionsdomæne. Tilføj kun ekstra origins, hvis de faktisk bruges.
       - key: CORS_ALLOW_ORIGINS
         value: "https://display.planiq.dk"
-
       - key: FRONTEND_URL
         value: "https://display.planiq.dk"
-
       - key: PASSWORD_RESET_FRONTEND_URL
         value: "https://display.planiq.dk"
 
@@ -81,27 +78,20 @@ services:
         value: "true"
       - key: REFRESH_COOKIE_SAMESITE
         value: "lax"
-      # Bagudkompatibel access-cookie til eksisterende ClientFlow/integrationskald.
       - key: ACCESS_COOKIE_SAMESITE
         value: "lax"
 
-      # Kortlivet one-time browser-ticket til direkte WebSocket-forbindelser.
-      # In-memory lager er bevidst kompatibelt med backendens låste 1-worker broker.
       - key: BROWSER_WS_TICKET_TTL_SECONDS
         value: "30"
       - key: BROWSER_WS_TICKET_MAX_PENDING
         value: "2048"
 
-      # Stage 10: Terminal-browser tickets har eget bounded runtime-lager og
-      # egne tuning-knapper; værdierne matcher den tidligere shared kontrakt.
       - key: TERMINAL_BROWSER_WS_TICKET_TTL_SECONDS
         value: "30"
       - key: TERMINAL_BROWSER_WS_TICKET_MAX_PENDING
         value: "2048"
 
-      # Stage 11: Terminal JWTs har egen signing trust. Agent-tokenet bevarer
-      # ClientFlow 1.2 credential-kontraktens issuer, mens Admin step-up har
-      # sit eget Terminal-issuer. Ingen af dem genbruger platformens signing key.
+      # Frozen Terminal trust contract: configuration preserved, code untouched.
       - key: CLIENTFLOW_TERMINAL_AUTH_KEY_B64
         sync: false
       - key: CLIENTFLOW_TERMINAL_AUTH_ISSUER
@@ -110,16 +100,12 @@ services:
         value: "planiq-display-api"
       - key: CLIENTFLOW_TERMINAL_TOKEN_TTL_SECONDS
         value: "600"
-
-      # Admin-terminal root grant has a separate 32-byte signing key and key id.
-      # Both are deployment-managed and must match the physical clients' trust config.
       - key: CLIENTFLOW_ROOT_TERMINAL_KEY_B64
         sync: false
       - key: CLIENTFLOW_ROOT_TERMINAL_KEY_ID
         sync: false
 
-      # Remote Desktop v2: own agent signing trust. This key is independent
-      # from Terminal, Livestream and the platform/browser JWT key.
+      # Frozen Remote Desktop trust contract: configuration preserved, code untouched.
       - key: CLIENTFLOW_REMOTE_DESKTOP_AUTH_KEY_B64
         sync: false
       - key: CLIENTFLOW_REMOTE_DESKTOP_TOKEN_ISSUER
@@ -127,11 +113,13 @@ services:
       - key: CLIENTFLOW_REMOTE_DESKTOP_TOKEN_TTL_SECONDS
         value: "600"
 
+      # 51N: dedicated signing key for one-time immutable fresh-install capabilities.
+      - key: CLIENTFLOW_FRESH_INSTALL_AUTH_KEY_B64
+        generateValue: true
+
       - key: PASSWORD_RESET_EXPIRE_MINUTES
         value: "30"
 
-      # Step 37A: in-memory fallback er sikker med én worker. Før horisontal
-      # skalering skal REDIS_URL sættes til Render Key Value og required slås til.
       - key: RATE_LIMIT_NAMESPACE
         value: "planiq-display"
       - key: RATE_LIMIT_REDIS_REQUIRED
@@ -142,8 +130,6 @@ services:
       - key: AUDIT_LOG_RETENTION_DAYS
         value: "90"
 
-      # 51M: exact runtime authority for approved immutable ClientFlow bundles.
-      # This must equal the persistent disk mountPath above.
       - key: CLIENTFLOW_RELEASE_ARTIFACT_DIR
         value: "/var/data/clientflow-release-artifacts"
 
@@ -158,68 +144,44 @@ services:
 
       - key: PRODUCT_NAME
         value: "PlanIQ Display"
-
       - key: PRODUCT_SHORT_NAME
         value: "Display"
-
       - key: PRODUCT_DOMAIN
         value: "display.planiq.dk"
 
       - key: MAIL_FROM_NAME
         value: "PlanIQ Display"
-
       - key: MAIL_PRODUCT_NAME
         value: "PlanIQ Display"
-
       - key: MAIL_LOGO_URL
         value: "https://display.planiq.dk/brand/planiq-display/planiq-display-logo.png"
-
       - key: SMTP_HOST
         sync: false
-
       - key: SMTP_PORT
         value: "587"
-
       - key: SMTP_SECURE
         value: "false"
-
       - key: SMTP_USER
         sync: false
-
       - key: SMTP_PASS
         sync: false
-
       - key: SMTP_FROM
         sync: false
 
       - key: CLIENTFLOW_ONLINE_TIMEOUT_SECONDS
         value: "30"
 
-      # Skal matche den mappe som backend monterer som /hls.
-      # Hvis du senere bruger Render Disk, så mount disken på samme path.
+      # Frozen Livestream/HLS runtime configuration: values preserved, code untouched.
       - key: HLS_BASE_DIR
         value: "/opt/render/project/src/backend/service1/hls"
-
-      # Low-latency HLS:
-      # Manifestet skal være kort, så browseren ikke ligger langt bag live edge.
       - key: HLS_MANIFEST_KEEP_N
         value: "8"
-
-      # Hvor hurtigt backend markerer streamen som stale, hvis der ikke kommer nye segmenter.
-      # Med 2s segmenter er 12s et godt udgangspunkt.
       - key: HLS_STALE_SECONDS
         value: "12"
-
-      # Viewer-heartbeat styrer auto-stop af livestream, hvis siden ikke besøges.
-      # Bevidst Display-kontrakt: sweep hvert 30. sekund og timeout efter 3 minutter.
       - key: HLS_VIEWER_HEARTBEAT_SWEEP_SECONDS
         value: "30"
-
       - key: HLS_VIEWER_HEARTBEAT_TIMEOUT_SECONDS
         value: "180"
-
-      # Isoleret ClientFlow 1.2 Livestream-v2. Navnene er bevidst separate
-      # fra legacy HLS-viewertelemetri ovenfor og påvirker ikke Terminal/RD.
       - key: LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS
         value: "10"
       - key: LIVESTREAM_V2_VIEWER_LEASE_SECONDS
@@ -234,115 +196,83 @@ services:
         value: "clientflow-api"
       - key: LIVESTREAM_V2_CREDENTIAL_PEPPER
         sync: false
-      - key: LIVESTREAM_V2_BOOTSTRAP_CLIENT_ID
-        sync: false
-      - key: LIVESTREAM_V2_BOOTSTRAP_CREDENTIAL_ID
-        sync: false
-      - key: LIVESTREAM_V2_BOOTSTRAP_SECRET_SHA256
-        sync: false
 
-      # Sætter Python til ikke at buffe stdout/stderr, så logs vises hurtigt.
       - key: PYTHONUNBUFFERED
         value: "1"
 
   # ─── Frontend ───────────────────────────────────────────────────────────────
-  - type: static
-    name: infoskaerm-frontend
+  - type: web
+    name: planiq-display-v2-frontend
+    runtime: static
     rootDir: frontend
     buildCommand: "npm ci && npm run build"
     staticPublishPath: ./dist
 
+    domains:
+      - display.planiq.dk
+
     headers:
-      # Releaseidentiteten må aldrig caches mellem deployments.
       - path: /release.json
         name: Cache-Control
         value: "no-store, max-age=0"
 
-      # Tillad ikke at siden indlejres i en iframe (clickjacking-beskyttelse)
       - path: /*
         name: X-Frame-Options
         value: DENY
-
-      # Slå MIME-type sniffing fra
       - path: /*
         name: X-Content-Type-Options
         value: nosniff
-
-      # Aktiver HTTPS-enforcing i browseren (1 år)
       - path: /*
         name: Strict-Transport-Security
         value: "max-age=31536000; includeSubDomains"
-
-      # Content Security Policy.
-      # HLS.js kræver blob: til MediaSource og worker-src blob:.
-      # Terminal/remote desktop kræver wss: i connect-src.
-      # style-src/style-src-elem tillader 'unsafe-inline', da MUI/Emotion injicerer inline-styles.
       - path: /*
         name: Content-Security-Policy
         value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' https: blob:; connect-src 'self' https: wss:; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
-
       - path: /*
         name: Referrer-Policy
         value: strict-origin-when-cross-origin
-
       - path: /*
         name: Permissions-Policy
         value: "geolocation=(), camera=(), microphone=(), payment=(), usb=(), bluetooth=(), accelerometer=(), gyroscope=(), magnetometer=()"
-
       - path: /*
         name: Cross-Origin-Opener-Policy
         value: same-origin
 
-      # App-shell/index må ikke caches, ellers kan browseren referere til en gammel hashed JS-fil.
       - path: /
         name: Cache-Control
         value: "no-store, no-cache, must-revalidate, max-age=0"
-
       - path: /index.html
         name: Cache-Control
         value: "no-store, no-cache, must-revalidate, max-age=0"
-
-      # Assets med hash i filnavnet kan caches aggressivt
       - path: /assets/*
         name: Cache-Control
         value: "public, max-age=31536000, immutable"
-
-      # index.html og andre HTML-filer må aldrig caches
       - path: /*.html
         name: Cache-Control
         value: "no-store, no-cache, must-revalidate, max-age=0"
 
     routes:
-      # Eksponér backendens read-only releaseidentitet via samme origin.
       - type: rewrite
         source: /version
-        destination: https://kulturskole-infosk-rm.onrender.com/version
+        destination: https://api.display.planiq.dk/version
 
-      # Proxy /api/* til backend — samme princip som PlanIQ Worklog.
-      # Vigtigt: /api-reglen skal ligge FØR SPA fallback-reglen, ellers returnerer
-      # login-endpoints frontendens index.html i stedet for backend-JSON.
+      # Same-origin browser API remains canonical for HttpOnly refresh cookies.
       - type: rewrite
         source: /api/*
-        destination: https://kulturskole-infosk-rm.onrender.com/api/*
+        destination: https://api.display.planiq.dk/api/*
 
-      # Proxy backend health endpoints, så browseren kan teste backend via samme origin.
       - type: rewrite
         source: /health
-        destination: https://kulturskole-infosk-rm.onrender.com/health
-
+        destination: https://api.display.planiq.dk/health
       - type: rewrite
         source: /health/*
-        destination: https://kulturskole-infosk-rm.onrender.com/health/*
+        destination: https://api.display.planiq.dk/health/*
 
-      # Proxy HLS-filer, så video/manifest hentes via display.planiq.dk.
       - type: rewrite
         source: /hls/*
-        destination: https://kulturskole-infosk-rm.onrender.com/hls/*
+        destination: https://api.display.planiq.dk/hls/*
 
-      # /release.json serveres direkte som det fysisk byggede statiske artefakt.
-      # Det må ikke rewrites til backend, da frontend- og backend-provenance skal være uafhængige.
-
-      # SPA fallback — skal være EFTER proxy-reglerne.
+      # SPA fallback must stay last.
       - type: rewrite
         source: /*
         destination: /index.html
@@ -350,11 +280,7 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22.22.0"
-
       - key: VITE_API_URL
         value: ""
-
-      # WebSockets kan ikke transporteres stabilt gennem static-site rewrites.
-      # Browseren bruger en kortlivet ticket og forbinder direkte til webservicen.
       - key: VITE_WS_API_URL
-        value: "https://kulturskole-infosk-rm.onrender.com"
+        value: "https://api.display.planiq.dk"
