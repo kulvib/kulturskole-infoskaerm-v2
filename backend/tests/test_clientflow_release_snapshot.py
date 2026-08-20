@@ -40,6 +40,7 @@ def _published_bundle(root: Path, *, release_id: str = "clientflow-1.3.0-seq-130
         member.uid = member.gid = 0
         archive.addfile(member, io.BytesIO(raw))
     payload = payload_path.read_bytes()
+    installer = b"embedded-installer-snapshot"
     manifest = {
         "manifest_schema": MANIFEST_SCHEMA,
         "product": PRODUCT,
@@ -57,8 +58,8 @@ def _published_bundle(root: Path, *, release_id: str = "clientflow-1.3.0-seq-130
         "fresh_installer": {
             "file": f"clientflow-installer-{version}.pyz",
             "format": "python-zipapp",
-            "size": 123,
-            "sha256": "d" * 64,
+            "size": len(installer),
+            "sha256": hashlib.sha256(installer).hexdigest(),
         },
         "payload": {
             "file": "clientflow-payload.tar",
@@ -90,7 +91,7 @@ def _published_bundle(root: Path, *, release_id: str = "clientflow-1.3.0-seq-130
     bundle = root / f"{release_id}.tar"
     with tarfile.open(bundle, "w", format=tarfile.PAX_FORMAT) as archive:
         manifest_bytes = (json.dumps(manifest, sort_keys=True) + "\n").encode("utf-8")
-        for name, raw in (("manifest.json", manifest_bytes), ("clientflow-payload.tar", payload)):
+        for name, raw in (("manifest.json", manifest_bytes), ("clientflow-payload.tar", payload), (manifest["fresh_installer"]["file"], installer)):
             member = tarfile.TarInfo(name)
             member.size = len(raw)
             member.mode = 0o644
@@ -150,6 +151,7 @@ def test_bundle_hash_and_manifest_stay_bound_to_same_open_file_when_path_is_repl
     # Preserve the same release identity while making provenance observably different.
     with tarfile.open(replacement, "r", format=tarfile.PAX_FORMAT) as archive:
         replacement_payload = archive.extractfile("clientflow-payload.tar").read()
+        replacement_installer = archive.extractfile(second_manifest["fresh_installer"]["file"]).read()
     second_manifest = dict(second_manifest)
     second_manifest["release_approval"] = {
         "reference": "approval-other",
@@ -158,7 +160,7 @@ def test_bundle_hash_and_manifest_stay_bound_to_same_open_file_when_path_is_repl
     second_manifest["source"] = {"commit": "e" * 40, "dirty": False}
     with tarfile.open(replacement, "w", format=tarfile.PAX_FORMAT) as archive:
         manifest_bytes = (json.dumps(second_manifest, sort_keys=True) + "\n").encode("utf-8")
-        for name, raw in (("manifest.json", manifest_bytes), ("clientflow-payload.tar", replacement_payload)):
+        for name, raw in (("manifest.json", manifest_bytes), ("clientflow-payload.tar", replacement_payload), (second_manifest["fresh_installer"]["file"], replacement_installer)):
             member = tarfile.TarInfo(name)
             member.size = len(raw)
             member.mode = 0o644

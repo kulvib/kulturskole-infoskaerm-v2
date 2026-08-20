@@ -35,7 +35,8 @@ This checklist is for the current correctness/isolation phase. Production-readin
 - [ ] Approval reads hash/manifest/payload from one pinned candidate file identity; candidate pathname replacement cannot change promoted bytes.
 - [ ] Approved bundle verifies with its exact whole-bundle SHA-256.
 - [ ] Backend publication streams from the same pinned approved-bundle identity that was verified and uses atomic no-replace publication into a pinned secure artifact directory.
-- [ ] Before any root installer code executes, installer file name/size/SHA-256 is externally verified from the already hash-verified approved bundle manifest.
+- [ ] Manifest schema 8 embeds the exact fresh-installer bytes inside the approved bundle; no loose installer path is a release authority.
+- [ ] Before any installer code executes, the canonical host-bootstrap verifies one pinned approved-bundle identity, extracts the embedded installer from that same open bundle, and materializes root-owned private bundle/installer copies under `/run`.
 - [ ] Installer/systemd/sysusers/tmpfiles inputs are present in the generated payload.
 - [ ] Kiosk-user-dependent definitions are rendered from the installation identity, not hardcoded to one physical host.
 

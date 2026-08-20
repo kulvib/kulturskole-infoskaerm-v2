@@ -168,13 +168,15 @@ def _create_payload(
     return complete, sorted(runtime_files, key=lambda item: item["file"])
 
 
-def _create_bundle(output: Path, manifest: dict, payload: Path, *, epoch: int) -> None:
+def _create_bundle(output: Path, manifest: dict, payload: Path, installer: Path, *, epoch: int) -> None:
     manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
     payload_bytes = payload.read_bytes()
+    installer_bytes = installer.read_bytes()
     with output.open("wb") as raw:
         with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as archive:
             _tar_add_bytes(archive, "manifest.json", manifest_bytes, mode=0o644, epoch=epoch)
             _tar_add_bytes(archive, "clientflow-payload.tar", payload_bytes, mode=0o644, epoch=epoch)
+            _tar_add_bytes(archive, str(manifest["fresh_installer"]["file"]), installer_bytes, mode=0o555, epoch=epoch)
 
 
 def _write_zipapp(output: Path, entries: list[tuple[str, bytes, int]], *, epoch: int) -> None:
@@ -312,7 +314,7 @@ def build(repo: Path, output_dir: Path, *, runtime_inputs: Path | None, allow_di
     }
     validate_manifest(manifest, require_deployable=False)
     bundle = output_dir / f"{release_id}-candidate.tar"
-    _create_bundle(bundle, manifest, payload, epoch=epoch)
+    _create_bundle(bundle, manifest, payload, installer, epoch=epoch)
     manifest_path = output_dir / "manifest.candidate.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     checksums = []

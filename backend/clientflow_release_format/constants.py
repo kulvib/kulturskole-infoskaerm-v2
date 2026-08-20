@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 PRODUCT = "ClientFlow"
-MANIFEST_SCHEMA = 7
+MANIFEST_SCHEMA = 8
 CHANNEL = "clientflow-runtime-release"
 INTEGRITY_ALGORITHM = "sha256"
 ARTIFACT_TYPE_RUNTIME_RELEASE = "runtime_release"

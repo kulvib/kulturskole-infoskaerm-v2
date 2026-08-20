@@ -7,7 +7,7 @@ import tarfile
 import tempfile
 from typing import BinaryIO
 
-from .archive import ArchiveError, inspect_payload_tar, read_bundle_fd
+from .archive import ArchiveError, inspect_payload_tar, read_bundle_artifacts_fd
 from .constants import MAX_BUNDLE_BYTES
 from .crypto import sha256_fd
 from .manifest import validate_manifest
@@ -33,12 +33,17 @@ def open_verified_bundle_structure(
         size, bundle_sha256 = sha256_fd(descriptor, max_bytes=MAX_BUNDLE_BYTES)
         if size <= 0:
             raise BundleFormatError("Releasebundlen er tom")
-        manifest, payload = read_bundle_fd(descriptor)
+        manifest, payload, installer = read_bundle_artifacts_fd(descriptor)
         validated = validate_manifest(
             manifest,
             require_deployable=require_deployable,
             required_install_mode=required_install_mode,
         )
+        installer_contract = validated["fresh_installer"]
+        expected_installer_size = int(installer_contract["size"])
+        expected_installer_sha = str(installer_contract["sha256"])
+        if len(installer) != expected_installer_size or hashlib.sha256(installer).hexdigest() != expected_installer_sha:
+            raise BundleFormatError("Fresh installerens størrelse eller SHA-256 matcher ikke manifestet")
         expected_size = int(validated["payload"]["size"])
         expected_sha = str(validated["payload"]["sha256"])
         if len(payload) != expected_size or hashlib.sha256(payload).hexdigest() != expected_sha:

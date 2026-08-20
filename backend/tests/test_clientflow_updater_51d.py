@@ -69,6 +69,7 @@ def _valid_bundle_bytes() -> bytes:
         directory.mtime = epoch
         archive.addfile(directory)
     payload = payload_buffer.getvalue()
+    installer = b"embedded-installer-51d"
     manifest = {
         "manifest_schema": MANIFEST_SCHEMA,
         "product": PRODUCT,
@@ -89,8 +90,8 @@ def _valid_bundle_bytes() -> bytes:
         "fresh_installer": {
             "file": "clientflow-installer-1.3.0.pyz",
             "format": "python-zipapp",
-            "size": 123,
-            "sha256": "d" * 64,
+            "size": len(installer),
+            "sha256": hashlib.sha256(installer).hexdigest(),
         },
         "payload": {
             "file": "clientflow-payload.tar",
@@ -125,6 +126,8 @@ def _valid_bundle_bytes() -> bytes:
         info, stream = _tar_member("manifest.json", manifest_bytes, epoch=epoch)
         archive.addfile(info, stream)
         info, stream = _tar_member("clientflow-payload.tar", payload, epoch=epoch)
+        archive.addfile(info, stream)
+        info, stream = _tar_member(manifest["fresh_installer"]["file"], installer, mode=0o555, epoch=epoch)
         archive.addfile(info, stream)
     return bundle_buffer.getvalue()
 

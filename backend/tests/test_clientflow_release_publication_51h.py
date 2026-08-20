@@ -63,6 +63,7 @@ def _approved_bundle(
         archive.addfile(member, io.BytesIO(marker))
 
     payload = payload_path.read_bytes()
+    installer_bytes = installer_bytes if installer_bytes is not None else b"embedded-installer-51h"
     manifest = {
         "manifest_schema": MANIFEST_SCHEMA,
         "product": PRODUCT,
@@ -84,12 +85,8 @@ def _approved_bundle(
         "fresh_installer": {
             "file": f"clientflow-installer-{VERSION}.pyz",
             "format": "python-zipapp",
-            "size": len(installer_bytes) if installer_bytes is not None else 1,
-            "sha256": (
-                hashlib.sha256(installer_bytes).hexdigest()
-                if installer_bytes is not None
-                else "b" * 64
-            ),
+            "size": len(installer_bytes),
+            "sha256": hashlib.sha256(installer_bytes).hexdigest(),
         },
         "payload": {
             "file": "clientflow-payload.tar",
@@ -122,7 +119,7 @@ def _approved_bundle(
     bundle = directory / f"{RELEASE_ID}.tar"
     manifest_bytes = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
     with tarfile.open(bundle, "w", format=tarfile.PAX_FORMAT) as archive:
-        for name, raw in (("manifest.json", manifest_bytes), ("clientflow-payload.tar", payload)):
+        for name, raw in (("manifest.json", manifest_bytes), ("clientflow-payload.tar", payload), (manifest["fresh_installer"]["file"], installer_bytes)):
             member = tarfile.TarInfo(name)
             member.size = len(raw)
             member.mode = 0o644
@@ -274,7 +271,6 @@ def test_51h_approval_promotes_payload_from_same_open_candidate_identity(
         expected_candidate_sha256=expected_candidate_sha,
         expected_installer_sha256=hashlib.sha256(installer_bytes).hexdigest(),
         expected_source_commit="c" * 40,
-        installer=installer,
     )
 
     assert swapped is True

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import tempfile
 from pathlib import Path
 
+from clientflow_release_format.archive import read_bundle_artifacts_fd
+
 from .bundle import extract_verified_payload, open_verified_bundle, verify_bundle
 from .builder import _create_bundle
-from .constants import MAX_FRESH_INSTALLER_BYTES
 from .crypto import sha256_file
 from .manifest import validate_manifest
 from .runtime_artifacts import validate_runtime_artifacts
@@ -31,7 +33,6 @@ def approve_bundle(
     expected_candidate_sha256: str,
     expected_installer_sha256: str,
     expected_source_commit: str,
-    installer: Path,
 ) -> dict:
     """Promote one exact, verified CI candidate to deployable without signing keys."""
     approval_reference = approval_reference.strip()
@@ -61,21 +62,20 @@ def approve_bundle(
             raise ApprovalError("Kandidatbundlens SHA-256 matcher ikke den eksplicit godkendte hash")
 
         installer_contract = manifest.get("fresh_installer") or {}
-        if installer.name != str(installer_contract.get("file") or ""):
-            raise ApprovalError("Fresh installer-filnavnet matcher ikke release candidate-manifestet")
-        try:
-            installer_size, actual_installer_sha256 = sha256_file(
-                installer, max_bytes=MAX_FRESH_INSTALLER_BYTES
-            )
-        except (OSError, ValueError) as exc:
-            raise ApprovalError(f"Fresh installer-artifactet er ugyldigt: {exc}") from exc
-        if actual_installer_sha256 != expected_installer_sha256:
+        if str(installer_contract.get("sha256") or "") != expected_installer_sha256:
             raise ApprovalError("Fresh installerens SHA-256 matcher ikke den eksplicit godkendte hash")
+        try:
+            _embedded_manifest, _embedded_payload, installer_bytes = read_bundle_artifacts_fd(
+                candidate_handle.fileno()
+            )
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise ApprovalError(f"Fresh installer-medlemmet er ugyldigt: {exc}") from exc
         if (
-            installer_size != int(installer_contract.get("size") or 0)
-            or actual_installer_sha256 != str(installer_contract.get("sha256") or "")
+            len(installer_bytes) != int(installer_contract.get("size") or 0)
+            or hashlib.sha256(installer_bytes).hexdigest()
+            != str(installer_contract.get("sha256") or "")
         ):
-            raise ApprovalError("Fresh installer-artifactet matcher ikke release candidate-manifestet")
+            raise ApprovalError("Fresh installer-medlemmet matcher ikke release candidate-manifestet")
 
         if manifest.get("deployable") is not False:
             raise ApprovalError("Inputbundlen skal være en ikke-deployable release candidate")
@@ -114,10 +114,21 @@ def approve_bundle(
             temporary.write(payload)
             temporary.flush()
             payload_path = Path(temporary.name)
+        with tempfile.NamedTemporaryFile(prefix="clientflow-installer-", suffix=".pyz", delete=False) as temporary:
+            temporary.write(installer_bytes)
+            temporary.flush()
+            installer_path = Path(temporary.name)
         try:
-            _create_bundle(output_bundle, approved, payload_path, epoch=int(approved["source_date_epoch"]))
+            _create_bundle(
+                output_bundle,
+                approved,
+                payload_path,
+                installer_path,
+                epoch=int(approved["source_date_epoch"]),
+            )
         finally:
             payload_path.unlink(missing_ok=True)
+            installer_path.unlink(missing_ok=True)
 
         verify_bundle(output_bundle, require_deployable=True)
         return approved
@@ -132,24 +143,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--approval-reference", required=True)
     parser.add_argument("--expected-candidate-sha256", required=True)
-    parser.add_argument("--installer", type=Path, required=True)
     parser.add_argument("--expected-installer-sha256", required=True)
     parser.add_argument("--expected-source-commit", required=True)
     parser.add_argument("--approve-release", action="store_true")
     args = parser.parse_args(argv)
     if not args.approve_release:
         raise SystemExit("Releasegodkendelse kræver --approve-release og udtrykkelig brugergodkendelse")
-    approve_bundle(
+    approved = approve_bundle(
         args.candidate_bundle,
         args.output,
         approval_reference=args.approval_reference,
         expected_candidate_sha256=args.expected_candidate_sha256,
         expected_installer_sha256=args.expected_installer_sha256,
         expected_source_commit=args.expected_source_commit,
-        installer=args.installer,
     )
     size, digest = sha256_file(args.output)
-    installer_size, installer_digest = sha256_file(args.installer, max_bytes=MAX_FRESH_INSTALLER_BYTES)
+    installer_contract = approved["fresh_installer"]
+    installer_size = int(installer_contract["size"])
+    installer_digest = str(installer_contract["sha256"])
     print(args.output)
     print(f"BUNDLE_SIZE={size}")
     print(f"BUNDLE_SHA256={digest}")

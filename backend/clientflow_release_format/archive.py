@@ -9,6 +9,7 @@ import tarfile
 
 from .constants import (
     MAX_BUNDLE_BYTES,
+    MAX_FRESH_INSTALLER_BYTES,
     MAX_MANIFEST_BYTES,
     MAX_MEMBER_BYTES,
     MAX_PATH_LENGTH,
@@ -83,8 +84,8 @@ def _stat_signature(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
     )
 
 
-def read_bundle_fd(descriptor: int) -> tuple[dict, bytes]:
-    """Read manifest and payload from one already-open immutable file identity."""
+def read_bundle_artifacts_fd(descriptor: int) -> tuple[dict, bytes, bytes]:
+    """Read manifest, payload and embedded fresh installer from one open bundle identity."""
     metadata = os.fstat(descriptor)
     if not stat.S_ISREG(metadata.st_mode):
         raise ArchiveError("Releasebundlen skal være en almindelig fil")
@@ -93,19 +94,49 @@ def read_bundle_fd(descriptor: int) -> tuple[dict, bytes]:
     seen: set[str] = set()
     manifest_bytes: bytes | None = None
     payload_bytes: bytes | None = None
+    installer_bytes: bytes | None = None
+    installer_name: str | None = None
     os.lseek(descriptor, 0, os.SEEK_SET)
     with os.fdopen(os.dup(descriptor), "rb", closefd=True) as source:
         with tarfile.open(fileobj=source, mode="r:") as archive:
-            for member in archive.getmembers():
+            members = archive.getmembers()
+            manifest_member = next((member for member in members if member.name == "manifest.json"), None)
+            if manifest_member is None:
+                raise ArchiveError("Releasebundlen mangler manifest")
+            if not manifest_member.isfile() or manifest_member.uid != 0 or manifest_member.gid != 0 or manifest_member.mode & 0o022:
+                raise ArchiveError("Releasebundle-manifestet har ugyldigt ejerskab eller mode")
+            if manifest_member.size <= 0 or manifest_member.size > MAX_MANIFEST_BYTES:
+                raise ArchiveError("Releasebundle-manifestet er for stort eller tomt")
+            stream = archive.extractfile(manifest_member)
+            if stream is None:
+                raise ArchiveError("Releasebundle-manifestet kunne ikke læses")
+            manifest_bytes = stream.read(manifest_member.size + 1)
+            if len(manifest_bytes) != manifest_member.size:
+                raise ArchiveError("Releasebundle-manifestet har forkert størrelse")
+            try:
+                manifest = json.loads(manifest_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ArchiveError("Releasebundlens manifest er ugyldigt") from exc
+            if not isinstance(manifest, dict):
+                raise ArchiveError("Releasebundlens manifest skal være et objekt")
+            installer_name = str((manifest.get("fresh_installer") or {}).get("file") or "")
+            if not installer_name:
+                raise ArchiveError("Releasebundlens manifest mangler fresh_installer.file")
+            validate_member_name(installer_name)
+
+            allowed = {"manifest.json", "clientflow-payload.tar", installer_name}
+            for member in members:
                 validate_member_name(member.name)
                 if member.name in seen:
                     raise ArchiveError("Releasebundlen indeholder dublerede medlemmer")
                 seen.add(member.name)
-                if not member.isfile() or member.name not in {"manifest.json", "clientflow-payload.tar"}:
+                if not member.isfile() or member.name not in allowed:
                     raise ArchiveError("Releasebundlen indeholder uventede medlemmer")
                 if member.uid != 0 or member.gid != 0 or member.mode & 0o022:
                     raise ArchiveError("Releasebundle-medlemmer har ugyldigt ejerskab eller mode")
-                limit = MAX_MANIFEST_BYTES if member.name == "manifest.json" else MAX_PAYLOAD_BYTES
+                if member.name == "manifest.json":
+                    continue
+                limit = MAX_PAYLOAD_BYTES if member.name == "clientflow-payload.tar" else MAX_FRESH_INSTALLER_BYTES
                 if member.size <= 0 or member.size > limit:
                     raise ArchiveError("Releasebundle-medlem er for stort eller tomt")
                 stream = archive.extractfile(member)
@@ -114,23 +145,24 @@ def read_bundle_fd(descriptor: int) -> tuple[dict, bytes]:
                 data = stream.read(member.size + 1)
                 if len(data) != member.size:
                     raise ArchiveError("Releasebundle-medlem har forkert størrelse")
-                if member.name == "manifest.json":
-                    manifest_bytes = data
-                else:
+                if member.name == "clientflow-payload.tar":
                     payload_bytes = data
+                elif member.name == installer_name:
+                    installer_bytes = data
     after = os.fstat(descriptor)
     if _stat_signature(after) != _stat_signature(metadata):
         raise ArchiveError("Releasebundlen ændrede sig under læsning")
     os.lseek(descriptor, 0, os.SEEK_SET)
-    if seen != {"manifest.json", "clientflow-payload.tar"} or manifest_bytes is None or payload_bytes is None:
-        raise ArchiveError("Releasebundlen mangler manifest eller payload")
-    try:
-        manifest = json.loads(manifest_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ArchiveError("Releasebundlens manifest er ugyldigt") from exc
-    if not isinstance(manifest, dict):
-        raise ArchiveError("Releasebundlens manifest skal være et objekt")
-    return manifest, payload_bytes
+    expected = {"manifest.json", "clientflow-payload.tar", installer_name}
+    if seen != expected or manifest_bytes is None or payload_bytes is None or installer_bytes is None:
+        raise ArchiveError("Releasebundlen mangler manifest, payload eller fresh installer")
+    return manifest, payload_bytes, installer_bytes
+
+
+def read_bundle_fd(descriptor: int) -> tuple[dict, bytes]:
+    """Compatibility wrapper for callers that only need manifest and payload."""
+    manifest, payload, _installer = read_bundle_artifacts_fd(descriptor)
+    return manifest, payload
 
 
 def read_bundle(bundle: Path) -> tuple[dict, bytes]:

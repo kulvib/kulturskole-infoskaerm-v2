@@ -21,7 +21,7 @@ def test_step51c_has_one_backend_importable_canonical_release_format_package():
     assert "clientflow_release_format.manifest" in manifest_source
     assert "clientflow_release_format.constants" in constants_source
     assert 'repo / "backend/clientflow_release_format"' in builder_source
-    assert MANIFEST_SCHEMA == 7
+    assert MANIFEST_SCHEMA == 8
     assert CHANNEL == "clientflow-runtime-release"
     assert ARTIFACT_TYPE_RUNTIME_RELEASE == "runtime_release"
 

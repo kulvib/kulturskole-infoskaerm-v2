@@ -15,27 +15,27 @@ ClientFlow 1.3.0 er den canonical bootstrap-baseline for den nye updater-plane. 
 - Ingen eksisterende ClientFlow-filer, systemd-units, Linux-brugere eller state.
 - Godkendt keyless bundle med `deployable: true`, gyldig `release_approval`, SHA-256-integritetsmetadata og monoton release sequence.
 - Den eksakte SHA-256 for **hele** den godkendte bundle skal være kendt via den godkendte releaseproces, før nogen installer-kode køres.
-- Den godkendte bundle skal via manifestets `fresh_installer` binde det eksakte installer-filnavn, størrelse og SHA-256; installer-PYZ må først eksekveres efter ekstern hashverifikation mod den allerede verificerede bundle.
+- Manifest schema 8 kræver, at den godkendte bundle fysisk indeholder fresh-installerens eksakte bytes og binder dem via `fresh_installer` filnavn/størrelse/SHA-256. Der findes ingen separat installer-path authority.
 - Gyldig one-time enrollmentkode og HTTPS-forbindelse til backend.
 - Eventuel privat CA leveres som PEM og kopieres til `/etc/clientflow/tls/ca.pem`.
 
 ## Fresh-install flow
 
-1. Verificér først den godkendte bundle mod den eksternt kendte approved bundle-SHA-256 med hostens `sha256sum`. Udpak derefter kun `manifest.json` fra de verificerede bundle-bytes og verificér installer-PYZ'ens filnavn, størrelse og SHA-256 mod manifestets `fresh_installer`. Ingen installer-kode må være kørt endnu. Se `CLIENTFLOW_RELEASE_PROCEDURE.md` for den canonical kommando-blok.
+1. Åbn approved bundle-pathen én gang i den canonical host-bootstrap, verificér den åbne filidentitet mod den eksternt kendte whole-bundle SHA-256, og udtræk installer-memberen fra **samme åbne bundle**. Materialisér både bundle og installer som root-owned private copies under `/run`. Se `CLIENTFLOW_RELEASE_PROCEDURE.md` for den canonical blok.
 
-2. Kør derefter den eksternt verificerede installer-PYZ i Python isolated mode og verificér bundlen igen gennem installerens egen release-parser:
+2. Kør derefter kun den private root-owned installer-copy i Python isolated mode og verificér den private bundle-copy gennem installerens egen release-parser:
 
    ```bash
-   /usr/bin/python3 -I ./clientflow-installer-1.3.0.pyz verify \
-     --bundle ./clientflow-1.3.0-seq-1201-approved.tar \
+   sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" verify \
+     --bundle "$BOOTSTRAP_BUNDLE" \
      --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256>
    ```
 
-3. Kør `install` som root med **samme** verificerede installer, bundle-SHA-256, backend-origin, enrollmentkode og kioskbruger:
+3. Kør `install` som root med **samme private bootstrap-filer**, bundle-SHA-256, backend-origin, enrollmentkode og kioskbruger:
 
    ```bash
-   sudo /usr/bin/python3 -I ./clientflow-installer-1.3.0.pyz install \
-     --bundle ./clientflow-1.3.0-seq-1201-approved.tar \
+   sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" install \
+     --bundle "$BOOTSTRAP_BUNDLE" \
      --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
      --backend-url https://<backend-origin> \
      --enrollment-code <one-time-code> \
@@ -59,7 +59,7 @@ Der er **ingen automatisk reboot**, ingen automatisk aktivering, ingen åbning a
 Aktivering er et separat trin og kræver en konkret approval-reference:
 
 ```bash
-sudo /usr/bin/python3 -I "$INSTALLER" activate \
+sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \
   --release-id clientflow-1.3.0-seq-1201 \
   --approval-reference CHANGE-REFERENCE
 ```
