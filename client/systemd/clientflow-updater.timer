@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll ClientFlow canonical update control plane
+
+[Timer]
+OnActiveSec=30s
+OnUnitActiveSec=1min
+AccuracySec=5s
+RandomizedDelaySec=15s
+Unit=clientflow-updater.service
+
+[Install]
+WantedBy=timers.target

@@ -85,6 +85,18 @@ class Layout:
     def tmpfiles_file(self) -> Path:
         return self.path("/usr/lib/tmpfiles.d/clientflow.conf")
 
+    @property
+    def stable_support_root(self) -> Path:
+        return self.path("/usr/lib/clientflow")
+
+    @property
+    def stable_updater_root(self) -> Path:
+        return self.stable_support_root / "updater"
+
+    @property
+    def stable_updater_pyz(self) -> Path:
+        return self.stable_updater_root / "clientflow-updater.pyz"
+
 
 class TransactionLock:
     def __init__(self, layout: Layout) -> None:
@@ -278,6 +290,7 @@ def _validate_release_tree(release_root: Path, manifest: dict[str, Any]) -> None
         "client-runtime/sysusers.d/clientflow.conf",
         "client-runtime/tmpfiles.d/clientflow.conf",
         "release/bin/clientflow-release-transaction",
+        "release/updater/clientflow-updater.pyz",
         "release/lib/clientflow_release/transaction.py",
         "release/lib/clientflow_release_format/manifest.py",
     )
@@ -452,7 +465,7 @@ def _managed_unit_paths(layout: Layout) -> list[Path]:
     if not layout.unit_root.exists():
         return []
     paths: set[Path] = set()
-    for pattern in ("clientflow*.service", "clientflow*.socket", "clientflow*.target"):
+    for pattern in ("clientflow*.service", "clientflow*.socket", "clientflow*.target", "clientflow*.timer"):
         paths.update(layout.unit_root.glob(pattern))
     target = layout.unit_root / "clientflow.target"
     if target.exists() or target.is_symlink():
@@ -501,7 +514,7 @@ def _apply_definitions(
     _remove_managed_units(layout)
     unit_names: list[str] = []
     for source in sorted(unit_source.iterdir()):
-        if source.suffix not in {".service", ".socket", ".target"}:
+        if source.suffix not in {".service", ".socket", ".target", ".timer"}:
             continue
         if not source.name.startswith("clientflow"):
             raise TransactionError("Uventet systemd unit i releasepayload")
@@ -722,6 +735,58 @@ def status(layout: Layout = Layout()) -> dict[str, Any]:
         state = dict(state)
         state["active_symlink_release_id"] = _read_active_release_id(layout)
         return state
+
+
+def install_stable_updater_host(
+    release_id: str,
+    *,
+    layout: Layout = Layout(),
+) -> dict[str, Any]:
+    """Materialize and enable the unprivileged updater bootstrap plane only."""
+    release_id = _validate_release_id(release_id)
+    with TransactionLock(layout):
+        state = load_state(layout)
+        if release_id not in (state.get("installed") or {}):
+            raise TransactionError("Stable updater kræver en staged release")
+        release_root = layout.releases / release_id
+        source = release_root / "release/updater/clientflow-updater.pyz"
+        try:
+            source_meta = source.lstat()
+        except FileNotFoundError as exc:
+            raise TransactionError("Staged release mangler stable updater-PYZ") from exc
+        if stat.S_ISLNK(source_meta.st_mode) or not stat.S_ISREG(source_meta.st_mode):
+            raise TransactionError("Stable updater-PYZ i staged release er ugyldig")
+        if not source_meta.st_mode & stat.S_IXUSR:
+            raise TransactionError("Stable updater-PYZ i staged release er ikke eksekverbar")
+
+        ensure_real_directory(layout.stable_support_root, mode=0o755)
+        ensure_real_directory(layout.stable_updater_root, mode=0o755)
+        source_size, source_sha256 = sha256_file(source)
+        _atomic_copy(source, layout.stable_updater_pyz, mode=0o555)
+        installed_size, installed_sha256 = sha256_file(layout.stable_updater_pyz)
+        if (installed_size, installed_sha256) != (source_size, source_sha256):
+            raise TransactionError("Stable updater-PYZ matcher ikke den verificerede releasepayload")
+
+        if layout.root == Path("/"):
+            installed_meta = layout.stable_updater_pyz.lstat()
+            if installed_meta.st_uid != 0 or installed_meta.st_gid != 0:
+                raise TransactionError("Stable updater-PYZ skal være root-owned")
+            _run(["/usr/bin/systemctl", "daemon-reload"])
+            _run(["/usr/bin/systemctl", "enable", "--now", "clientflow-updater.timer"])
+
+        _append_history(
+            state,
+            "stable_updater_host_installed",
+            release_id=release_id,
+            updater_sha256=installed_sha256,
+        )
+        save_state(layout, state)
+        return {
+            "status": "stable_updater_host_installed",
+            "release_id": release_id,
+            "updater_sha256": installed_sha256,
+            "updater_path": str(layout.stable_updater_pyz),
+        }
 
 
 def install_staged_definitions(

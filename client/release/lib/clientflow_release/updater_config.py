@@ -32,6 +32,7 @@ class UpdaterConfig:
         credential_file: Path,
         private_key: Path,
         state_root: Path,
+        ca_file_override: Path | None = None,
     ) -> "UpdaterConfig":
         try:
             credential = load_secure_json(Path(credential_file), max_bytes=64 * 1024)
@@ -72,9 +73,10 @@ class UpdaterConfig:
         ca_file: Path | None = None
         raw_ca_file = str(credential.get("tls_ca_file") or "").strip()
         if raw_ca_file:
-            ca_file = Path(raw_ca_file)
-            if not ca_file.is_absolute():
+            configured_ca_file = Path(ca_file_override) if ca_file_override is not None else Path(raw_ca_file)
+            if not configured_ca_file.is_absolute():
                 raise UpdaterConfigError("tls_ca_file skal være en absolut sti")
+            ca_file = configured_ca_file
 
         return cls(
             backend_url=backend_url,
@@ -104,8 +106,11 @@ class UpdaterConfig:
             or os.getenv("CLIENTFLOW_UPDATE_STATE_DIR")
             or "/var/lib/clientflow/updater"
         )
+        raw_ca_override = str(os.getenv("CLIENTFLOW_UPDATE_CA_FILE") or "").strip()
+        ca_file_override = Path(raw_ca_override) if raw_ca_override else None
         return cls.from_paths(
             credential_file=credential_file,
             private_key=private_key,
             state_root=state_root,
+            ca_file_override=ca_file_override,
         )

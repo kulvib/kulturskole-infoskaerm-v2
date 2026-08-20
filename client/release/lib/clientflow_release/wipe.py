@@ -20,6 +20,7 @@ USERS = (
     "clientflow-terminal-agent",
     "clientflow-terminal-session",
     "clientflow-system-agent",
+    "clientflow-updater",
 )
 GROUPS = (
     "clientflow-display-control",
@@ -34,6 +35,8 @@ def wipe(*, reason: str, confirm: str, layout: Layout = Layout()) -> None:
     if len(reason.strip()) < 8:
         raise RuntimeError("Wipe kræver en konkret begrundelse")
     if layout.root == Path("/"):
+        subprocess.run(["/usr/bin/systemctl", "disable", "--now", "clientflow-updater.timer"], check=False)
+        subprocess.run(["/usr/bin/systemctl", "stop", "clientflow-updater.service"], check=False)
         subprocess.run(["/usr/bin/systemctl", "disable", "--now", "clientflow.target"], check=False)
     _remove_definitions(layout)
     sudoers_root = layout.path("/etc/sudoers.d")
@@ -43,7 +46,13 @@ def wipe(*, reason: str, confirm: str, layout: Layout = Layout()) -> None:
             if metadata.st_mode & 0o022 or not path.is_file() or path.is_symlink():
                 raise RuntimeError(f"Wipe afviste usikker sudoers-fil: {path}")
             path.unlink()
-    for absolute in ("/opt/clientflow", "/etc/clientflow", "/var/lib/clientflow", "/run/clientflow"):
+    for absolute in (
+        "/opt/clientflow",
+        "/etc/clientflow",
+        "/var/lib/clientflow",
+        "/run/clientflow",
+        "/usr/lib/clientflow",
+    ):
         path = layout.path(absolute)
         if path.is_symlink():
             path.unlink()

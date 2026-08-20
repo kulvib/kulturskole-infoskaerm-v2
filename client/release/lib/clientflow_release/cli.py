@@ -22,6 +22,7 @@ from .filesystem import atomic_write_bytes, atomic_write_json, ensure_real_direc
 from .transaction import (
     Layout,
     activate_release,
+    install_stable_updater_host,
     install_staged_definitions,
     rollback_release,
     stage_bundle,
@@ -51,6 +52,7 @@ def _fresh_conflicts(layout: Layout) -> list[str]:
         "/opt/clientflow",
         "/etc/clientflow",
         "/var/lib/clientflow",
+        "/usr/lib/clientflow",
         "/usr/lib/sysusers.d/clientflow.conf",
         "/usr/lib/tmpfiles.d/clientflow.conf",
     ):
@@ -77,6 +79,7 @@ def _fresh_conflicts(layout: Layout) -> list[str]:
             "clientflow-terminal-agent",
             "clientflow-terminal-session",
             "clientflow-system-agent",
+            "clientflow-updater",
         )
         for user in accounts:
             try:
@@ -165,6 +168,7 @@ def _all_credentials_present(layout: Layout) -> bool:
         update_private_key = etc / "update/private-key.pem"
         _secure_regular_file(update_private_key)
         update_credential = _secure_json(etc / "update/credential.json")
+        update_tls_ca = _secure_regular_file(etc / "update/tls-ca.pem")
         if (
             update_credential.get("schema_version") != 1
             or int(update_credential.get("client_id", 0)) != client_id
@@ -179,6 +183,8 @@ def _all_credentials_present(layout: Layout) -> bool:
         _update_public_pem, local_update_key_id, _update_jwk, _update_jkt = update_public_material(update_private_key)
         if local_update_key_id != str(update_credential.get("key_id")):
             raise RuntimeError("Update-auth credential matcher ikke lokal private key")
+        if update_credential.get("tls_ca_file") and b"BEGIN CERTIFICATE" not in update_tls_ca:
+            raise RuntimeError("Update-auth custom CA credential er ugyldig")
         _secure_json(etc / "livestream.json")
         _secure_json(etc / "remote-desktop.json")
     except (KeyError, TypeError, ValueError, RuntimeError):
@@ -211,6 +217,59 @@ def _copy_install_configuration(layout: Layout, release_id: str, *, ca_file: Pat
     return "/etc/clientflow/tls/ca.pem"
 
 
+def _persist_updater_tls_ca(layout: Layout, stored_ca_path: str | None) -> None:
+    destination = layout.path("/etc/clientflow/update/tls-ca.pem")
+    if stored_ca_path:
+        raw = _secure_regular_file(layout.path(stored_ca_path), max_bytes=1024 * 1024, secret=False)
+        if b"BEGIN CERTIFICATE" not in raw:
+            raise RuntimeError("Updaterens custom CA indeholder ikke et PEM-certifikat")
+    else:
+        raw = b"# ClientFlow updater uses the system trust store.\n"
+    atomic_write_bytes(destination, raw, mode=0o600)
+
+
+def _validate_stable_updater_install(layout: Layout, release_id: str) -> None:
+    source = layout.releases / release_id / "release/updater/clientflow-updater.pyz"
+    installed = layout.stable_updater_pyz
+    try:
+        source_meta = source.lstat()
+        installed_meta = installed.lstat()
+    except FileNotFoundError as exc:
+        raise RuntimeError("Stable updater-host mangler efter installation") from exc
+    if (
+        source.is_symlink()
+        or installed.is_symlink()
+        or not stat.S_ISREG(source_meta.st_mode)
+        or not stat.S_ISREG(installed_meta.st_mode)
+    ):
+        raise RuntimeError("Stable updater-host er ikke en almindelig fil")
+    if stat.S_IMODE(installed_meta.st_mode) != 0o555:
+        raise RuntimeError("Stable updater-host har forkert filmode")
+    source_size, source_sha256 = sha256_file(source)
+    installed_size, installed_sha256 = sha256_file(installed)
+    if (source_size, source_sha256) != (installed_size, installed_sha256):
+        raise RuntimeError("Stable updater-host matcher ikke staged release")
+    if layout.root == Path("/"):
+        if installed_meta.st_uid != 0 or installed_meta.st_gid != 0:
+            raise RuntimeError("Stable updater-host er ikke root-owned")
+        try:
+            account = pwd.getpwnam("clientflow-updater")
+        except KeyError as exc:
+            raise RuntimeError("clientflow-updater systembruger mangler") from exc
+        if account.pw_uid == 0:
+            raise RuntimeError("clientflow-updater må ikke være root")
+        enabled = subprocess.run(
+            ["/usr/bin/systemctl", "is-enabled", "--quiet", "clientflow-updater.timer"],
+            check=False,
+        )
+        active = subprocess.run(
+            ["/usr/bin/systemctl", "is-active", "--quiet", "clientflow-updater.timer"],
+            check=False,
+        )
+        if enabled.returncode != 0 or active.returncode != 0:
+            raise RuntimeError("Stable updater-timer er ikke enabled og aktiv")
+
+
 def _validate_inactive_install(layout: Layout, release_id: str) -> None:
     state = status(layout)
     if release_id not in state.get("installed", {}):
@@ -219,6 +278,7 @@ def _validate_inactive_install(layout: Layout, release_id: str) -> None:
         raise RuntimeError("Fresh install må ikke have active-symlink før manuel aktivering")
     if not _all_credentials_present(layout):
         raise RuntimeError("Fresh install mangler credentials eller identity")
+    _validate_stable_updater_install(layout, release_id)
     if layout.root == Path("/"):
         active = subprocess.run(
             ["/usr/bin/systemctl", "is-active", "--quiet", "clientflow.target"],
@@ -261,6 +321,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
         if install_state.get("bundle_sha256") != approved_bundle_sha256:
             raise RuntimeError("Resume kræver præcis samme godkendte releasebundle")
         if install_state.get("status") == "pending_manual_activation":
+            install_stable_updater_host(release_id, layout=layout)
             _validate_inactive_install(layout, release_id)
             return {
                 "status": "pending_manual_activation",
@@ -319,6 +380,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
         update_public_key_pem, _update_key_id, _update_jwk, _update_jkt = generate_update_key(update_private_key)
     else:
         update_public_key_pem, _update_key_id, _update_jwk, _update_jkt = update_public_material(update_private_key)
+    _persist_updater_tls_ca(layout, stored_ca_path)
 
     if not _all_credentials_present(layout):
         response = claim(
@@ -349,6 +411,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
         install_state["status"] = "enrollment_completed"
         atomic_write_json(state_path, install_state, mode=0o600)
 
+    install_stable_updater_host(release_id, layout=layout)
     _validate_inactive_install(layout, release_id)
     final_state = {
         "schema_version": INSTALL_STATE_SCHEMA,

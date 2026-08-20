@@ -32,6 +32,19 @@ REQUIRED_WHEELS = (
     "pip-26.1.2-",
 )
 
+UPDATER_MODULES = (
+    "__init__.py",
+    "constants.py",
+    "enrollment.py",
+    "filesystem.py",
+    "update_auth.py",
+    "updater_client.py",
+    "updater_config.py",
+    "updater_entrypoint.py",
+    "updater_state.py",
+    "updater_transport.py",
+)
+
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
@@ -70,7 +83,15 @@ def _tar_add_bytes(archive: tarfile.TarFile, name: str, data: bytes, *, mode: in
     archive.addfile(info, io.BytesIO(data))
 
 
-def _create_payload(repo: Path, output: Path, *, version: str, epoch: int, runtime_inputs: Path | None) -> tuple[bool, list[dict]]:
+def _create_payload(
+    repo: Path,
+    output: Path,
+    *,
+    version: str,
+    epoch: int,
+    runtime_inputs: Path | None,
+    updater_pyz: Path,
+) -> tuple[bool, list[dict]]:
     root = f"clientflow-{version}"
     sources: list[tuple[Path, PurePosixPath]] = []
     # The installed release contains only runtime definitions/helpers/configuration and
@@ -100,6 +121,7 @@ def _create_payload(repo: Path, output: Path, *, version: str, epoch: int, runti
     sources.append((wrapper, PurePosixPath(root) / "release/bin/clientflow-release-transaction"))
     sources.append((repo / "client/VERSION", PurePosixPath(root) / "VERSION"))
     sources.append((repo / "client/release/release-input.json", PurePosixPath(root) / "release/release-input.json"))
+    sources.append((updater_pyz, PurePosixPath(root) / "release/updater/clientflow-updater.pyz"))
 
     runtime_files: list[dict] = []
     complete = False
@@ -155,16 +177,11 @@ def _create_bundle(output: Path, manifest: dict, payload: Path, *, epoch: int) -
             _tar_add_bytes(archive, "clientflow-payload.tar", payload_bytes, mode=0o644, epoch=epoch)
 
 
-def _create_installer_pyz(repo: Path, output: Path, *, epoch: int) -> None:
-    package_root = repo / "client/release/lib/clientflow_release"
-    entries: list[tuple[str, bytes, int]] = []
-    for path in _iter_files(package_root):
-        entries.append((f"clientflow_release/{path.relative_to(package_root).as_posix()}", path.read_bytes(), _source_mode(path)))
-    format_root = repo / "backend/clientflow_release_format"
-    for path in _iter_files(format_root):
-        entries.append((f"clientflow_release_format/{path.relative_to(format_root).as_posix()}", path.read_bytes(), _source_mode(path)))
-    entries.append(("__main__.py", b"from clientflow_release.cli import main\nraise SystemExit(main())\n", 0o644))
-    timestamp = __import__("datetime").datetime.fromtimestamp(max(epoch, 315532800), tz=__import__("datetime").timezone.utc)
+def _write_zipapp(output: Path, entries: list[tuple[str, bytes, int]], *, epoch: int) -> None:
+    timestamp = __import__("datetime").datetime.fromtimestamp(
+        max(epoch, 315532800),
+        tz=__import__("datetime").timezone.utc,
+    )
     date_time = (timestamp.year, timestamp.month, timestamp.day, timestamp.hour, timestamp.minute, timestamp.second)
     with output.open("wb") as raw:
         raw.write(b"#!/usr/bin/env python3\n")
@@ -178,6 +195,41 @@ def _create_installer_pyz(repo: Path, output: Path, *, epoch: int) -> None:
         raw.flush()
         os.fsync(raw.fileno())
     output.chmod(0o755)
+
+
+def _create_updater_pyz(repo: Path, output: Path, *, epoch: int) -> None:
+    package_root = repo / "client/release/lib/clientflow_release"
+    entries: list[tuple[str, bytes, int]] = []
+    for name in UPDATER_MODULES:
+        path = package_root / name
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"Canonical updater-source mangler: {path.relative_to(repo)}")
+        entries.append((f"clientflow_release/{name}", path.read_bytes(), _source_mode(path)))
+    format_root = repo / "backend/clientflow_release_format"
+    for path in _iter_files(format_root):
+        entries.append((
+            f"clientflow_release_format/{path.relative_to(format_root).as_posix()}",
+            path.read_bytes(),
+            _source_mode(path),
+        ))
+    entries.append((
+        "__main__.py",
+        b"from clientflow_release.updater_entrypoint import main\nraise SystemExit(main())\n",
+        0o644,
+    ))
+    _write_zipapp(output, entries, epoch=epoch)
+
+
+def _create_installer_pyz(repo: Path, output: Path, *, epoch: int) -> None:
+    package_root = repo / "client/release/lib/clientflow_release"
+    entries: list[tuple[str, bytes, int]] = []
+    for path in _iter_files(package_root):
+        entries.append((f"clientflow_release/{path.relative_to(package_root).as_posix()}", path.read_bytes(), _source_mode(path)))
+    format_root = repo / "backend/clientflow_release_format"
+    for path in _iter_files(format_root):
+        entries.append((f"clientflow_release_format/{path.relative_to(format_root).as_posix()}", path.read_bytes(), _source_mode(path)))
+    entries.append(("__main__.py", b"from clientflow_release.cli import main\nraise SystemExit(main())\n", 0o644))
+    _write_zipapp(output, entries, epoch=epoch)
 
 
 def build(repo: Path, output_dir: Path, *, runtime_inputs: Path | None, allow_dirty: bool) -> dict:
@@ -194,7 +246,19 @@ def build(repo: Path, output_dir: Path, *, runtime_inputs: Path | None, allow_di
         raise ValueError("SOURCE_DATE_EPOCH er uden for det understøttede interval")
     output_dir.mkdir(parents=True, exist_ok=True)
     payload = output_dir / "clientflow-payload.tar"
-    complete, runtime_files = _create_payload(repo, payload, version=version, epoch=epoch, runtime_inputs=runtime_inputs)
+    updater_pyz = output_dir / ".clientflow-updater.pyz"
+    try:
+        _create_updater_pyz(repo, updater_pyz, epoch=epoch)
+        complete, runtime_files = _create_payload(
+            repo,
+            payload,
+            version=version,
+            epoch=epoch,
+            runtime_inputs=runtime_inputs,
+            updater_pyz=updater_pyz,
+        )
+    finally:
+        updater_pyz.unlink(missing_ok=True)
     payload_size, payload_sha = sha256_file(payload)
     manifest = {
         "manifest_schema": MANIFEST_SCHEMA,
