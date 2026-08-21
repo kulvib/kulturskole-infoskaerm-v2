@@ -56,10 +56,10 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
         assert selected["release_sequence"] == release_input["release_sequence"]
 
 
-def test_51f_bootstrap_release_cannot_be_authorized_for_pre_13_in_place_update() -> None:
+def test_51f_131_bootstrap_requires_131_for_in_place_update() -> None:
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = catalog["releases"][0]
-    assert release["min_current_version"] == "1.3.0"
+    assert release["min_current_version"] == "1.3.1"
     assert "fresh_install" in release["install_modes"]
     assert "in_place_update" in release["install_modes"]
 

@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from service1.clientflow_releases import (
+    ClientFlowCatalogError,
     load_catalog,
     resolve_fresh_install_release,
     resolve_release,
+    validate_release_compatibility,
 )
 
 
@@ -37,7 +41,25 @@ def test_catalog_1202_promotes_exact_131_release_identity() -> None:
     assert release["update_allowed"] is True
     assert release["rollback_allowed"] is False
     assert release["install_modes"] == ["fresh_install", "in_place_update"]
-    assert release["min_current_version"] == "1.3.0"
+    assert release["min_current_version"] == "1.3.1"
+
+
+def test_catalog_1202_rejects_in_place_update_from_130() -> None:
+    load_catalog.cache_clear()
+    release = resolve_release("1.3.1")
+
+    with pytest.raises(ClientFlowCatalogError, match="kræver mindst ClientFlow 1.3.1"):
+        validate_release_compatibility(
+            release,
+            current_version="1.3.0",
+            ubuntu_version="26.04",
+        )
+
+    validate_release_compatibility(
+        release,
+        current_version="1.3.1",
+        ubuntu_version="26.04",
+    )
 
 
 def test_catalog_1202_matches_source_release_identity_and_keeps_bytes_out_of_catalog() -> None:
