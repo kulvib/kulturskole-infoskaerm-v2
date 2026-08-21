@@ -24,21 +24,23 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     release_input = json.loads(RELEASE_INPUT_PATH.read_text(encoding="utf-8"))
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    # 1.3.1/1202 is the next build identity. The runtime catalog deliberately
-    # remains on the physically published 1.3.0/1201 authority until the new
-    # approved bundle has been materialized in the immutable artifact store.
+    # 1.3.1/1202 is the current build identity. The approved 1.3.1/1202 bundle
+    # has now been materialized in the immutable artifact store and re-validated
+    # by backend artifact authority, so runtime selection may catch up to source.
     assert version == "1.3.1"
     assert release_input["release_sequence"] == 1202
     source_release_id = f"clientflow-{version}-seq-{release_input['release_sequence']}"
     assert source_release_id == "clientflow-1.3.1-seq-1202"
 
-    # Staging gate: source identity has moved, but runtime selection must remain
-    # on the physically published approved baseline until 1.3.1 bytes exist in 51M.
-    assert catalog["catalog_sequence"] == 1201
-    assert catalog["latest_stable"] == "1.3.0"
-    assert catalog["default_install_version"] == "1.3.0"
-    assert catalog["catalog_sequence"] < release_input["release_sequence"]
+    # Promotion gate: catalog may equal the current source identity after
+    # publication, but it must never lead source. Retention keeps exactly one
+    # selectable release, and both update/fresh-install defaults point to it.
+    assert catalog["catalog_sequence"] == 1202
+    assert catalog["latest_stable"] == "1.3.1"
+    assert catalog["default_install_version"] == "1.3.1"
+    assert catalog["catalog_sequence"] <= release_input["release_sequence"]
     assert len(catalog["releases"]) == 1
+
     selected = catalog["releases"][0]
     assert selected["version"] == catalog["latest_stable"]
     assert selected["version"] == catalog["default_install_version"]
@@ -49,8 +51,9 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     selected_tuple = tuple(int(part) for part in selected["version"].split("."))
     source_tuple = tuple(int(part) for part in version.split("."))
     assert selected_tuple <= source_tuple
-    if selected["version"] != version:
-        assert selected["release_sequence"] < release_input["release_sequence"]
+    assert selected["release_sequence"] <= release_input["release_sequence"]
+    if selected["version"] == version:
+        assert selected["release_sequence"] == release_input["release_sequence"]
 
 
 def test_51f_bootstrap_release_cannot_be_authorized_for_pre_13_in_place_update() -> None:
