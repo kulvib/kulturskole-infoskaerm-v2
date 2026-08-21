@@ -50,6 +50,6 @@ export function buildFreshInstallDownloadCommand(created) {
     `printf '%s  %s\\n' "$APPROVED_BUNDLE_SHA256" "$BUNDLE" | /usr/bin/sha256sum --check --strict -`,
     "",
     "printf '%s\\n' 'Approved bundle downloaded and SHA-256 verified.'",
-    "printf '%s\\n' 'Continue with CLIENTFLOW_RELEASE_PROCEDURE.md section 4 using this exact bundle.'",
+    "printf '%s\\n' 'Continue with CLIENTFLOW_RELEASE_PROCEDURE.md section 5 using this exact bundle.'",
   ].join("\n");
 }
