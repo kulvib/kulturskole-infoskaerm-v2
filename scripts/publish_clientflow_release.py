@@ -13,6 +13,7 @@ import stat
 import sys
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "backend"))
 sys.path.insert(0, str(REPO / "client" / "release" / "lib"))
 
 from clientflow_release.bundle import open_verified_bundle  # noqa: E402
