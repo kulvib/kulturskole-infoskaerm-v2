@@ -270,14 +270,7 @@ const UPDATE_LIVE_FIELDS = [
   "ubuntu_version",
   "pending_os_update",
   "ubuntu_updates_available",
-  "service_selfupdate_status",
   "service_ubuntu_update_status",
-  "client_update_status",
-  "client_update_message",
-  "client_update_requested_at",
-  "client_update_started_at",
-  "client_update_finished_at",
-  "client_update_error",
   "ubuntu_update_status",
   "ubuntu_update_step",
   "ubuntu_update_message",
@@ -1434,14 +1427,6 @@ export default function ClientDetailsPage({
               liveChromeStatus={liveChromeStatus}
               chromeRunning={liveChromeRunning}
               clientStatus={client?.status}
-              clientUpdateStatus={liveClient?.client_update_status}
-              clientUpdateMessage={liveClient?.client_update_message}
-              clientUpdateError={liveClient?.client_update_error}
-              clientUpdateRequestedAt={liveClient?.client_update_requested_at}
-              clientUpdateStartedAt={liveClient?.client_update_started_at}
-              clientUpdateFinishedAt={liveClient?.client_update_finished_at}
-              clientVersion={liveClient?.client_version}
-              serviceSelfupdateStatus={liveClient?.service_selfupdate_status}
               pendingOsUpdate={liveClient?.pending_os_update}
               serviceUbuntuUpdateStatus={liveClient?.service_ubuntu_update_status}
               ubuntuUpdatesAvailable={liveClient?.ubuntu_updates_available}

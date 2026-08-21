@@ -40,8 +40,19 @@ LIVESTREAM_BACKEND_STATE_FIELDS = {
     
 }
 
-CLIENT_REPORTABLE_UPDATE_RESULT_FIELDS = {
+LEGACY_CLIENTFLOW_UPDATE_FIELDS = {
+    "client_update_status",
+    "client_update_message",
+    "client_update_requested_at",
+    "client_update_started_at",
+    "client_update_finished_at",
+    "client_update_error",
+    "client_update_target_version",
+    "client_update_target_release_sequence",
+    "client_update_deployment_sequence",
     "client_update_applied_deployment_sequence",
+    "client_update_allow_downgrade",
+    "client_update_reason",
 }
 
 BACKEND_AUTHORITATIVE_UPDATE_TARGET_FIELDS = {
@@ -63,7 +74,7 @@ class ClientRuntimeContractTests(unittest.TestCase):
     def test_runtime_fields_are_present_in_database_and_api_models(self) -> None:
         for model in (Client, ClientRead, ClientUpdate):
             self.assertTrue(RUNTIME_FIELDS.issubset(model.model_fields))
-        self.assertTrue(CLIENT_REPORTABLE_UPDATE_RESULT_FIELDS.issubset(CLIENT_SELF_UPDATE_FIELDS))
+        self.assertTrue(LEGACY_CLIENTFLOW_UPDATE_FIELDS.isdisjoint(CLIENT_SELF_UPDATE_FIELDS))
         self.assertTrue(BACKEND_AUTHORITATIVE_UPDATE_TARGET_FIELDS.isdisjoint(CLIENT_SELF_UPDATE_FIELDS))
         for model in (Client, ClientRead):
             self.assertTrue(LIVESTREAM_BACKEND_STATE_FIELDS.issubset(model.model_fields))

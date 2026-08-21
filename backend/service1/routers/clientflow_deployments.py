@@ -40,7 +40,7 @@ router = APIRouter(tags=["clientflow-deployments"])
 
 
 class ClientFlowDeploymentCreate(BaseModel):
-    target_version: str = PydanticField(default="latest", min_length=1, max_length=40)
+    target_version: str = PydanticField(..., min_length=1, max_length=40)
     confirm_downgrade: bool = False
     reason: Optional[str] = PydanticField(default=None, max_length=500)
 
@@ -86,6 +86,8 @@ def _client_or_404(session: Session, client_id: int) -> Client:
 def _require_deployable_client(client: Client) -> None:
     if getattr(client, "deleted_at", None) is not None or str(getattr(client, "status", "")) != "approved":
         raise HTTPException(status_code=409, detail="ClientFlow deployment kræver en aktiv godkendt klient")
+    if bool(getattr(client, "pending_os_update", False)):
+        raise HTTPException(status_code=409, detail="ClientFlow deployment kan ikke startes under en aktiv Ubuntu-opdatering")
 
 
 def _deployment_or_404(session: Session, deployment_id: str) -> ClientFlowDeployment:
@@ -105,9 +107,12 @@ def create_clientflow_deployment(
 ):
     client = _client_or_404(session, client_id)
     _require_deployable_client(client)
+    requested_version = str(body.target_version or "").strip()
+    if requested_version.lower() == "latest":
+        raise HTTPException(status_code=400, detail="ClientFlow deployment kræver en konkret katalogversion; 'latest' er ikke tilladt")
     try:
         catalog = load_catalog()
-        release = resolve_release(body.target_version)
+        release = resolve_release(requested_version)
         validate_release_compatibility(
             release,
             current_version=client.client_version,

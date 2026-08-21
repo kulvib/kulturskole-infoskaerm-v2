@@ -439,8 +439,10 @@ const AUDIT_ACTION_LABELS = {
   enrollment_token_created: "Installationskode oprettet",
   enrollment_token_revoked: "Installationskode tilbagekaldt",
   client_enrolled: "Klient installeret",
-  clientflow_update_requested: "ClientFlow-version bestilt",
-  clientflow_downgrade_requested: "ClientFlow-nedgradering bestilt",
+  clientflow_deployment_authorized: "ClientFlow-deployment autoriseret",
+  clientflow_deployment_cancelled: "ClientFlow-deployment annulleret",
+  clientflow_update_requested: "ClientFlow-version bestilt (historisk)",
+  clientflow_downgrade_requested: "ClientFlow-nedgradering bestilt (historisk)",
 };
 
 const AUDIT_SEVERITY_LABELS = {

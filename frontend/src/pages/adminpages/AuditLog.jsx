@@ -106,8 +106,10 @@ const ACTION_META = {
   enrollment_token_created: { label: "Installationskode oprettet", category: "Installation", color: "success" },
   enrollment_token_revoked: { label: "Installationskode tilbagekaldt", category: "Installation", color: "warning" },
   client_enrolled: { label: "Klient installeret", category: "Installation", color: "success" },
-  clientflow_update_requested: { label: "ClientFlow-version bestilt", category: "ClientFlow", color: "warning" },
-  clientflow_downgrade_requested: { label: "ClientFlow-nedgradering bestilt", category: "ClientFlow", color: "error", critical: true },
+  clientflow_deployment_authorized: { label: "ClientFlow-deployment autoriseret", category: "ClientFlow", color: "warning" },
+  clientflow_deployment_cancelled: { label: "ClientFlow-deployment annulleret", category: "ClientFlow", color: "warning" },
+  clientflow_update_requested: { label: "ClientFlow-version bestilt (historisk)", category: "ClientFlow", color: "default" },
+  clientflow_downgrade_requested: { label: "ClientFlow-nedgradering bestilt (historisk)", category: "ClientFlow", color: "default", critical: true },
 };
 
 
