@@ -24,20 +24,19 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     release_input = json.loads(RELEASE_INPUT_PATH.read_text(encoding="utf-8"))
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    # 1.3.2/1203 is the current source/build identity. The runtime catalog must
-    # remain on the physically published 1.3.1/1202 authority until the new
-    # approved 1.3.2/1203 bundle has been materialized and re-validated.
+    # 1.3.2/1203 is the current source/build identity and has now been
+    # physically published and re-validated in the canonical backend store.
+    # The runtime catalog may therefore select exactly that same authority.
     assert version == "1.3.2"
     assert release_input["release_sequence"] == 1203
     source_release_id = f"clientflow-{version}-seq-{release_input['release_sequence']}"
     assert source_release_id == "clientflow-1.3.2-seq-1203"
 
-    # Staged promotion gate: catalog may lag the current source identity, but
-    # it must never lead source. Retention keeps exactly one selectable release,
-    # and both update/fresh-install defaults point to that published authority.
-    assert catalog["catalog_sequence"] == 1202
-    assert catalog["latest_stable"] == "1.3.1"
-    assert catalog["default_install_version"] == "1.3.1"
+    # Catalog promotion gate: after physical publication, the single retained
+    # selectable release must match current source/build identity exactly.
+    assert catalog["catalog_sequence"] == 1203
+    assert catalog["latest_stable"] == "1.3.2"
+    assert catalog["default_install_version"] == "1.3.2"
     assert catalog["catalog_sequence"] <= release_input["release_sequence"]
     assert len(catalog["releases"]) == 1
 
@@ -56,9 +55,10 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
         assert selected["release_sequence"] == release_input["release_sequence"]
 
 
-def test_51f_131_bootstrap_requires_131_for_in_place_update() -> None:
+def test_51f_132_update_keeps_131_as_minimum_proven_bootstrap() -> None:
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = catalog["releases"][0]
+    assert release["version"] == "1.3.2"
     assert release["min_current_version"] == "1.3.1"
     assert "fresh_install" in release["install_modes"]
     assert "in_place_update" in release["install_modes"]
