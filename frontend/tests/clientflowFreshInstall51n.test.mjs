@@ -19,7 +19,8 @@ test("51N handoff pins backend, release, capability and whole-bundle SHA before 
   assert.match(command, /cf-fresh-v1\.payload\.signature/);
   assert.match(command, /expected_bundle_sha256/);
   assert.match(command, /sha256sum --check --strict/);
-  assert.match(command, /CLIENTFLOW_RELEASE_PROCEDURE\.md section 4/);
+  assert.match(command, /CLIENTFLOW_RELEASE_PROCEDURE\.md section 5/);
+  assert.doesNotMatch(command, /CLIENTFLOW_RELEASE_PROCEDURE\.md section 4/);
   assert.doesNotMatch(command, /github\.com|releases\/latest|onrender\.com/);
 });
 
