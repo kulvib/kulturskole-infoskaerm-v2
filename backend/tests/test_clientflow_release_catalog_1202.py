@@ -62,15 +62,29 @@ def test_catalog_1202_rejects_in_place_update_from_130() -> None:
     )
 
 
-def test_catalog_1202_matches_source_release_identity_and_keeps_bytes_out_of_catalog() -> None:
+def test_catalog_1202_remains_published_authority_while_source_prepares_132_and_keeps_bytes_out_of_catalog() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
-    assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.1"
+    source_version = (ROOT / "client/VERSION").read_text(encoding="utf-8").strip()
     release_input = json.loads(
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
-    assert release_input["release_sequence"] == 1202
+
+    assert source_version == "1.3.2"
+    assert release_input["release_sequence"] == 1203
+
+    assert data["catalog_sequence"] == 1202
+    assert data["latest_stable"] == "1.3.1"
+    assert data["default_install_version"] == "1.3.1"
+    assert release["version"] == "1.3.1"
+    assert release["release_sequence"] == 1202
+    assert release["release_id"] == "clientflow-1.3.1-seq-1202"
+
+    source_tuple = tuple(int(part) for part in source_version.split("."))
+    selected_tuple = tuple(int(part) for part in release["version"].split("."))
+    assert selected_tuple < source_tuple
+    assert release["release_sequence"] < release_input["release_sequence"]
 
     for field in (
         "bundle_sha256",
