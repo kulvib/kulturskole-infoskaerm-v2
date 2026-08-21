@@ -31,9 +31,9 @@ from clientflow_release.archive import read_bundle  # noqa: E402
 from scripts import publish_clientflow_release as publication  # noqa: E402
 
 
-RELEASE_ID = "clientflow-1.3.1-seq-1202"
-VERSION = "1.3.1"
-SEQUENCE = 1202
+RELEASE_ID = "clientflow-1.3.2-seq-1203"
+VERSION = "1.3.2"
+SEQUENCE = 1203
 
 
 def _approved_bundle(
@@ -119,7 +119,11 @@ def _approved_bundle(
     bundle = directory / f"{RELEASE_ID}.tar"
     manifest_bytes = (json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n").encode()
     with tarfile.open(bundle, "w", format=tarfile.PAX_FORMAT) as archive:
-        for name, raw in (("manifest.json", manifest_bytes), ("clientflow-payload.tar", payload), (manifest["fresh_installer"]["file"], installer_bytes)):
+        for name, raw in (
+            ("manifest.json", manifest_bytes),
+            ("clientflow-payload.tar", payload),
+            (manifest["fresh_installer"]["file"], installer_bytes),
+        ):
             member = tarfile.TarInfo(name)
             member.size = len(raw)
             member.mode = 0o644
@@ -216,7 +220,6 @@ def test_51h_idempotent_publication_rejects_insecure_existing_artifact(
     assert stat.S_IMODE(destination.stat().st_mode) == 0o666
 
 
-
 def test_51h_approval_promotes_payload_from_same_open_candidate_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -303,7 +306,7 @@ def test_51h_publication_rejects_bundle_from_other_source_release_identity(
     monkeypatch.setattr(
         publication,
         "_source_release_identity",
-        lambda: ("1.3.2", 1203, "clientflow-1.3.2-seq-1203"),
+        lambda: ("1.3.3", 1204, "clientflow-1.3.3-seq-1204"),
     )
 
     artifact_dir = tmp_path / "artifact-store"
