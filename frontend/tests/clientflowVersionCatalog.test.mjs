@@ -20,18 +20,27 @@ test("Control Room only selects stable or supported ClientFlow releases", () => 
   assert.match(infoSource, /Begrundelse/);
 });
 
-test("ClientFlow update request sends JSON target, confirmation and reason", () => {
+test("ClientFlow update request creates a canonical deployment", () => {
   assert.match(
     apiSource,
-    /requestClientflowUpdate[\s\S]*headers: authHeaders\(\{ "Content-Type": "application\/json" \}\)/,
+    /requestClientflowDeployment[\s\S]*\/api\/clients\/\$\{encodeURIComponent\(clientId\)\}\/clientflow-deployments[\s\S]*headers: authHeaders\(\{ "Content-Type": "application\/json" \}\)/,
   );
-  assert.match(apiSource, /target_version: options\.targetVersion \|\| "latest"/);
+  assert.match(apiSource, /target_version: targetVersion/);
+  assert.match(apiSource, /targetVersion\.toLowerCase\(\) === "latest"/);
+  assert.match(infoSource, /targetVersion: resolvedSelectedVersion/);
   assert.match(apiSource, /confirm_downgrade: options\.confirmDowngrade === true/);
   assert.match(apiSource, /reason: options\.reason \|\| null/);
+  assert.match(apiSource, /getClientflowDeployments/);
+  assert.match(apiSource, /getActiveClientflowDeployment/);
+  assert.match(apiSource, /cancelClientflowDeployment/);
   assert.match(apiSource, /\/api\/clientflow\/releases/);
+  assert.doesNotMatch(apiSource, /\/api\/clients\/\$\{clientId\}\/clientflow-update/);
 });
 
-test("manual downgrade has a dedicated Danish audit label", () => {
-  assert.match(auditSource, /clientflow_downgrade_requested/);
-  assert.match(auditSource, /ClientFlow-nedgradering bestilt/);
+test("canonical deployment events have Danish audit labels", () => {
+  assert.match(auditSource, /clientflow_deployment_authorized/);
+  assert.match(auditSource, /ClientFlow-deployment autoriseret/);
+  assert.match(auditSource, /clientflow_deployment_cancelled/);
+  assert.match(auditSource, /ClientFlow-deployment annulleret/);
+  assert.match(auditSource, /ClientFlow-version bestilt \(historisk\)/);
 });

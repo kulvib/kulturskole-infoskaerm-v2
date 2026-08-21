@@ -39,7 +39,6 @@
     "test:dependency-runtime": "node --test tests/dependencyRuntime.test.mjs",
     "test:release-metadata": "node --test tests/releaseMetadata.test.mjs",
     "test:bundle-budget": "node --test tests/bundleBudget.test.mjs",
-    "test:runtime-status": "node --test tests/runtimeStatus.test.mjs",
     "test:backend-cleanup": "node --test tests/backendCleanupContract.test.mjs",
     "test:clientflow-version-catalog": "node --test tests/clientflowVersionCatalog.test.mjs",
     "test:season-contract": "node --test tests/seasonContract.test.mjs",

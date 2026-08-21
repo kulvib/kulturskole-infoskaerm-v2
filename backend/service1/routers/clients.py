@@ -12,6 +12,7 @@ from ..auth import get_current_user, get_current_admin_user, get_current_superad
 from ..models import utcnow
 from ..observability import log_safe_exception
 from ..lifecycle import ClientPurgeBlocked, prepare_client_for_permanent_delete
+from ..clientflow_deployments import active_deployment
 from ..terminal_v2_models import TerminalClient, TerminalCredential
 from ..remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
 from ..season_service import (
@@ -23,10 +24,6 @@ from ..season_service import (
     effective_organization_times,
     ensure_client_calendar,
     validate_supported_season,
-)
-from ..clientflow_releases import (
-    ClientFlowCatalogError, compare_versions, load_catalog, resolve_release,
-    validate_release_compatibility,
 )
 import os
 import secrets
@@ -46,12 +43,6 @@ BROWSER_REFRESH_DEFAULT_SECONDS = int(os.getenv("CLIENTFLOW_BROWSER_REFRESH_DEFA
 BROWSER_REFRESH_MIN_SECONDS = int(os.getenv("CLIENTFLOW_BROWSER_REFRESH_MIN_SECONDS", "60"))
 BROWSER_REFRESH_MAX_SECONDS = int(os.getenv("CLIENTFLOW_BROWSER_REFRESH_MAX_SECONDS", "86400"))
 
-CLIENTFLOW_UPDATE_TERMINAL_STATUSES = {"ready", "success", "up_to_date", "error"}
-CLIENTFLOW_UPDATE_BUSY_STATUSES = {
-    "requested", "starting", "preparing", "fetching_manifest",
-    "downloading", "verifying", "installing", "stopping_services",
-}
-CLIENTFLOW_STALE_UPDATE_SECONDS = int(os.getenv("CLIENTFLOW_STALE_UPDATE_SECONDS", "1800"))
 OS_UPDATE_STALE_SECONDS = int(os.getenv("CLIENTFLOW_OS_UPDATE_STALE_SECONDS", "3600"))
 UBUNTU_UPDATE_STATUSES = {
     "ready", "requested", "starting", "checking", "installing", "cleanup",
@@ -62,6 +53,20 @@ UBUNTU_UPDATE_FIELDS = {
     "ubuntu_update_error", "ubuntu_update_started_at", "ubuntu_update_updated_at",
     "ubuntu_update_finished_at", "ubuntu_update_progress",
     "ubuntu_update_package_count", "ubuntu_update_reboot_required",
+}
+LEGACY_CLIENTFLOW_UPDATE_FIELDS = {
+    "client_update_status",
+    "client_update_message",
+    "client_update_requested_at",
+    "client_update_started_at",
+    "client_update_finished_at",
+    "client_update_error",
+    "client_update_target_version",
+    "client_update_target_release_sequence",
+    "client_update_deployment_sequence",
+    "client_update_applied_deployment_sequence",
+    "client_update_allow_downgrade",
+    "client_update_reason",
 }
 VALID_PENDING_CHROME_ACTION_SOURCES = {"actionbutton", "calendar", "viewer_heartbeat_timeout", "viewer_inactivity_timeout", "viewer_left_control_room", "control_room_back", "livestream_watchdog", "system", "api", "client", "self_update"}
 
@@ -187,11 +192,6 @@ class ClientOrganizationChangeResponse(ClientRead):
 class ClientApprovalRequest(BaseModel):
     organization_id: Optional[int] = None
 
-
-class ClientFlowUpdateRequest(BaseModel):
-    target_version: str = PydanticField(default="latest", min_length=1, max_length=40)
-    confirm_downgrade: bool = False
-    reason: Optional[str] = PydanticField(default=None, max_length=500)
 
 
 EXPECTED_CLIENT_TIMEZONE = "Europe/Copenhagen"
@@ -422,13 +422,6 @@ CLIENT_SELF_UPDATE_FIELDS = {
     "client_version",
     "client_version_patch",
     "client_version_updated_at",
-    "client_update_status",
-    "client_update_message",
-    "client_update_requested_at",
-    "client_update_started_at",
-    "client_update_finished_at",
-    "client_update_error",
-    "client_update_applied_deployment_sequence",
     "desktop_lockdown_status",
     "desktop_lockdown_message",
     "desktop_lockdown_last_applied_at",
@@ -486,11 +479,19 @@ def _current_update_detail(client: Client) -> str:
     if getattr(client, "pending_os_update", False):
         return "Klienten er allerede ved at opdatere (os_update)"
 
-    client_update_status = str(getattr(client, "client_update_status", "") or "").lower()
-    if client_update_status and client_update_status not in CLIENTFLOW_UPDATE_TERMINAL_STATUSES:
-        return f"Klienten er allerede ved at opdatere ({client_update_status})"
-
     return "Klienten er allerede ved at opdatere"
+
+
+def _require_no_active_clientflow_deployment(session, client_id: int) -> None:
+    deployment = active_deployment(session, client_id=client_id)
+    if deployment is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Klienten har en aktiv canonical ClientFlow-deployment "
+                f"({deployment.state}). Vent til deploymenten er afsluttet."
+            ),
+        )
 
 
 def _client_state_value(client: Client) -> str:
@@ -1237,19 +1238,6 @@ def _normalize_runtime_state(client: Client, *, online: Optional[bool] = None) -
             client.chrome_status = "Ubuntu-opdatering afsluttet — klient online"
             client.chrome_color = "green"
 
-    # ClientFlow-update: hvis update-substate er terminal og der ikke er aktive
-    # pending actions, må generisk state ikke blive hængende på updating.
-    client_update_status = str(getattr(client, "client_update_status", "") or "").strip().lower()
-    if (
-        online
-        and str(getattr(client, "state", "") or "").strip().lower() == "updating"
-        and pending_action in {"", "none"}
-        and not bool(getattr(client, "pending_os_update", False))
-        and (not client_update_status or client_update_status in CLIENTFLOW_UPDATE_TERMINAL_STATUSES)
-    ):
-        client.state = "normal"
-        changed = True
-
     return changed
 
 
@@ -1517,12 +1505,6 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "service_selfupdate_status": getattr(client, "service_selfupdate_status", None),
         "service_ubuntu_update_status": getattr(client, "service_ubuntu_update_status", None),
         "ubuntu_updates_available": getattr(client, "ubuntu_updates_available", 0) or 0,
-        "client_update_status": client.client_update_status or "ready",
-        "client_update_message": client.client_update_message,
-        "client_update_requested_at": client.client_update_requested_at,
-        "client_update_started_at": client.client_update_started_at,
-        "client_update_finished_at": client.client_update_finished_at,
-        "client_update_error": client.client_update_error,
         "browser_refresh_interval_sec": _normalize_browser_refresh_interval(getattr(client, "browser_refresh_interval_sec", None)),
         "diagnostics_updated_at": client.diagnostics_updated_at,
         "system_timezone": client.system_timezone,
@@ -1678,7 +1660,15 @@ def set_chrome_command(
     action = _normalize_chrome_action_name(data.get("action"))
     source = data.get("source")
 
+    if action == "clientflow_update":
+        raise HTTPException(
+            status_code=410,
+            detail="Legacy clientflow_update er fjernet. Brug canonical ClientFlow deployment-endpointet.",
+        )
+
     _require_client_operator_access(user, client, action)
+    if action not in (None, "none"):
+        _require_no_active_clientflow_deployment(session, id)
 
     normalized_source = None
     if source is not None:
@@ -1782,6 +1772,14 @@ def get_chrome_command(id: int, session=Depends(get_session), user=Depends(get_c
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client)
     action = client.pending_chrome_action.value if client.pending_chrome_action else None
+    if action == "clientflow_update":
+        client.pending_chrome_action = ChromeAction.NONE
+        client.pending_chrome_action_source = None
+        if str(getattr(client, "state", "") or "").strip().lower() == "updating" and not bool(getattr(client, "pending_os_update", False)):
+            client.state = "normal"
+        session.add(client)
+        session.commit()
+        action = "none"
     source = None if action in (None, "none") else getattr(client, "pending_chrome_action_source", None)
     return {
         "action": action,
@@ -1831,6 +1829,7 @@ async def trigger_os_update(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     _require_admin_client_access(user, client)
+    _require_no_active_clientflow_deployment(session, id)
     if not is_online(client):
         raise HTTPException(status_code=400, detail="Klienten er offline — kan ikke starte opdatering")
 
@@ -1933,200 +1932,6 @@ async def reset_os_update(
 
 
 
-def _clientflow_update_is_stale(client: Client) -> bool:
-    """Returnér True hvis en ClientFlow update ser ud til at være efterladt i busy-state."""
-    status = str(getattr(client, "client_update_status", "") or "").strip().lower()
-    if status not in CLIENTFLOW_UPDATE_BUSY_STATUSES:
-        return False
-
-    ref = (
-        _as_naive_utc(getattr(client, "client_update_started_at", None))
-        or _as_naive_utc(getattr(client, "client_update_requested_at", None))
-    )
-    if ref is None:
-        return False
-
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    return (now - ref).total_seconds() > CLIENTFLOW_STALE_UPDATE_SECONDS
-
-
-def _normalize_clientflow_update_state_if_finished(client: Client) -> None:
-    """Ryd state=updating hvis update-felterne allerede er i en terminal tilstand."""
-    status = str(getattr(client, "client_update_status", "") or "").strip().lower()
-    pca = _normalize_chrome_action_name(
-        getattr(getattr(client, "pending_chrome_action", None), "value", None)
-        or getattr(client, "pending_chrome_action", None)
-    ) or "none"
-
-    if (
-        getattr(client, "state", None) == "updating"
-        and pca in ("", "none")
-        and not getattr(client, "pending_os_update", False)
-        and status in CLIENTFLOW_UPDATE_TERMINAL_STATUSES
-    ):
-        client.state = "normal"
-
-@router.post("/clients/{id}/clientflow-update")
-async def trigger_clientflow_update(
-    id: int,
-    http_request: Request,
-    update_request: ClientFlowUpdateRequest = Body(default_factory=ClientFlowUpdateRequest),
-    session=Depends(get_session),
-    user=Depends(get_current_superadmin_user),
-):
-    """Bestil en katalogstyret ClientFlow update eller eksplicit rollback."""
-    client = session.get(Client, id)
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-    _require_admin_client_access(user, client)
-    if not is_online(client):
-        raise HTTPException(status_code=400, detail="Klienten er offline — kan ikke starte ClientFlow-opdatering")
-
-    try:
-        catalog = load_catalog()
-        release = resolve_release(update_request.target_version)
-        validate_release_compatibility(
-            release,
-            current_version=client.client_version,
-            ubuntu_version=client.ubuntu_version,
-        )
-    except ClientFlowCatalogError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    target_version = str(release["version"])
-    current_version = str(client.client_version or "").strip().lstrip("vV")
-    latest_version = str(catalog["latest_stable"])
-    is_downgrade = bool(current_version and compare_versions(target_version, current_version) < 0)
-    is_non_latest_without_current = bool(not current_version and target_version != latest_version)
-    requires_downgrade_confirmation = is_downgrade or is_non_latest_without_current
-
-    if requires_downgrade_confirmation:
-        if release.get("rollback_allowed") is not True:
-            raise HTTPException(status_code=400, detail=f"ClientFlow {target_version} er ikke godkendt som rollback-version")
-        if not update_request.confirm_downgrade:
-            raise HTTPException(status_code=400, detail="Nedgradering kræver eksplicit bekræftelse")
-        if not str(update_request.reason or "").strip():
-            raise HTTPException(status_code=400, detail="Nedgradering kræver en begrundelse")
-
-    _normalize_clientflow_update_state_if_finished(client)
-
-    if client.state == "updating":
-        if _clientflow_update_is_stale(client):
-            client.pending_chrome_action = ChromeAction.NONE
-            client.pending_chrome_action_source = None
-            client.pending_os_update = False
-            client.state = "error"
-            client.client_update_status = "error"
-            client.client_update_message = "Tidligere ClientFlow-opdatering blev nulstillet som forældet/stalled"
-            client.client_update_error = "Update var stadig i busy-state efter timeout"
-            client.client_update_finished_at = utcnow()
-            session.add(client)
-            session.commit()
-            session.refresh(client)
-        else:
-            raise HTTPException(status_code=409, detail=_current_update_detail(client))
-
-    now = utcnow()
-    deployment_sequence = max(
-        int(client.client_update_deployment_sequence or 0),
-        int(client.client_update_applied_deployment_sequence or 0),
-    ) + 1
-    reason = str(update_request.reason or "").strip() or None
-    client.pending_chrome_action = ChromeAction.CLIENTFLOW_UPDATE
-    client.pending_chrome_action_source = "actionbutton"
-    client.state = "updating"
-    client.client_update_status = "requested"
-    client.client_update_target_version = target_version
-    client.client_update_target_release_sequence = int(release["release_sequence"])
-    client.client_update_deployment_sequence = deployment_sequence
-    client.client_update_allow_downgrade = requires_downgrade_confirmation
-    client.client_update_reason = reason
-    client.client_update_message = (
-        f"Rollback til ClientFlow {target_version} bestilt fra backend"
-        if requires_downgrade_confirmation
-        else f"ClientFlow {target_version} bestilt fra backend"
-    )
-    client.client_update_requested_at = now
-    client.client_update_started_at = None
-    client.client_update_finished_at = None
-    client.client_update_error = None
-    add_audit_log(
-        session,
-        action="clientflow_downgrade_requested" if requires_downgrade_confirmation else "clientflow_update_requested",
-        request=http_request,
-        actor=user,
-        target_organization_id=client.organization_id,
-        entity_type="client",
-        entity_id=client.id,
-        entity_label=client.name,
-        severity="critical" if requires_downgrade_confirmation else "warning",
-        is_critical=requires_downgrade_confirmation,
-        details={
-            "current_version": current_version or None,
-            "target_version": target_version,
-            "latest_stable": latest_version,
-            "target_release_sequence": release["release_sequence"],
-            "deployment_sequence": deployment_sequence,
-            "reason": reason,
-        },
-    )
-    session.add(client)
-    session.commit()
-    session.refresh(client)
-    return {
-        "ok": True,
-        "message": client.client_update_message,
-        "pending_chrome_action": client.pending_chrome_action.value,
-        "state": client.state,
-        "client_update_status": client.client_update_status,
-        "client_update_message": client.client_update_message,
-        "client_update_requested_at": client.client_update_requested_at,
-        "client_update_target_version": client.client_update_target_version,
-        "client_update_target_release_sequence": client.client_update_target_release_sequence,
-        "client_update_deployment_sequence": client.client_update_deployment_sequence,
-        "client_update_allow_downgrade": client.client_update_allow_downgrade,
-    }
-
-
-@router.post("/clients/{id}/clientflow-update/reset")
-async def reset_clientflow_update(
-    id: int,
-    session=Depends(get_session),
-    user=Depends(get_current_superadmin_user),
-):
-    """Nulstil en fastlåst ClientFlow self-update uden at starte en ny update."""
-    client = session.get(Client, id)
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-    _require_admin_client_access(user, client)
-
-    now = utcnow()
-    client.pending_chrome_action = ChromeAction.NONE
-    client.pending_chrome_action_source = None
-    client.state = "normal"
-    client.client_update_status = "ready"
-    client.client_update_message = "ClientFlow-opdateringsstatus nulstillet af admin"
-    client.client_update_error = None
-    client.client_update_target_version = "latest"
-    client.client_update_target_release_sequence = None
-    client.client_update_allow_downgrade = False
-    client.client_update_reason = None
-    client.client_update_finished_at = now
-
-    session.add(client)
-    session.commit()
-    session.refresh(client)
-
-    return {
-        "ok": True,
-        "message": f"ClientFlow-opdateringsstatus nulstillet for klient {id}",
-        "pending_chrome_action": client.pending_chrome_action.value,
-        "state": client.state,
-        "client_update_status": client.client_update_status,
-        "client_update_message": client.client_update_message,
-        "client_update_finished_at": client.client_update_finished_at,
-    }
-
 
 @router.get("/clients/{id}/ubuntu-updates")
 def get_ubuntu_updates(id: int, session=Depends(get_session), user=Depends(get_current_user_or_client)):
@@ -2149,6 +1954,12 @@ async def create_client(
     session=Depends(get_session),
     user=Depends(get_current_admin_user),
 ):
+    create_fields = set(client_in.model_fields_set)
+    if create_fields & LEGACY_CLIENTFLOW_UPDATE_FIELDS or _normalize_chrome_action_name(getattr(client_in, "pending_chrome_action", None)) == "clientflow_update":
+        raise HTTPException(
+            status_code=410,
+            detail="Legacy ClientFlow update-state må ikke oprettes. Brug canonical ClientFlow deployment-endpointet.",
+        )
     resolved_organization_id = client_in.organization_id
     if not getattr(user, "is_superadmin", False):
         resolved_organization_id = getattr(user, "organization_id", None)
@@ -2222,12 +2033,6 @@ async def create_client(
         desktop_lockdown_updated_at=getattr(client_in, "desktop_lockdown_updated_at", None),
         desktop_lockdown_last_applied_at=getattr(client_in, "desktop_lockdown_last_applied_at", None),
         client_version=getattr(client_in, "client_version", None),
-        client_update_status=getattr(client_in, "client_update_status", "ready"),
-        client_update_message=getattr(client_in, "client_update_message", None),
-        client_update_requested_at=getattr(client_in, "client_update_requested_at", None),
-        client_update_started_at=getattr(client_in, "client_update_started_at", None),
-        client_update_finished_at=getattr(client_in, "client_update_finished_at", None),
-        client_update_error=getattr(client_in, "client_update_error", None),
         display_resolution_preset=getattr(client_in, "display_resolution_preset", "auto"),
         display_resolution_mode=getattr(client_in, "display_resolution_mode", "auto"),
         display_resolution_width=getattr(client_in, "display_resolution_width", None),
@@ -2271,6 +2076,15 @@ async def create_client(
 
 def _authorize_client_update_fields(user, client: Client, client_update: ClientUpdate, fields: set[str]) -> None:
     """Validate exactly which patch fields the authenticated principal may send."""
+    legacy_fields = sorted(fields & LEGACY_CLIENTFLOW_UPDATE_FIELDS)
+    if legacy_fields:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Legacy ClientFlow update-felter er fjernet fra runtime-kontrakten. "
+                "Brug canonical ClientFlow deployment-endpointet."
+            ),
+        )
     if principal_is_client(user):
         allowed_fields = set(CLIENT_SELF_UPDATE_FIELDS)
         action_value = getattr(client_update, "display_resolution_action", None)
@@ -2307,14 +2121,22 @@ def _validate_client_update_privileges(user, client: Client, fields: set[str]) -
             raise HTTPException(status_code=403, detail="Kiosk lockdown må kun ændres af superadmin")
 
 
-def _validate_client_update_command_availability(user, client: Client, client_update: ClientUpdate, fields: set[str]) -> None:
+def _validate_client_update_command_availability(session, user, client: Client, client_update: ClientUpdate, fields: set[str]) -> None:
     if principal_is_client(user):
         return
     wants_reboot = "pending_reboot" in fields and bool(client_update.pending_reboot)
     wants_shutdown = "pending_shutdown" in fields and bool(client_update.pending_shutdown)
     display_action_value = str(getattr(client_update, "display_resolution_action", "") or "").strip().lower()
     wants_display_action = "display_resolution_action" in fields and display_action_value in VALID_DISPLAY_RESOLUTION_ACTIONS
-    if wants_reboot or wants_shutdown or wants_display_action:
+    pending_action_value = _normalize_chrome_action_name(getattr(client_update, "pending_chrome_action", None))
+    wants_pending_action = "pending_chrome_action" in fields and pending_action_value not in (None, "none")
+    if pending_action_value == "clientflow_update":
+        raise HTTPException(
+            status_code=410,
+            detail="Legacy clientflow_update er fjernet. Brug canonical ClientFlow deployment-endpointet.",
+        )
+    if wants_reboot or wants_shutdown or wants_display_action or wants_pending_action:
+        _require_no_active_clientflow_deployment(session, client.id)
         network_error = _client_network_unavailable(client)
         if network_error:
             raise HTTPException(status_code=409, detail=network_error)
@@ -2333,7 +2155,7 @@ async def update_client(
     fields = set(client_update.model_fields_set)
     _authorize_client_update_fields(user, client, client_update, fields)
     _validate_client_update_privileges(user, client, fields)
-    _validate_client_update_command_availability(user, client, client_update, fields)
+    _validate_client_update_command_availability(session, user, client, client_update, fields)
 
     _validate_display_resolution_update(client, client_update, fields)
     if "name" in fields: client.name = _normalize_client_name(client_update.name)
@@ -2489,18 +2311,6 @@ async def update_client(
     if "client_version" in fields: client.client_version = client_update.client_version
     if "client_version_patch" in fields: client.client_version_patch = client_update.client_version_patch
     if "client_version_updated_at" in fields: client.client_version_updated_at = client_update.client_version_updated_at
-    if "client_update_status" in fields: client.client_update_status = client_update.client_update_status
-    if "client_update_message" in fields: client.client_update_message = client_update.client_update_message
-    if "client_update_requested_at" in fields: client.client_update_requested_at = client_update.client_update_requested_at
-    if "client_update_started_at" in fields: client.client_update_started_at = client_update.client_update_started_at
-    if "client_update_finished_at" in fields: client.client_update_finished_at = client_update.client_update_finished_at
-    if "client_update_error" in fields: client.client_update_error = client_update.client_update_error
-    if "client_update_target_version" in fields: client.client_update_target_version = client_update.client_update_target_version
-    if "client_update_target_release_sequence" in fields: client.client_update_target_release_sequence = client_update.client_update_target_release_sequence
-    if "client_update_deployment_sequence" in fields: client.client_update_deployment_sequence = max(0, int(client_update.client_update_deployment_sequence or 0))
-    if "client_update_applied_deployment_sequence" in fields: client.client_update_applied_deployment_sequence = max(0, int(client_update.client_update_applied_deployment_sequence or 0))
-    if "client_update_allow_downgrade" in fields: client.client_update_allow_downgrade = bool(client_update.client_update_allow_downgrade)
-    if "client_update_reason" in fields: client.client_update_reason = str(client_update.client_update_reason or "").strip()[:500] or None
     if "display_detected_outputs" in fields: client.display_detected_outputs = client_update.display_detected_outputs
     if "display_detected_updated_at" in fields: client.display_detected_updated_at = client_update.display_detected_updated_at
 

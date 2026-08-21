@@ -27,11 +27,7 @@ import TerminalIcon from "@mui/icons-material/Terminal";
 import DesktopWindowsIcon from "@mui/icons-material/DesktopWindows";
 import { useTheme } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
-import {
-  getUpdateStatusLabel,
-  isTerminalUpdateStatus as isClientflowTerminalStatus,
-  normalizeRuntimeStatus as normalizeUpdateStatus,
-} from "../../utils/runtimeStatus.mjs";
+import { getActiveClientflowDeployment } from "../../api";
 
 /*
   DetailsActionsSection.jsx
@@ -218,7 +214,6 @@ const PENDING_ACTION_LABELS = {
   shutdown: "Slukker klient…",
   pending_shutdown: "Slukker klient…",
   reset_browser: "Nulstiller kiosk browser…",
-  clientflow_update: "ClientFlow-opdatering afventer klient",
   os_update: "Ubuntu-opdatering afventer klient",
 };
 
@@ -251,23 +246,13 @@ function getStepLabel(step) {
   if (s === "system_wake" || s === "display_wake") return "Skærm tændes…";
   if (s === "system_wake_complete" || s === "display_wake_complete") return "Skærm tændt";
   if (OS_UPDATE_STEP_LABELS[s]) return OS_UPDATE_STEP_LABELS[s];
-  if (s === "clientflow_update") return "ClientFlow-opdatering afventer klient";
   if (s === "error") return "Der opstod en fejl";
   return null;
 }
 
-const CLIENTFLOW_UPDATE_STEPS = [
-  { key: "requested", label: "Afventer klient", description: "Backend har registreret opdateringen. Klienten henter den ved næste sync." },
-  { key: "starting", label: "Starter opdatering", description: "Klienten har modtaget opdateringen og starter update-flowet." },
-  { key: "preparing", label: "Klargør", description: "Klienten forbereder opdateringen og tjekker miljøet." },
-  { key: "fetching_manifest", label: "Henter versionsinfo", description: "Klienten henter manifest og versionsinfo." },
-  { key: "downloading", label: "Downloader", description: "Klienten downloader den nye ClientFlow-pakke." },
-  { key: "verifying", label: "Verificerer", description: "Klienten verificerer download og indhold." },
-  { key: "installing", label: "Installerer", description: "Klienten installerer den nye version." },
-  { key: "stopping_services", label: "Genstarter services", description: "ClientFlow-services genstartes for at aktivere opdateringen." },
-];
-
-const CLIENTFLOW_UPDATE_BUSY_STATUSES = new Set(CLIENTFLOW_UPDATE_STEPS.map((s) => s.key));
+const CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES = new Set([
+  "authorized", "downloading", "verified", "staged", "activating", "health_check", "rolling_back",
+]);
 
 const SERVICE_BUSY_VALUES = new Set([
   "opdaterer",
@@ -280,34 +265,8 @@ const SERVICE_BUSY_VALUES = new Set([
 ]);
 
 function serviceLooksBusy(value) {
-  const st = normalizeUpdateStatus(value);
+  const st = String(value || "").trim().toLowerCase();
   return SERVICE_BUSY_VALUES.has(st);
-}
-
-function getClientflowUpdateStepMeta(status, pendingAction) {
-  const st = normalizeUpdateStatus(status);
-  const action = normalizeUpdateStatus(pendingAction);
-
-  if (!st && action === "clientflow_update") {
-    return { label: "Afventer klient", description: "Backend har sendt ClientFlow-opdatering til klienten." };
-  }
-  if (!st || st === "ready") {
-    return { label: getUpdateStatusLabel("ready"), description: "Klienten er klar til opdatering." };
-  }
-  if (st === "success") {
-    return { label: getUpdateStatusLabel("success"), description: "ClientFlow-opdateringen er gennemført." };
-  }
-  if (st === "up_to_date") {
-    return { label: getUpdateStatusLabel("up_to_date"), description: "Klienten har allerede nyeste ClientFlow-version." };
-  }
-  if (st === "error") {
-    return { label: getUpdateStatusLabel("error"), description: "ClientFlow-opdateringen fejlede." };
-  }
-
-  const step = CLIENTFLOW_UPDATE_STEPS.find((item) => item.key === st);
-  if (step) return step;
-
-  return { label: st || "Ukendt", description: "Ukendt ClientFlow-opdateringsstatus fra klienten." };
 }
 
 function isUbuntuTerminalStep(step, status) {
@@ -460,14 +419,6 @@ export default function ClientDetailsActionsSection({
   liveChromeStatus = null,
   chromeRunning = null,
   clientStatus = null,
-  clientUpdateStatus = null,
-  clientUpdateMessage = null,
-  clientUpdateError = null,
-  clientUpdateRequestedAt = null,
-  clientUpdateStartedAt = null,
-  clientUpdateFinishedAt = null,
-  clientVersion = null,
-  serviceSelfupdateStatus = null,
   pendingOsUpdate = false,
   serviceUbuntuUpdateStatus = null,
   ubuntuUpdatesAvailable = null,
@@ -498,6 +449,30 @@ export default function ClientDetailsActionsSection({
   const isViewer = role === "viewer";
   const canControlClient = ["superadmin", "admin", "bruger"].includes(role);
 
+  const [clientflowDeployment, setClientflowDeployment] = useState(null);
+
+  useEffect(() => {
+    if (!clientId || !isSuperadmin) {
+      setClientflowDeployment(null);
+      return undefined;
+    }
+    let active = true;
+    const refreshDeployment = async () => {
+      try {
+        const current = await getActiveClientflowDeployment(clientId);
+        if (active) setClientflowDeployment(current || null);
+      } catch {
+        if (active) setClientflowDeployment(null);
+      }
+    };
+    refreshDeployment();
+    const timer = window.setInterval(refreshDeployment, 2500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [clientId, isSuperadmin]);
+
   const [actionLoading, setActionLoading] = useState({});
   const [shutdownDialogOpen, setShutdownDialogOpen] = useState(false);
   const [localSnackbar, setLocalSnackbar] = useState({
@@ -505,9 +480,7 @@ export default function ClientDetailsActionsSection({
     message: "",
     severity: "success",
   });
-  const [clientflowUpdateFeedbackVisible, setClientflowUpdateFeedbackVisible] = useState(false);
   const [ubuntuUpdateFeedbackVisible, setUbuntuUpdateFeedbackVisible] = useState(false);
-  const clientflowWasBusyRef = useRef(false);
   const ubuntuWasBusyRef = useRef(false);
 
   const normalizedClientState = String(clientState || "").trim().toLowerCase();
@@ -529,31 +502,10 @@ export default function ClientDetailsActionsSection({
 
   const liveStepNorm = String(liveStep ?? "").trim().toLowerCase();
 
-  const normalizedClientUpdateStatus = normalizeUpdateStatus(clientUpdateStatus);
-  const clientflowUpdateInProgress =
-    normalizedPendingAction === "clientflow_update" ||
-    CLIENTFLOW_UPDATE_BUSY_STATUSES.has(normalizedClientUpdateStatus) ||
-    serviceLooksBusy(serviceSelfupdateStatus) ||
-    !!actionLoading["clientflow_update"];
-  const clientflowUpdateFinished = isClientflowTerminalStatus(normalizedClientUpdateStatus);
-  const clientflowUpdateStepMeta = getClientflowUpdateStepMeta(normalizedClientUpdateStatus, normalizedPendingAction);
-  const clientflowUpdateSeverity =
-    normalizedClientUpdateStatus === "error"
-      ? "error"
-      : clientflowUpdateFinished
-      ? "success"
-      : "info";
-  const showClientflowUpdatePanel =
-    clientflowUpdateInProgress ||
-    (clientflowUpdateFeedbackVisible && clientflowUpdateFinished);
-
-  const clientflowUpdateBusy = clientflowUpdateInProgress;
-
-  // ClientFlow-opdatering låser kiosk-/strømhandlinger, men må aldrig
-  // låse Terminal eller Fjernskrivebord. Statusboksen over knapperne
-  // må kun vises for aktiv/nylig update, ikke stale status efter reboot.
+  const clientflowDeploymentState = String(clientflowDeployment?.state || "").trim().toLowerCase();
+  const clientflowUpdateBusy = CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(clientflowDeploymentState);
   const clientflowBusyTooltip =
-    "ClientFlow opdateres — vent til opdateringen er færdig";
+    "ClientFlow opdateres via canonical deployment — vent til deploymenten er afsluttet";
 
   const normalizedUbuntuUpdateStatus = String(ubuntuUpdateStatus || "").trim().toLowerCase();
   const effectiveUbuntuStepNorm = String(ubuntuUpdateStep || liveStep || "").trim().toLowerCase();
@@ -837,31 +789,6 @@ export default function ClientDetailsActionsSection({
   );
 
   useEffect(() => {
-    if (clientflowUpdateInProgress) {
-      clientflowWasBusyRef.current = true;
-      setClientflowUpdateFeedbackVisible(true);
-      return;
-    }
-
-    if (clientflowWasBusyRef.current && clientflowUpdateFinished) {
-      clientflowWasBusyRef.current = false;
-      setClientflowUpdateFeedbackVisible(true);
-    }
-  }, [clientflowUpdateInProgress, clientflowUpdateFinished, normalizedClientUpdateStatus]);
-
-  useEffect(() => {
-    if (!clientflowUpdateFeedbackVisible || clientflowUpdateInProgress || !clientflowUpdateFinished) {
-      return undefined;
-    }
-
-    const timer = window.setTimeout(() => {
-      setClientflowUpdateFeedbackVisible(false);
-    }, UPDATE_PANEL_FINISHED_FEEDBACK_MS);
-
-    return () => window.clearTimeout(timer);
-  }, [clientflowUpdateFeedbackVisible, clientflowUpdateInProgress, clientflowUpdateFinished, normalizedClientUpdateStatus]);
-
-  useEffect(() => {
     if (ubuntuUpdateInProgress) {
       ubuntuWasBusyRef.current = true;
       setUbuntuUpdateFeedbackVisible(true);
@@ -886,10 +813,6 @@ export default function ClientDetailsActionsSection({
     return () => window.clearTimeout(timer);
   }, [ubuntuUpdateFeedbackVisible, ubuntuUpdateInProgress, ubuntuUpdateFinished, effectiveUbuntuStepNorm, normalizedUbuntuUpdateStatus]);
 
-  const clientflowUpdateRequestedAt = formatUpdateDateTime(clientUpdateRequestedAt);
-  const clientflowUpdateStartedAt = formatUpdateDateTime(clientUpdateStartedAt);
-  const clientflowUpdateFinishedAt = formatUpdateDateTime(clientUpdateFinishedAt);
-  const clientflowUpdateVersion = clientVersion;
   const ubuntuPackageCount = Number.parseInt(
     String(ubuntuUpdatePackageCount ?? ubuntuUpdatesAvailable ?? ""),
     10
@@ -1195,20 +1118,6 @@ export default function ClientDetailsActionsSection({
             </Box>
           </Box>
         )}
-
-        {showClientflowUpdatePanel && renderUpdatePanel({
-          type: "clientflow",
-          severity: clientflowUpdateSeverity,
-          title: "ClientFlow-opdatering",
-          meta: clientflowUpdateStepMeta,
-          message: clientUpdateError || clientUpdateMessage,
-          details: [
-            clientflowUpdateVersion ? { label: "Version", value: `v${String(clientflowUpdateVersion).replace(/^v/i, "")}` } : null,
-            clientflowUpdateRequestedAt ? { label: "Bestilt", value: clientflowUpdateRequestedAt } : null,
-            clientflowUpdateStartedAt ? { label: "Startet", value: clientflowUpdateStartedAt } : null,
-            clientflowUpdateFinishedAt ? { label: "Afsluttet", value: clientflowUpdateFinishedAt } : null,
-          ].filter(Boolean),
-        })}
 
         {showUbuntuUpdatePanel && renderUpdatePanel({
           type: "ubuntu",

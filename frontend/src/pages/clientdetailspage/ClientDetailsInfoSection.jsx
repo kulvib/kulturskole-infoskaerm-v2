@@ -31,13 +31,9 @@ import SaveIcon from "@mui/icons-material/Save";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import DeleteSweepIcon from "@mui/icons-material/DeleteSweep";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowUpdateStatus, getClientflowReleases, requestClientflowUpdate, requestOsUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
+import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowDeployments, getClientflowReleases, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
-import {
-  getUpdateStatusLabel,
-  normalizeClientUpdateStatus as normalizeUpdateStatus,
-} from "../../utils/runtimeStatus.mjs";
 import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
 
 const UKEDAGE = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag"];
@@ -48,21 +44,26 @@ const TEXT = "#f8fafc";
 const MUTED = "rgba(203, 213, 225, 0.68)";
 
 
-const CLIENTFLOW_UPDATE_STEPS = [
-  { key: "requested", label: "Afventer klient", description: "Backend har registreret opdateringen. Klienten henter den ved næste sync." },
-  { key: "starting", label: "Starter", description: "Klienten har modtaget opdateringen." },
-  { key: "preparing", label: "Klargør", description: "Klienten forbereder opdateringen." },
-  { key: "fetching_manifest", label: "Henter versionsinfo", description: "Klienten henter manifest og versionsinfo." },
-  { key: "downloading", label: "Downloader", description: "Klienten downloader den nye ClientFlow-pakke." },
-  { key: "verifying", label: "Verificerer", description: "Klienten verificerer download og indhold." },
-  { key: "installing", label: "Installerer", description: "Klienten installerer den nye version." },
-  { key: "stopping_services", label: "Genstarter services", description: "ClientFlow-services genstartes." },
+const CLIENTFLOW_DEPLOYMENT_STEPS = [
+  { key: "authorized", label: "Autoriseret", description: "Backend har bundet deploymenten til en konkret godkendt release.", progress: 10 },
+  { key: "downloading", label: "Downloader", description: "Den stabile updater downloader præcis den autoriserede bundle.", progress: 25 },
+  { key: "verified", label: "Verificeret", description: "Bundle SHA-256, størrelse og provenance er verificeret.", progress: 42 },
+  { key: "staged", label: "Staged", description: "Releasen er staged lokalt og backend har registreret det.", progress: 58 },
+  { key: "activating", label: "Aktiverer", description: "Backendens activation-gate er passeret, og den lokale release aktiveres.", progress: 75 },
+  { key: "health_check", label: "Health check", description: "Den nye release kontrolleres efter aktivering.", progress: 90 },
 ];
 
-const CLIENTFLOW_UPDATE_BUSY_STEPS = new Set(CLIENTFLOW_UPDATE_STEPS.map((step) => step.key));
+const CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES = new Set([
+  "authorized", "downloading", "verified", "staged", "activating", "health_check", "rolling_back",
+]);
+const CLIENTFLOW_DEPLOYMENT_TERMINAL_STATES = new Set([
+  "succeeded", "failed", "cancelled", "rolled_back", "recovery_failed",
+]);
+const CLIENTFLOW_DEPLOYMENT_CANCELLABLE_STATES = new Set([
+  "authorized", "downloading", "verified", "staged",
+]);
 const UPDATE_DETAIL_FINISHED_FEEDBACK_MS = 5_000;
 const CLIENTFLOW_FINISHED_FEEDBACK_MS = UPDATE_DETAIL_FINISHED_FEEDBACK_MS;
-const CLIENTFLOW_REQUEST_WAIT_TIMEOUT_MS = 20 * 60 * 1000;
 
 function compareClientflowVersions(left, right) {
   const parse = (value) => String(value || "").replace(/^v/i, "").split(".").map((part) => Number.parseInt(part, 10) || 0);
@@ -99,79 +100,33 @@ function serviceLooksReady(value) {
   return st === "klar" || st === "ready" || st === "inactive" || st === "stoppet" || st === "stop";
 }
 
-function isDuplicateClientflowUpdateSnapshot(snapshot = {}) {
-  const text = [
-    snapshot?.client_update_status,
-    snapshot?.client_update_message,
-    snapshot?.client_update_error,
-  ].filter(Boolean).join(" ").toLowerCase();
-  return (
-    text.includes("forældet/dublet") ||
-    text.includes("dublet") ||
-    text.includes("allerede behandlet") ||
-    text.includes("samme clientflow_update-request")
-  );
+function normalizeClientflowDeploymentState(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
-function getTerminalClientflowStatus(status, snapshot = {}) {
-  const st = normalizeUpdateStatus(status);
-  if (st === "error" && isDuplicateClientflowUpdateSnapshot(snapshot)) return "ready";
-  if (!CLIENTFLOW_UPDATE_BUSY_STEPS.has(st)) return st;
-
-  const serviceReady = serviceLooksReady(snapshot?.service_selfupdate_status);
-  const pendingAction = String(snapshot?.pending_chrome_action || "none").trim().toLowerCase();
-  const state = String(snapshot?.state || "").trim().toLowerCase();
-  const noPendingAction = !pendingAction || pendingAction === "none";
-  const normalState = !state || state === "normal" || state === "approved";
-  const hasFinished = Boolean(snapshot?.client_update_finished_at);
-  const message = String(snapshot?.client_update_message || "").toLowerCase();
-
-  if (hasFinished || (serviceReady && noPendingAction && normalState)) {
-    if (snapshot?.client_update_error) return "error";
-    if (
-      message.includes("up_to_date") ||
-      message.includes("allerede") ||
-      message.includes("tilbyder") ||
-      message.includes("kører allerede")
-    ) {
-      return "up_to_date";
-    }
-    return "success";
+function getClientflowDeploymentStepMeta(state) {
+  const normalized = normalizeClientflowDeploymentState(state);
+  const index = CLIENTFLOW_DEPLOYMENT_STEPS.findIndex((step) => step.key === normalized);
+  if (index >= 0) return { ...CLIENTFLOW_DEPLOYMENT_STEPS[index], index };
+  if (normalized === "succeeded") {
+    return { label: "Gennemført", description: "ClientFlow-deploymenten er aktiveret og health-checket.", index: CLIENTFLOW_DEPLOYMENT_STEPS.length, progress: 100 };
   }
-
-  return st;
-}
-
-function getClientflowUpdateStepMeta(status) {
-  const st = normalizeUpdateStatus(status);
-
-  if (st === "ready") {
-    return { label: getUpdateStatusLabel("ready"), description: "Klienten er klar til opdatering.", index: -1, progress: 0 };
+  if (normalized === "rolling_back") {
+    return { label: "Ruller tilbage", description: "Aktiveringen fejlede, og den tidligere release gendannes.", index: -1, progress: 100 };
   }
-
-  if (st === "success") {
-    return { label: getUpdateStatusLabel("success"), description: "ClientFlow-opdateringen er gennemført.", index: CLIENTFLOW_UPDATE_STEPS.length, progress: 100 };
+  if (normalized === "rolled_back") {
+    return { label: "Rullet tilbage", description: "Den tidligere release er gendannet efter en fejlet aktivering.", index: -1, progress: 100 };
   }
-
-  if (st === "up_to_date") {
-    return { label: getUpdateStatusLabel("up_to_date"), description: "Klienten har allerede nyeste ClientFlow-version.", index: CLIENTFLOW_UPDATE_STEPS.length, progress: 100 };
+  if (normalized === "cancelled") {
+    return { label: "Annulleret", description: "Deploymenten blev annulleret før aktivering.", index: -1, progress: 0 };
   }
-
-  if (st === "error") {
-    return { label: "Fejl", description: "ClientFlow-opdateringen fejlede.", index: -1, progress: 100 };
+  if (normalized === "recovery_failed") {
+    return { label: "Recovery fejlede", description: "Aktivering og recovery kunne ikke afsluttes sikkert.", index: -1, progress: 100 };
   }
-
-  const index = CLIENTFLOW_UPDATE_STEPS.findIndex((step) => step.key === st);
-  if (index >= 0) {
-    const step = CLIENTFLOW_UPDATE_STEPS[index];
-    return {
-      ...step,
-      index,
-      progress: Math.round(((index + 1) / CLIENTFLOW_UPDATE_STEPS.length) * 100),
-    };
+  if (normalized === "failed") {
+    return { label: "Fejl", description: "ClientFlow-deploymenten fejlede.", index: -1, progress: 100 };
   }
-
-  return { label: st || "Ukendt", description: "Ukendt ClientFlow-status.", index: -1, progress: 0 };
+  return { label: "Klar", description: "Ingen aktiv ClientFlow-deployment.", index: -1, progress: 0 };
 }
 
 function formatUpdateDateTime(value) {
@@ -228,44 +183,31 @@ function UpdateStepTimeline({ steps, currentIndex = -1, terminal = false, error 
   );
 }
 
-function ClientFlowUpdateControl({ clientId, clientOnline, clientVersion, clientState, pendingOsUpdate, showSnackbar, onFinished }) {
-  const [status, setStatus] = React.useState(null);
+function ClientFlowUpdateControl({ clientId, clientOnline, clientVersion, pendingOsUpdate, showSnackbar, onFinished }) {
+  const [deployment, setDeployment] = React.useState(null);
   const [polling, setPolling] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
+  const [cancelling, setCancelling] = React.useState(false);
   const [feedbackVisible, setFeedbackVisible] = React.useState(false);
   const [releaseCatalog, setReleaseCatalog] = React.useState(null);
   const [selectedVersion, setSelectedVersion] = React.useState("latest");
   const [downgradeDialogOpen, setDowngradeDialogOpen] = React.useState(false);
   const [downgradeReason, setDowngradeReason] = React.useState("");
-  const requestStartedAtRef = React.useRef(null);
 
-  const updateStatus = getTerminalClientflowStatus(status?.client_update_status, status);
-  const meta = getClientflowUpdateStepMeta(updateStatus);
-  const inProgress = CLIENTFLOW_UPDATE_BUSY_STEPS.has(updateStatus);
-  const otherUpdateInProgress =
-    !inProgress &&
-    (
-      pendingOsUpdate === true ||
-      String(clientState || "").trim().toLowerCase() === "updating"
-    );
-  const finished = updateStatus === "success" || updateStatus === "up_to_date" || updateStatus === "error";
-  const installedVersion = status?.client_version || clientVersion;
-  const latestVersion =
-    status?.client_update_latest_version ||
-    status?.latest_version ||
-    status?.available_version ||
-    status?.target_version ||
-    status?.client_update_target_version ||
-    null;
+  const state = normalizeClientflowDeploymentState(deployment?.state);
+  const meta = getClientflowDeploymentStepMeta(state);
+  const inProgress = CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(state);
+  const finished = CLIENTFLOW_DEPLOYMENT_TERMINAL_STATES.has(state);
+  const otherUpdateInProgress = !inProgress && pendingOsUpdate === true;
+  const installedVersion = clientVersion;
+  const latestVersion = releaseCatalog?.latest_stable || null;
   const selectableReleases = React.useMemo(
     () => (releaseCatalog?.releases || []).filter((release) =>
       ["stable", "supported"].includes(String(release?.status || "")) && release?.update_allowed === true
     ),
     [releaseCatalog],
   );
-  const resolvedSelectedVersion = selectedVersion === "latest"
-    ? releaseCatalog?.latest_stable || latestVersion
-    : selectedVersion;
+  const resolvedSelectedVersion = selectedVersion === "latest" ? latestVersion : selectedVersion;
   const selectedRelease = selectableReleases.find((release) => release.version === resolvedSelectedVersion) || null;
   const isDowngrade = Boolean(
     installedVersion && resolvedSelectedVersion && compareClientflowVersions(resolvedSelectedVersion, installedVersion) < 0
@@ -273,41 +215,25 @@ function ClientFlowUpdateControl({ clientId, clientOnline, clientVersion, client
   const sameVersionSelected = Boolean(
     installedVersion && resolvedSelectedVersion && compareClientflowVersions(resolvedSelectedVersion, installedVersion) === 0
   );
-  const requestedAt = formatUpdateDateTime(status?.client_update_requested_at);
-  const startedAt = formatUpdateDateTime(status?.client_update_started_at);
-  const finishedAt = formatUpdateDateTime(status?.client_update_finished_at);
-  const duplicateIgnored = isDuplicateClientflowUpdateSnapshot(status || {});
-  const message = duplicateIgnored
-    ? "Forældet/dublet ClientFlow-opdatering var allerede behandlet og er ryddet."
-    : status?.client_update_message;
-  const error = duplicateIgnored ? null : status?.client_update_error;
-  const showPanel = inProgress || starting || polling || feedbackVisible;
-
-  const statusText = starting
-    ? "Sender forespørgsel"
-    : updateStatus === "up_to_date"
-    ? "Opdateret til seneste version"
-    : updateStatus === "success"
-    ? "Seneste opdatering gennemført"
-    : updateStatus === "error"
-    ? "Seneste opdatering fejlede"
-    : inProgress
-    ? meta.label
-    : otherUpdateInProgress
-    ? "Afventer anden opdatering"
-    : "Klar til tjek";
+  const requestedAt = formatUpdateDateTime(deployment?.requested_at);
+  const updatedAt = formatUpdateDateTime(deployment?.state_updated_at);
+  const finishedAt = formatUpdateDateTime(deployment?.completed_at);
+  const error = deployment?.failure_message || deployment?.failure_code || null;
+  const showPanel = Boolean(deployment) && (inProgress || feedbackVisible);
+  const canCancel = CLIENTFLOW_DEPLOYMENT_CANCELLABLE_STATES.has(state);
 
   const refreshStatus = React.useCallback(async () => {
     if (!clientId) return null;
     try {
-      const data = await getClientflowUpdateStatus(clientId);
-      setStatus(data);
-      const st = getTerminalClientflowStatus(data?.client_update_status, data);
-      if (CLIENTFLOW_UPDATE_BUSY_STEPS.has(st)) {
+      const rows = await getClientflowDeployments(clientId);
+      const latest = Array.isArray(rows) && rows.length ? rows[0] : null;
+      setDeployment(latest);
+      const latestState = normalizeClientflowDeploymentState(latest?.state);
+      if (CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(latestState)) {
         setFeedbackVisible(true);
         setPolling(true);
       }
-      return data;
+      return latest;
     } catch {
       return null;
     }
@@ -321,8 +247,8 @@ function ClientFlowUpdateControl({ clientId, clientOnline, clientVersion, client
         setReleaseCatalog(catalog);
         setSelectedVersion("latest");
       })
-      .catch((error) => {
-        if (active) showSnackbar?.({ message: error?.message || "Kunne ikke hente ClientFlow-versioner", severity: "error" });
+      .catch((errorValue) => {
+        if (active) showSnackbar?.({ message: errorValue?.message || "Kunne ikke hente ClientFlow-versioner", severity: "error" });
       });
     return () => { active = false; };
   }, [showSnackbar]);
@@ -333,76 +259,58 @@ function ClientFlowUpdateControl({ clientId, clientOnline, clientVersion, client
 
   React.useEffect(() => {
     if (!polling || !clientId) return undefined;
-
     const timer = window.setInterval(async () => {
-      const data = await refreshStatus();
-      const st = getTerminalClientflowStatus(data?.client_update_status, data);
-      if (!CLIENTFLOW_UPDATE_BUSY_STEPS.has(st)) {
+      const latest = await refreshStatus();
+      const latestState = normalizeClientflowDeploymentState(latest?.state);
+      if (!CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(latestState)) {
         setFeedbackVisible(true);
         setPolling(false);
         onFinished?.();
-        return;
-      }
-
-      const startedAt = requestStartedAtRef.current
-        ? new Date(requestStartedAtRef.current).getTime()
-        : Date.now();
-      if (Date.now() - startedAt > CLIENTFLOW_REQUEST_WAIT_TIMEOUT_MS) {
-        setStatus((prev) => ({
-          ...(prev || data || {}),
-          client_update_status: "error",
-          client_update_error: "ClientFlow-opdateringen svarede ikke inden for timeout. Brug ClientFlow diagnose/reset i remote terminal.",
-        }));
-        setFeedbackVisible(true);
-        setPolling(false);
       }
     }, 2500);
-
     return () => window.clearInterval(timer);
   }, [polling, clientId, refreshStatus, onFinished]);
 
   React.useEffect(() => {
-    if (!feedbackVisible || inProgress || starting || polling) return undefined;
+    if (!feedbackVisible || inProgress || starting || cancelling || !finished) return undefined;
     const timer = window.setTimeout(() => setFeedbackVisible(false), CLIENTFLOW_FINISHED_FEEDBACK_MS);
     return () => window.clearTimeout(timer);
-  }, [feedbackVisible, inProgress, starting, polling, updateStatus]);
+  }, [feedbackVisible, inProgress, starting, cancelling, finished, state]);
 
   const executeClientFlowUpdate = async ({ confirmDowngrade = false, reason = null } = {}) => {
     if (!clientId || clientOnline === false || starting || inProgress || otherUpdateInProgress || sameVersionSelected) return;
-
     setFeedbackVisible(true);
     setStarting(true);
-    requestStartedAtRef.current = new Date().toISOString();
     try {
-      const res = await requestClientflowUpdate(clientId, {
-        targetVersion: selectedVersion,
+      const created = await requestClientflowDeployment(clientId, {
+        targetVersion: resolvedSelectedVersion,
         confirmDowngrade,
         reason,
       });
-      const nextStatus = normalizeUpdateStatus(res?.client_update_status || res?.status || "requested");
-      const nextMessage = res?.client_update_message || res?.message || "ClientFlow-kontrol er sendt til klienten";
-      setStatus({
-        ...(res || {}),
-        client_update_status: nextStatus,
-        client_update_message: nextMessage,
-        client_update_requested_at: res?.client_update_requested_at || new Date().toISOString(),
-        client_update_target_version: res?.client_update_target_version || resolvedSelectedVersion,
-        client_version: res?.client_version || installedVersion,
-      });
-      const shouldPoll = CLIENTFLOW_UPDATE_BUSY_STEPS.has(nextStatus);
-      setPolling(shouldPoll);
-      if (!shouldPoll) onFinished?.();
-      showSnackbar?.({ message: nextMessage, severity: nextStatus === "error" ? "error" : "success" });
+      setDeployment(created);
+      setPolling(CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(normalizeClientflowDeploymentState(created?.state)));
+      showSnackbar?.({ message: `ClientFlow-deployment til v${created?.target_version || resolvedSelectedVersion} er autoriseret`, severity: "success" });
     } catch (err) {
-      setStatus((prev) => ({
-        ...(prev || {}),
-        client_update_status: "error",
-        client_update_error: err?.message || "Kunne ikke starte ClientFlow-opdatering",
-      }));
-      setFeedbackVisible(true);
-      showSnackbar?.({ message: `Fejl: ${err?.message || "Kunne ikke starte ClientFlow-opdatering"}`, severity: "error" });
+      showSnackbar?.({ message: `Fejl: ${err?.message || "Kunne ikke oprette ClientFlow-deployment"}`, severity: "error" });
     } finally {
       setStarting(false);
+    }
+  };
+
+  const cancelDeployment = async () => {
+    if (!deployment?.id || !canCancel || cancelling) return;
+    setCancelling(true);
+    try {
+      const cancelled = await cancelClientflowDeployment(deployment.id);
+      setDeployment(cancelled);
+      setPolling(false);
+      setFeedbackVisible(true);
+      showSnackbar?.({ message: "ClientFlow-deployment annulleret", severity: "info" });
+      onFinished?.();
+    } catch (err) {
+      showSnackbar?.({ message: `Fejl: ${err?.message || "Kunne ikke annullere ClientFlow-deployment"}`, severity: "error" });
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -424,192 +332,73 @@ function ClientFlowUpdateControl({ clientId, clientOnline, clientVersion, client
     setDowngradeReason("");
   };
 
-
   const disabled = !clientId || clientOnline === false || starting || inProgress || otherUpdateInProgress || !releaseCatalog || !selectedRelease || sameVersionSelected;
-  const statusColor = updateStatus === "error"
-    ? "#f87171"
-    : updateStatus === "up_to_date" || updateStatus === "success"
-    ? "#22c55e"
-    : inProgress
-    ? "#38bdf8"
-    : otherUpdateInProgress
-    ? "#fbbf24"
-    : MUTED;
+  const stateIsError = state === "failed" || state === "recovery_failed";
+  const stateIsWarning = state === "cancelled" || state === "rolled_back" || state === "rolling_back";
+  const stateIsSuccess = state === "succeeded";
+  const statusColor = stateIsError ? "#f87171" : stateIsSuccess ? "#22c55e" : stateIsWarning ? "#fbbf24" : inProgress ? "#38bdf8" : MUTED;
+  const statusText = starting ? "Autoriserer deployment" : deployment ? meta.label : otherUpdateInProgress ? "Afventer anden opdatering" : "Klar";
 
   return (
     <Box sx={{ p: 1.15, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        spacing={1}
-        sx={{
-          alignItems: { xs: "stretch", sm: "center" },
-          justifyContent: "space-between"
-        }}>
-        <Box sx={{
-          minWidth: 0
-        }}>
-          <Typography variant="subtitle2" sx={{ color: TEXT, fontWeight: 950 }}>
-            ClientFlow-opdatering
-          </Typography>
-          <Stack
-            direction="row"
-            spacing={1}
-            useFlexGap
-            sx={{
-              flexWrap: "wrap",
-              mt: 0.45
-            }}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle2" sx={{ color: TEXT, fontWeight: 950 }}>ClientFlow-opdatering</Typography>
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap", mt: 0.45 }}>
             <Typography variant="caption" sx={{ color: MUTED }}>
               Installeret: {installedVersion ? `v${String(installedVersion).replace(/^v/i, "")}` : "ikke rapporteret"}
             </Typography>
-            {(releaseCatalog?.latest_stable || latestVersion) && (
-              <Typography variant="caption" sx={{ color: MUTED }}>
-                Seneste: v{String(releaseCatalog?.latest_stable || latestVersion).replace(/^v/i, "")}
-              </Typography>
-            )}
-            {status?.client_update_target_version && status?.client_update_status !== "ready" && (
-              <Typography variant="caption" sx={{ color: MUTED }}>
-                Bestilt: v{String(status.client_update_target_version).replace(/^v/i, "")}
-              </Typography>
-            )}
-            <Typography variant="caption" sx={{ color: statusColor, fontWeight: 850 }}>
-              {statusText}
-            </Typography>
+            {latestVersion && <Typography variant="caption" sx={{ color: MUTED }}>Seneste: v{String(latestVersion).replace(/^v/i, "")}</Typography>}
+            {deployment?.target_version && <Typography variant="caption" sx={{ color: MUTED }}>Deployment: v{String(deployment.target_version).replace(/^v/i, "")}</Typography>}
+            <Typography variant="caption" sx={{ color: statusColor, fontWeight: 850 }}>{statusText}</Typography>
           </Stack>
         </Box>
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={0.8} sx={{
-          alignItems: { xs: "stretch", sm: "center" }
-        }}>
-          <TextField
-            select
-            size="small"
-            label="Målversion"
-            value={selectedVersion}
-            onChange={(event) => setSelectedVersion(event.target.value)}
-            disabled={starting || inProgress || otherUpdateInProgress || !releaseCatalog}
-            sx={{ minWidth: { xs: "100%", sm: 220 } }}
-          >
-            <MenuItem value="latest">
-              Seneste stabile{releaseCatalog?.latest_stable ? ` (v${releaseCatalog.latest_stable})` : ""}
-            </MenuItem>
-            {selectableReleases
-              .filter((release) => release.version !== releaseCatalog?.latest_stable)
-              .map((release) => (
-                <MenuItem key={release.version} value={release.version}>
-                  v{release.version} · {release.status === "supported" ? "understøttet" : release.status}
-                </MenuItem>
-              ))}
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={0.8} sx={{ alignItems: { xs: "stretch", sm: "center" } }}>
+          <TextField select size="small" label="Målversion" value={selectedVersion} onChange={(event) => setSelectedVersion(event.target.value)} disabled={starting || inProgress || otherUpdateInProgress || !releaseCatalog} sx={{ minWidth: { xs: "100%", sm: 220 } }}>
+            <MenuItem value="latest">Seneste stabile{latestVersion ? ` (v${latestVersion})` : ""}</MenuItem>
+            {selectableReleases.filter((release) => release.version !== latestVersion).map((release) => (
+              <MenuItem key={release.version} value={release.version}>v{release.version} · {release.status === "supported" ? "understøttet" : release.status}</MenuItem>
+            ))}
           </TextField>
-          <Button
-            size="small"
-            variant="outlined"
-            color={isDowngrade ? "warning" : "info"}
-            startIcon={starting || inProgress ? <CircularProgress size={16} color="inherit" /> : <SystemUpdateAltIcon />}
-            disabled={disabled}
-            type="button"
-            onClick={startClientFlowUpdate}
-            sx={{ borderRadius: 2, fontWeight: 850, whiteSpace: "nowrap" }}
-          >
-            {starting || inProgress
-              ? "Opdaterer ClientFlow…"
-              : sameVersionSelected
-              ? "Versionen er installeret"
-              : isDowngrade
-              ? `Nedgrader til v${resolvedSelectedVersion}`
-              : "Tjek/opdater ClientFlow"}
+          {canCancel && (
+            <Button size="small" variant="outlined" color="warning" disabled={cancelling} onClick={cancelDeployment} sx={{ borderRadius: 2, fontWeight: 850, whiteSpace: "nowrap" }}>
+              {cancelling ? "Annullerer…" : "Annuller deployment"}
+            </Button>
+          )}
+          <Button size="small" variant="outlined" color={isDowngrade ? "warning" : "info"} startIcon={starting || inProgress ? <CircularProgress size={16} color="inherit" /> : <SystemUpdateAltIcon />} disabled={disabled} type="button" onClick={startClientFlowUpdate} sx={{ borderRadius: 2, fontWeight: 850, whiteSpace: "nowrap" }}>
+            {starting || inProgress ? "Opdaterer ClientFlow…" : sameVersionSelected ? "Versionen er installeret" : isDowngrade ? `Nedgrader til v${resolvedSelectedVersion}` : "Tjek/opdater ClientFlow"}
           </Button>
         </Stack>
       </Stack>
       {showPanel && (
-        <Box
-          sx={{
-            mt: 1,
-            p: 1,
-            borderRadius: 2,
-            background: updateStatus === "error" ? "rgba(248,113,113,0.10)" : "rgba(56,189,248,0.10)",
-            border: updateStatus === "error" ? "1px solid rgba(248,113,113,0.28)" : "1px solid rgba(56,189,248,0.24)",
-          }}
-        >
-          <Stack
-            direction="row"
-            spacing={1}
-            useFlexGap
-            sx={{
-              alignItems: "center",
-              justifyContent: "space-between",
-              flexWrap: "wrap"
-            }}>
-            <Stack spacing={0.15} sx={{
-              minWidth: 0
-            }}>
-              <Typography variant="caption" sx={{ color: MUTED, fontWeight: 850, textTransform: "uppercase", letterSpacing: 0.6 }}>
-                Detaljeret procesforløb
-              </Typography>
-              <Stack
-                direction="row"
-                spacing={1}
-                sx={{
-                  alignItems: "center",
-                  minWidth: 0
-                }}>
+        <Box sx={{ mt: 1, p: 1, borderRadius: 2, background: stateIsError ? "rgba(248,113,113,0.10)" : stateIsWarning ? "rgba(251,191,36,0.10)" : "rgba(56,189,248,0.10)", border: stateIsError ? "1px solid rgba(248,113,113,0.28)" : stateIsWarning ? "1px solid rgba(251,191,36,0.28)" : "1px solid rgba(56,189,248,0.24)" }}>
+          <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+            <Stack spacing={0.15} sx={{ minWidth: 0 }}>
+              <Typography variant="caption" sx={{ color: MUTED, fontWeight: 850, textTransform: "uppercase", letterSpacing: 0.6 }}>Canonical deployment</Typography>
+              <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
                 {(starting || inProgress) && <CircularProgress size={15} sx={{ color: "#7dd3fc" }} />}
-                <Typography variant="body2" sx={{ color: TEXT, fontWeight: 900 }}>
-                  {meta.label}{installedVersion ? ` · v${String(installedVersion).replace(/^v/i, "")}` : ""}
-                </Typography>
+                <Typography variant="body2" sx={{ color: TEXT, fontWeight: 900 }}>{meta.label}{deployment?.target_version ? ` · v${deployment.target_version}` : ""}</Typography>
               </Stack>
             </Stack>
-            {inProgress && (
-              <Typography variant="caption" sx={{ color: MUTED }}>
-                Trin {Math.max(meta.index + 1, 1)} / {CLIENTFLOW_UPDATE_STEPS.length}
-              </Typography>
-            )}
+            {meta.index >= 0 && inProgress && <Typography variant="caption" sx={{ color: MUTED }}>Trin {meta.index + 1} / {CLIENTFLOW_DEPLOYMENT_STEPS.length}</Typography>}
           </Stack>
-
-          <Typography variant="body2" sx={{ mt: 0.5, color: updateStatus === "error" ? "#fca5a5" : MUTED }}>
-            {message || (starting ? "Sender ClientFlow-kontrol til backend og afventer status…" : meta.description)}
+          <Typography variant="body2" sx={{ mt: 0.5, color: stateIsError ? "#fca5a5" : MUTED }}>
+            {error || meta.description}
           </Typography>
-
-          {(inProgress || updateStatus === "success" || updateStatus === "up_to_date") && (
+          {(inProgress || stateIsSuccess) && (
             <Box sx={{ mt: 1, height: 6, borderRadius: 999, background: "rgba(15,23,42,0.75)", overflow: "hidden" }}>
-              <Box
-                sx={{
-                  height: "100%",
-                  width: `${Math.max(6, Math.min(100, meta.progress || 6))}%`,
-                  borderRadius: 999,
-                  background: updateStatus === "success" || updateStatus === "up_to_date" ? "#22c55e" : "#38bdf8",
-                  transition: "width 250ms ease",
-                }}
-              />
+              <Box sx={{ height: "100%", width: `${Math.max(6, Math.min(100, meta.progress || 6))}%`, borderRadius: 999, background: stateIsSuccess ? "#22c55e" : "#38bdf8", transition: "width 250ms ease" }} />
             </Box>
           )}
-
-          <UpdateStepTimeline
-            steps={CLIENTFLOW_UPDATE_STEPS}
-            currentIndex={meta.index}
-            terminal={updateStatus === "success" || updateStatus === "up_to_date"}
-            error={updateStatus === "error"}
-          />
-
-          {(requestedAt || startedAt || finishedAt) && (
-            <Stack
-              direction="row"
-              spacing={1.25}
-              useFlexGap
-              sx={{
-                flexWrap: "wrap",
-                mt: 0.75
-              }}>
+          <UpdateStepTimeline steps={CLIENTFLOW_DEPLOYMENT_STEPS} currentIndex={meta.index} terminal={stateIsSuccess} error={stateIsError} />
+          {(requestedAt || updatedAt || finishedAt) && (
+            <Stack direction="row" spacing={1.25} useFlexGap sx={{ flexWrap: "wrap", mt: 0.75 }}>
               {requestedAt && <Typography variant="caption" sx={{ color: MUTED }}>Bestilt: {requestedAt}</Typography>}
-              {startedAt && <Typography variant="caption" sx={{ color: MUTED }}>Startet: {startedAt}</Typography>}
-              {finishedAt && <Typography variant="caption" sx={{ color: MUTED }}>Færdig: {finishedAt}</Typography>}
+              {updatedAt && <Typography variant="caption" sx={{ color: MUTED }}>State ændret: {updatedAt}</Typography>}
+              {finishedAt && <Typography variant="caption" sx={{ color: MUTED }}>Afsluttet: {finishedAt}</Typography>}
             </Stack>
           )}
-
-          {(error || updateStatus === "error") && (
-            <Typography variant="body2" sx={{ mt: 0.75, color: "#f87171", fontWeight: 700 }}>
-              Fejl: {error || message || "Klienten rapporterede en fejl under opdateringen."}
-            </Typography>
-          )}
+          {error && <Typography variant="body2" sx={{ mt: 0.75, color: "#f87171", fontWeight: 700 }}>Fejl: {error}</Typography>}
         </Box>
       )}
       <Dialog open={downgradeDialogOpen} onClose={() => setDowngradeDialogOpen(false)} maxWidth="sm" fullWidth>
@@ -618,25 +407,11 @@ function ClientFlowUpdateControl({ clientId, clientOnline, clientVersion, client
           <Alert severity="warning" sx={{ mb: 2 }}>
             Du er ved at ændre ClientFlow fra {installedVersion ? `v${installedVersion}` : "en ukendt version"} til v{resolvedSelectedVersion}. Nedgraderingen logges som en kritisk administratorhandling.
           </Alert>
-          <TextField
-            autoFocus
-            fullWidth
-            multiline
-            minRows={3}
-            label="Begrundelse"
-            value={downgradeReason}
-            onChange={(event) => setDowngradeReason(event.target.value)}
-            helperText={`${downgradeReason.trim().length}/500 · obligatorisk`}
-            slotProps={{
-              htmlInput: { maxLength: 500 }
-            }}
-          />
+          <TextField autoFocus fullWidth multiline minRows={3} label="Begrundelse" value={downgradeReason} onChange={(event) => setDowngradeReason(event.target.value)} helperText={`${downgradeReason.trim().length}/500 · obligatorisk`} slotProps={{ htmlInput: { maxLength: 500 } }} />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDowngradeDialogOpen(false)}>Annuller</Button>
-          <Button color="warning" variant="contained" disabled={!downgradeReason.trim()} onClick={confirmClientFlowDowngrade}>
-            Bekræft nedgradering
-          </Button>
+          <Button color="warning" variant="contained" disabled={!downgradeReason.trim()} onClick={confirmClientFlowDowngrade}>Bekræft nedgradering</Button>
         </DialogActions>
       </Dialog>
     </Box>
@@ -1977,7 +1752,6 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
               clientId={client?.id}
               clientOnline={clientOnline}
               clientVersion={client?.client_version}
-              clientState={client?.state}
               pendingOsUpdate={client?.pending_os_update}
               showSnackbar={showSnackbar}
               onFinished={onDiagnosticsRefresh}
@@ -2974,7 +2748,6 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const supportServiceRows = [
     { label: "Livestream service", value: client?.service_livestream_status, livestreamService: true, unit: "clientflow-livestream-producer.service", helper: livestreamExpectedRunning ? "Skal køre når livestream er åbnet/ønsket" : "Må gerne være stoppet når livestream ikke bruges" },
     { label: "Livestream process", value: client?.livestream_process_status, livestreamService: true, unit: "gst-launch / livestream_wayland.py / uploader", helper: livestreamExpectedRunning ? "Skal være Aktiv når livestream_status=running" : "Må gerne være Stoppet når livestream er idle" },
-    { label: "ClientFlow update", value: client?.service_selfupdate_status, service: true, oneshot: true, unit: "clientflow_self_update.service", helper: "Klar er normal idle-status" },
     { label: "Ubuntu update", value: client?.service_ubuntu_update_status, service: true, oneshot: true, unit: "clientflow_ubuntu_update.service", helper: "Klar er normal idle-status" },
     { label: "Lifecycle reboot", value: client?.service_local_reboot_reporter_status, service: true, oneshot: true, unit: "clientflow_local_reboot_reporter.service", helper: "Klar er normal idle-status" },
     { label: "Lifecycle shutdown", value: client?.service_local_shutdown_reporter_status, service: true, oneshot: true, unit: "clientflow_local_shutdown_reporter.service", helper: "Klar er normal idle-status" },
@@ -3005,7 +2778,6 @@ function DiagnosticsPanel({ client, onRefresh }) {
     hasUbuntuUpdates ? { label: "Ubuntu-pakker klar", level: "warn", value: formatUpdateCount(client?.ubuntu_updates_available) } : null,
     hasDiagnosticValue(client?.livestream_last_error) ? { label: "Livestream-fejl", level: "error", value: client?.livestream_last_error } : null,
     hasDiagnosticValue(client?.display_resolution_error) ? { label: "Display-fejl", level: "error", value: client?.display_resolution_error } : null,
-    hasDiagnosticValue(client?.client_update_error) ? { label: "ClientFlow update-fejl", level: "error", value: client?.client_update_error } : null,
     timeSyncLevel === "error" ? { label: "Systemtid er kritisk", level: "error", value: timeSyncMessage } : null,
     timeSyncLevel === "warn" ? { label: "Systemtid kræver tjek", level: "warn", value: timeSyncMessage } : null,
   ].filter(Boolean);
@@ -3090,7 +2862,6 @@ function DiagnosticsPanel({ client, onRefresh }) {
         { label: "Browser Guard", value: client?.service_browser_guard_status, service: true, unit: "clientflow_browser_guard.service" },
         { label: "Fjernskrivebord", value: client?.service_remote_desktop_status, service: true, unit: "client_remote_desktop_agent.service" },
         { label: "Livestream", value: client?.livestream_status || "idle", status: true, helper: `Service: ${statusText(client?.service_livestream_status, "ukendt")}` },
-        { label: "ClientFlow update", value: client?.client_update_status || "ready", status: true, helper: `Service: ${statusText(client?.service_selfupdate_status, "ukendt")}` },
       ],
     },
   ];
@@ -3224,19 +2995,12 @@ function DiagnosticsPanel({ client, onRefresh }) {
     },
     {
       title: "Opdateringer",
-      description: "Ubuntu-pakker og ClientFlow self-update status.",
+      description: "Ubuntu-pakker. ClientFlow-deployments vises i Software-panelet fra den canonical deployment-state-machine.",
       columns: 2,
       rows: [
         { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : "ok" },
         { label: "Ubuntu update service", value: client?.service_ubuntu_update_status, service: true, oneshot: true, unit: "clientflow_ubuntu_update.service" },
         { label: "Pending OS update", value: formatDiagnosticBoolean(client?.pending_os_update), boolean: client?.pending_os_update, trueLevel: "info" },
-        { label: "ClientFlow update service", value: client?.service_selfupdate_status, service: true, oneshot: true, unit: "clientflow_self_update.service" },
-        { label: "ClientFlow update", value: client?.client_update_status || "ready", status: true },
-        { label: "Update besked", value: client?.client_update_message, fallback: "Ingen", wide: true },
-        { label: "Update fejl", value: client?.client_update_error, fallback: "Ingen", error: true, wide: true },
-        { label: "Update bestilt", value: formatDiagnosticDate(client?.client_update_requested_at) },
-        { label: "Update startet", value: formatDiagnosticDate(client?.client_update_started_at) },
-        { label: "Update færdig", value: formatDiagnosticDate(client?.client_update_finished_at) },
       ],
     },
   ];

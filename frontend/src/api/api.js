@@ -507,14 +507,7 @@ export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
         pending_shutdown: full.pending_shutdown ?? false,
         pending_os_update: full.pending_os_update ?? false,
         ubuntu_updates_available: full.ubuntu_updates_available ?? 0,
-        service_selfupdate_status: full.service_selfupdate_status ?? null,
         service_ubuntu_update_status: full.service_ubuntu_update_status ?? null,
-        client_update_status: full.client_update_status ?? null,
-        client_update_message: full.client_update_message ?? null,
-        client_update_requested_at: full.client_update_requested_at ?? null,
-        client_update_started_at: full.client_update_started_at ?? null,
-        client_update_finished_at: full.client_update_finished_at ?? null,
-        client_update_error: full.client_update_error ?? null,
         last_seen: full.last_seen ?? null,
         uptime: full.uptime ?? null,
         isOnline: full.isOnline ?? full.is_online ?? null,
@@ -548,9 +541,7 @@ export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
       json?.uptime == null ||
       (json?.isOnline == null && json?.is_online == null) ||
       json?.pending_os_update == null ||
-      json?.service_selfupdate_status == null ||
-      json?.service_ubuntu_update_status == null ||
-      json?.client_update_status == null)
+      json?.service_ubuntu_update_status == null)
   ) {
     try {
       const full = await getClient(id);
@@ -562,14 +553,7 @@ export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
         is_online: json.is_online ?? json.isOnline ?? full.is_online ?? full.isOnline ?? null,
         pending_os_update: json.pending_os_update ?? full.pending_os_update ?? false,
         ubuntu_updates_available: json.ubuntu_updates_available ?? full.ubuntu_updates_available ?? 0,
-        service_selfupdate_status: json.service_selfupdate_status ?? full.service_selfupdate_status ?? null,
         service_ubuntu_update_status: json.service_ubuntu_update_status ?? full.service_ubuntu_update_status ?? null,
-        client_update_status: json.client_update_status ?? full.client_update_status ?? null,
-        client_update_message: json.client_update_message ?? full.client_update_message ?? null,
-        client_update_requested_at: json.client_update_requested_at ?? full.client_update_requested_at ?? null,
-        client_update_started_at: json.client_update_started_at ?? full.client_update_started_at ?? null,
-        client_update_finished_at: json.client_update_finished_at ?? full.client_update_finished_at ?? null,
-        client_update_error: json.client_update_error ?? full.client_update_error ?? null,
         livestream_desired_state: json.livestream_desired_state !== undefined
           ? (json.livestream_desired_state ?? "stopped")
           : (full.livestream_desired_state ?? "stopped"),
@@ -1195,96 +1179,56 @@ export async function getClientflowReleases() {
   return readJsonResponse(res);
 }
 
-export async function requestClientflowUpdate(clientId, options = {}) {
-  const res = await apiFetch(`${apiUrl}/api/clients/${clientId}/clientflow-update`, {
+export async function getClientflowDeployments(clientId) {
+  const res = await apiFetch(`${apiUrl}/api/clients/${encodeURIComponent(clientId)}/clientflow-deployments`, {
+    headers: authHeaders(),
+    credentials: "include",
+  });
+  if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
+  if (!res.ok) throw new Error(await extractError(res, "Kunne ikke hente ClientFlow-deployments"));
+  return readJsonResponse(res);
+}
+
+export async function getActiveClientflowDeployment(clientId) {
+  const res = await apiFetch(`${apiUrl}/api/clients/${encodeURIComponent(clientId)}/clientflow-deployments/active`, {
+    headers: authHeaders(),
+    credentials: "include",
+  });
+  if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
+  if (!res.ok) throw new Error(await extractError(res, "Kunne ikke hente aktiv ClientFlow-deployment"));
+  return readJsonResponse(res);
+}
+
+export async function requestClientflowDeployment(clientId, options = {}) {
+  const targetVersion = String(options.targetVersion || "").trim();
+  if (!targetVersion || targetVersion.toLowerCase() === "latest") {
+    throw new Error("ClientFlow-deployment kræver en konkret katalogversion");
+  }
+  const res = await apiFetch(`${apiUrl}/api/clients/${encodeURIComponent(clientId)}/clientflow-deployments`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
     credentials: "include",
     body: JSON.stringify({
-      target_version: options.targetVersion || "latest",
+      target_version: targetVersion,
       confirm_downgrade: options.confirmDowngrade === true,
       reason: options.reason || null,
     }),
   });
   if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
-  if (!res.ok)
-    throw new Error(await extractError(res, "Kunne ikke anmode om ClientFlow-opdatering"));
+  if (!res.ok) throw new Error(await extractError(res, "Kunne ikke oprette ClientFlow-deployment"));
   return readJsonResponse(res);
 }
 
-export async function resetClientflowUpdate(clientId) {
-  const res = await apiFetch(`${apiUrl}/api/clients/${clientId}/clientflow-update/reset`, {
+export async function cancelClientflowDeployment(deploymentId, reason = null) {
+  const res = await apiFetch(`${apiUrl}/api/clientflow-deployments/${encodeURIComponent(deploymentId)}/cancel`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: authHeaders({ "Content-Type": "application/json" }),
     credentials: "include",
+    body: JSON.stringify({ reason: reason || null }),
   });
   if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
-  if (!res.ok)
-    throw new Error(await extractError(res, "Kunne ikke nulstille ClientFlow-opdatering"));
+  if (!res.ok) throw new Error(await extractError(res, "Kunne ikke annullere ClientFlow-deployment"));
   return readJsonResponse(res);
-}
-
-export async function getClientflowUpdateStatus(clientId) {
-  // Backend returnerer update-felterne som en del af getClient().
-  // Her normaliserer vi også terminale tilstande, så UI ikke hænger på et gammelt busy-step
-  // som fx "preparing", hvis klienten allerede har meldt færdig/up_to_date.
-  const client = await getClient(clientId);
-  const rawStatus = String(client?.client_update_status ?? "ready").trim().toLowerCase();
-  const serviceStatus = String(client?.service_selfupdate_status ?? "").trim().toLowerCase();
-  const pendingAction = String(client?.pending_chrome_action ?? "none").trim().toLowerCase();
-  const clientState = String(client?.state ?? "").trim().toLowerCase();
-  const message = String(client?.client_update_message ?? "").trim();
-  const messageLower = message.toLowerCase();
-  const error = client?.client_update_error ?? null;
-  const finishedAt = client?.client_update_finished_at ?? null;
-  const busy = new Set([
-    "requested",
-    "starting",
-    "preparing",
-    "fetching_manifest",
-    "downloading",
-    "verifying",
-    "installing",
-    "stopping_services",
-  ]);
-  const serviceReady = serviceStatus === "klar" || serviceStatus === "ready" || serviceStatus === "inactive";
-  const noPendingUpdateAction = !pendingAction || pendingAction === "none";
-  const normalState = !clientState || clientState === "normal" || clientState === "approved";
-  let effectiveStatus = rawStatus || "ready";
-
-  if (busy.has(effectiveStatus) && (finishedAt || (serviceReady && noPendingUpdateAction && normalState))) {
-    if (error) {
-      effectiveStatus = "error";
-    } else if (
-      messageLower.includes("up_to_date") ||
-      messageLower.includes("allerede") ||
-      messageLower.includes("tilbyder") ||
-      messageLower.includes("kører allerede")
-    ) {
-      effectiveStatus = "up_to_date";
-    } else {
-      effectiveStatus = "success";
-    }
-  }
-
-  return {
-    client_version: client?.client_version ?? null,
-    client_update_status: effectiveStatus,
-    raw_client_update_status: rawStatus,
-    client_update_message: client?.client_update_message ?? null,
-    client_update_requested_at: client?.client_update_requested_at ?? null,
-    client_update_started_at: client?.client_update_started_at ?? null,
-    client_update_finished_at: client?.client_update_finished_at ?? null,
-    client_update_error: client?.client_update_error ?? null,
-    client_update_target_version: client?.client_update_target_version ?? null,
-    client_update_target_release_sequence: client?.client_update_target_release_sequence ?? null,
-    client_update_deployment_sequence: client?.client_update_deployment_sequence ?? 0,
-    client_update_applied_deployment_sequence: client?.client_update_applied_deployment_sequence ?? 0,
-    client_update_allow_downgrade: client?.client_update_allow_downgrade ?? false,
-    service_selfupdate_status: client?.service_selfupdate_status ?? null,
-    pending_chrome_action: client?.pending_chrome_action ?? null,
-    state: client?.state ?? null,
-  };
 }
 
 // ---------------------------------------------------------------------------
