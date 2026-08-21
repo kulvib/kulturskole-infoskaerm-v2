@@ -44,7 +44,7 @@
         "fresh_install",
         "in_place_update"
       ],
-      "min_current_version": "1.3.0"
+      "min_current_version": "1.3.1"
     }
   ]
 }
