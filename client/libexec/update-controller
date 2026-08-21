@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+ACTIVE_ROOT="$(/usr/bin/readlink -f /opt/clientflow/active)"
+ACTIVE_PARENT="${ACTIVE_ROOT%/*}"
+ACTIVE_NAME="${ACTIVE_ROOT##*/}"
+if [ "$ACTIVE_PARENT" != "/opt/clientflow/releases" ]; then
+  echo "clientflow-update-controller: active release ligger uden for releases-kataloget" >&2
+  exit 1
+fi
+case "$ACTIVE_NAME" in
+  clientflow-*-seq-*) ;;
+  *)
+    echo "clientflow-update-controller: active release path er ugyldig" >&2
+    exit 1
+    ;;
+esac
+
+RUNTIME_PYTHON="$ACTIVE_ROOT/runtime/bin/python"
+RELEASE_LIB="$ACTIVE_ROOT/release/lib"
+
+if [ ! -x "$RUNTIME_PYTHON" ] || [ ! -d "$RELEASE_LIB/clientflow_release" ]; then
+  echo "clientflow-update-controller: aktiv release mangler controller runtime" >&2
+  exit 1
+fi
+
+exec "$RUNTIME_PYTHON" -I -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from clientflow_release.update_controller_entrypoint import main
+raise SystemExit(main())
+' "$RELEASE_LIB"

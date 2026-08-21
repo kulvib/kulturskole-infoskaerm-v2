@@ -37,6 +37,7 @@ def wipe(*, reason: str, confirm: str, layout: Layout = Layout()) -> None:
     if layout.root == Path("/"):
         subprocess.run(["/usr/bin/systemctl", "disable", "--now", "clientflow-updater.timer"], check=False)
         subprocess.run(["/usr/bin/systemctl", "stop", "clientflow-updater.service"], check=False)
+        subprocess.run(["/usr/bin/systemctl", "stop", "clientflow-update-controller.service"], check=False)
         subprocess.run(["/usr/bin/systemctl", "disable", "--now", "clientflow.target"], check=False)
     _remove_definitions(layout)
     sudoers_root = layout.path("/etc/sudoers.d")

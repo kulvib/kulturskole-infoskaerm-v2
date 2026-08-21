@@ -1,27 +1,28 @@
 [Unit]
-Description=ClientFlow stable release updater
-After=network-online.target
+Description=ClientFlow privileged canonical update controller
+After=network-online.target clientflow-updater.service
 Wants=network-online.target
-OnSuccess=clientflow-update-controller.service
+ConditionPathExists=/opt/clientflow/active/client-runtime/libexec/update-controller
 ConditionPathExists=/etc/clientflow/update/credential.json
 ConditionPathExists=/etc/clientflow/update/private-key.pem
 
 [Service]
 Type=oneshot
-User=clientflow-updater
-Group=clientflow-updater
-ExecStart=/usr/bin/python3 -I /usr/lib/clientflow/updater/clientflow-updater.pyz
+User=root
+Group=root
+ExecStart=/bin/sh /opt/clientflow/active/client-runtime/libexec/update-controller
 LoadCredential=update-credential.json:/etc/clientflow/update/credential.json
 LoadCredential=update-private-key.pem:/etc/clientflow/update/private-key.pem
 LoadCredential=update-ca.pem:/etc/clientflow/update/tls-ca.pem
 Environment=CLIENTFLOW_UPDATE_CA_FILE=%d/update-ca.pem
-StateDirectory=clientflow/updater
+Environment=CLIENTFLOW_UPDATE_SOURCE_STATE_DIR=/var/lib/clientflow/updater
+StateDirectory=clientflow/update-controller
 StateDirectoryMode=0700
 UMask=0077
+TimeoutStartSec=30min
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ProtectSystem=strict
 ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
@@ -31,10 +32,7 @@ ProtectClock=yes
 ProtectHostname=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
-MemoryDenyWriteExecute=yes
 RestrictRealtime=yes
 RestrictNamespaces=yes
 SystemCallArchitectures=native
-CapabilityBoundingSet=
-AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
