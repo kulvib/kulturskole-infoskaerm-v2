@@ -5,6 +5,8 @@ import re
 
 ROOT = Path(__file__).resolve().parents[2]
 RENDER = (ROOT / "render.yaml").read_text(encoding="utf-8")
+DISK_MOUNT = "/var/data/clientflow-release-artifacts"
+ARTIFACT_DIR = f"{DISK_MOUNT}/store"
 
 
 def _backend_block() -> str:
@@ -21,8 +23,13 @@ def test_51n_backend_is_new_frankfurt_single_instance_with_51m_authority():
     assert re.search(r"(?m)^    numInstances: 1$", backend)
     assert "--workers 1" in backend
     assert "name: clientflow-release-artifacts" in backend
-    assert "mountPath: /var/data/clientflow-release-artifacts" in backend
-    assert "CLIENTFLOW_RELEASE_ARTIFACT_DIR" in backend
+    assert f"mountPath: {DISK_MOUNT}" in backend
+    assert (
+        "- key: CLIENTFLOW_RELEASE_ARTIFACT_DIR\n"
+        f'        value: "{ARTIFACT_DIR}"'
+    ) in backend
+    assert f"mkdir -p {ARTIFACT_DIR}" in backend
+    assert f"chmod 0755 {ARTIFACT_DIR}" in backend
     assert 'preDeployCommand: "python scripts/run_migrations.py"' in backend
     assert "publish_clientflow_release" not in backend
 
