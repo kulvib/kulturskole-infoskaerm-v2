@@ -1,14 +1,14 @@
-# ClientFlow 1.3.0 — keyless release, godkendelse og rollback
+# ClientFlow 1.3.1 — keyless release, godkendelse og rollback
 
 ## Én versionskilde
 
-`VERSION` indeholder `1.3.0` og er den eneste manuelt vedligeholdte produktversion. Filnavne, payload-root, release-ID og manifestværdier genereres. Release sequence vedligeholdes separat i `release/release-input.json`, fordi den er en monoton anti-rollback-værdi og ikke en alternativ versionskilde.
+`VERSION` indeholder `1.3.1` og er den eneste manuelt vedligeholdte produktversion. Filnavne, payload-root, release-ID og manifestværdier genereres. Release sequence vedligeholdes separat i `release/release-input.json`, fordi den er en monoton anti-rollback-værdi og ikke en alternativ versionskilde.
 
 Runtime-wheelets PEP 621-version er også dynamisk bundet til denne authority via `clientflow_runtime.version.VERSION`; `client/runtime/pyproject.toml` indeholder derfor ingen separat statisk produktversion. I source/build-kontekst læser modulet `client/VERSION`; i installeret runtime rapporterer det versionen fra wheelets egen distributionsmetadata. Dermed kan en staged runtime ikke arve versionsnummeret fra et ældre `/opt/clientflow/active`-target.
 
 ## Sikkerhedsmodel uden release-signeringsnøgler
 
-ClientFlow 1.3.0 bruger **ingen privat eller offentlig release-signeringsnøgle**. Der oprettes, gemmes eller anvendes ingen release-signatur. SHA-256 bruges til integritetsbinding, mens releasegodkendelse er en eksplicit procesgate bundet til den eksakte kandidat-SHA-256 og det eksakte source commit.
+ClientFlow 1.3.1 bruger **ingen privat eller offentlig release-signeringsnøgle**. Der oprettes, gemmes eller anvendes ingen release-signatur. SHA-256 bruges til integritetsbinding, mens releasegodkendelse er en eksplicit procesgate bundet til den eksakte kandidat-SHA-256 og det eksakte source commit.
 
 Denne model giver fail-closed integritetskontrol og sporbarhed, men den påstår ikke kryptografisk signer-identitet. Tillidsgrænsen er derfor den kontrollerede GitHub-proces, branch/review-beskyttelse, adgang til build-artifacts, HTTPS-transport og den eksplicitte manuelle releasegodkendelse.
 
@@ -58,8 +58,8 @@ Godkendelse er et separat trin og bruger ingen secret eller signing key. Godkend
 
 ```bash
 python scripts/approve_clientflow_release.py \
-  ./clientflow-1.3.0-seq-1201-candidate.tar \
-  --output ./clientflow-1.3.0-seq-1201-approved.tar \
+  ./clientflow-1.3.1-seq-1202-candidate.tar \
+  --output ./clientflow-1.3.1-seq-1202-approved.tar \
   --expected-candidate-sha256 <EXACT_CANDIDATE_SHA256> \
   --expected-installer-sha256 <EXACT_INSTALLER_SHA256> \
   --expected-source-commit <FULL_40_CHARACTER_GIT_SHA> \
@@ -93,12 +93,12 @@ Der findes ingen `CLIENTFLOW_RELEASE_PUBLIC_KEY_PATH` og ingen release trust key
 - komplet offline wheelhouse og ren source-commit;
 - manuel aktivering og ingen automatisk reboot.
 
-Backend beregner desuden SHA-256 for hele den publicerede bundle og kopierer release-ID, størrelse, bundle-SHA-256, approval-reference, candidate-SHA og source commit ind i den immutable deployment-authorization. Artifactet publiceres eksplicit med en separat gate; backend/frontend bygger eller godkender ikke selv releasen:
+Backend beregner desuden SHA-256 for hele den publicerede bundle og kopierer release-ID, størrelse, bundle-SHA-256, approval-reference, candidate-SHA og source commit ind i den immutable deployment-authorization. Artifactet publiceres eksplicit med en separat gate; backend/frontend bygger eller godkender ikke selv releasen. Publication verificerer mod source/build identity, ikke mod runtime selection-kataloget, så approved bytes kan materialiseres sikkert **før** kataloget promoveres:
 
 ```bash
 python scripts/publish_clientflow_release.py \
-  ./clientflow-1.3.0-seq-1201-approved.tar \
-  --artifact-dir /srv/clientflow-release-artifacts \
+  ./clientflow-1.3.1-seq-1202-approved.tar \
+  --artifact-dir /var/data/clientflow-release-artifacts/store \
   --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
   --expected-approval-reference <CHANGE_OR_RELEASE_REFERENCE> \
   --expected-source-commit <FULL_40_CHARACTER_GIT_SHA> \
@@ -107,6 +107,10 @@ python scripts/publish_clientflow_release.py \
 
 Publicering holder både den verificerede approved bundle og artifact-store-kataloget åbent som pinned file descriptors gennem hele operationen. Copy sker fra den samme source-handle, som leverede manifest, payload og whole-bundle SHA-256; source og staged copy hashes igen før atomic no-replace link. Publicering er kun idempotent for identiske allerede-publicerede bytes, når den eksisterende fil samtidig er en sikker regular file med korrekt ownership/mode. Samme release-ID med andre bytes eller usikre metadata afvises.
 
+Runtime-kataloget må først promoveres til `1.3.1/1202`, når `clientflow-1.3.1-seq-1202.tar` er fysisk til stede i 51M-store og matcher den registrerede approved bundle-SHA-256. Indtil da fortsætter kataloget med at vælge den tidligere fysisk godkendte `1.3.0/1201`.
+
+Den approved 1.3.0-release har den stabile uprivilegerede updater, men ikke den senere root-controller/service-wiring. 1.3.1 er derfor en ny fresh-install bootstrap-baseline og må ikke publiceres i kataloget med `min_current_version: 1.3.0`. Canonical in-place update bevises først fra 1.3.1 til en senere release.
+
 ## Download, stage og anti-rollback
 
 Den stabile updater skal først hente en kortlivet deployment-bound artifact-authorization og downloader derefter kun den eksakte same-origin-sti `/api/clientflow/release-artifacts/<release-id>` med DPoP-bound artifact-token. Legacy System-domain Bearer-token accepteres ikke af endpointet. Den senere root-controller skal derefter binde de samme release-ID/size/SHA-værdier til secure ingest før ekstraktion.
@@ -114,7 +118,7 @@ Den stabile updater skal først hente en kortlivet deployment-bound artifact-aut
 En verificeret bundle stages i et immutable katalog:
 
 ```text
-/opt/clientflow/releases/clientflow-1.3.0-seq-<sequence>/
+/opt/clientflow/releases/clientflow-1.3.1-seq-<sequence>/
 ```
 
 En release sequence, der ikke er større end den højeste tidligere accepterede sequence, afvises. Stage ændrer ikke `active` og starter ingen services.
@@ -129,7 +133,7 @@ Først derefter må den verificerede installer køre i isolated mode:
 
 ```bash
 sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" verify \
-  --bundle ./clientflow-1.3.0-seq-1201-approved.tar \
+  --bundle ./clientflow-1.3.1-seq-1202-approved.tar \
   --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256>
 ```
 

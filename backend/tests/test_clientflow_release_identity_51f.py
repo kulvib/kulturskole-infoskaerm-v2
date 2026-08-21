@@ -19,26 +19,38 @@ def _version() -> str:
     return VERSION_PATH.read_text(encoding="utf-8").strip()
 
 
-def test_51f_current_release_identity_is_single_and_monotonic() -> None:
+def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> None:
     version = _version()
     release_input = json.loads(RELEASE_INPUT_PATH.read_text(encoding="utf-8"))
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    assert version == "1.3.0"
-    assert release_input["release_sequence"] == 1201
-    release_id = f"clientflow-{version}-seq-{release_input['release_sequence']}"
+    # 1.3.1/1202 is the next build identity. The runtime catalog deliberately
+    # remains on the physically published 1.3.0/1201 authority until the new
+    # approved bundle has been materialized in the immutable artifact store.
+    assert version == "1.3.1"
+    assert release_input["release_sequence"] == 1202
+    source_release_id = f"clientflow-{version}-seq-{release_input['release_sequence']}"
+    assert source_release_id == "clientflow-1.3.1-seq-1202"
 
+    # Staging gate: source identity has moved, but runtime selection must remain
+    # on the physically published approved baseline until 1.3.1 bytes exist in 51M.
     assert catalog["catalog_sequence"] == 1201
-    assert catalog["latest_stable"] == version
-    assert catalog["default_install_version"] == version
+    assert catalog["latest_stable"] == "1.3.0"
+    assert catalog["default_install_version"] == "1.3.0"
+    assert catalog["catalog_sequence"] < release_input["release_sequence"]
     assert len(catalog["releases"]) == 1
+    selected = catalog["releases"][0]
+    assert selected["version"] == catalog["latest_stable"]
+    assert selected["version"] == catalog["default_install_version"]
+    assert selected["release_sequence"] == catalog["catalog_sequence"]
+    assert selected["release_id"] == f"clientflow-{selected['version']}-seq-{selected['release_sequence']}"
+    assert selected["revision"] == selected["release_id"]
 
-    release = catalog["releases"][0]
-    assert release["version"] == version
-    assert release["client_version"] == version
-    assert release["release_sequence"] == release_input["release_sequence"]
-    assert release["release_id"] == release_id
-    assert release["revision"] == release_id
+    selected_tuple = tuple(int(part) for part in selected["version"].split("."))
+    source_tuple = tuple(int(part) for part in version.split("."))
+    assert selected_tuple <= source_tuple
+    if selected["version"] != version:
+        assert selected["release_sequence"] < release_input["release_sequence"]
 
 
 def test_51f_bootstrap_release_cannot_be_authorized_for_pre_13_in_place_update() -> None:
@@ -75,7 +87,7 @@ def test_51f_canonical_release_code_has_no_hardcoded_product_version() -> None:
     for path in release_lib.glob("*.py"):
         text = path.read_text(encoding="utf-8")
         assert "1.2.0" not in text, path
-        assert "1.3.0" not in text, path
+        assert _version() not in text, path
 
     release_download = (ROOT / "client/runtime/clientflow_runtime/release_download.py").read_text(encoding="utf-8")
     assert 'from .version import VERSION' in release_download

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import re
@@ -12,13 +13,33 @@ import stat
 import sys
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "backend"))
 sys.path.insert(0, str(REPO / "client" / "release" / "lib"))
 
 from clientflow_release.bundle import open_verified_bundle  # noqa: E402
 from clientflow_release.constants import INSTALL_MODE_UPDATE, MAX_BUNDLE_BYTES  # noqa: E402
 from clientflow_release.crypto import sha256_fd  # noqa: E402
-from service1.clientflow_releases import resolve_release  # noqa: E402
+
+
+def _source_release_identity(repo: Path = REPO) -> tuple[str, int, str]:
+    """Return the exact build identity declared by this source checkout.
+
+    Publication deliberately does not consult the runtime selection catalog.
+    A new approved bundle must be materialized before the catalog is promoted,
+    otherwise fresh-install/update selection can point at bytes that do not yet
+    exist in the immutable artifact store.
+    """
+    try:
+        version = (repo / "client/VERSION").read_text(encoding="utf-8").strip()
+        release_input = json.loads((repo / "client/release/release-input.json").read_text(encoding="utf-8"))
+        sequence = int(release_input["release_sequence"])
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Canonical source release identity kunne ikke læses") from exc
+
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise RuntimeError("Canonical source VERSION er ugyldig")
+    if sequence <= 0:
+        raise RuntimeError("Canonical source release_sequence er ugyldig")
+    return version, sequence, f"clientflow-{version}-seq-{sequence}"
 
 
 def _open_secure_directory(path: Path) -> int:
@@ -122,12 +143,13 @@ def publish(
         if digest != expected_bundle_sha256:
             raise RuntimeError("Approved bundle matcher ikke den forventede bundle-SHA-256")
 
-        release = resolve_release(str(manifest["version"]))
-        expected_release_id = str(release.get("release_id") or release.get("revision") or "")
-        if manifest["release_id"] != expected_release_id:
-            raise RuntimeError("Approved bundle matcher ikke backendens releasekatalog")
-        if int(manifest["release_sequence"]) != int(release["release_sequence"]):
-            raise RuntimeError("Approved bundle release_sequence matcher ikke backendens releasekatalog")
+        source_version, source_sequence, source_release_id = _source_release_identity()
+        if str(manifest["version"]) != source_version:
+            raise RuntimeError("Approved bundle matcher ikke canonical source VERSION")
+        if str(manifest["release_id"]) != source_release_id:
+            raise RuntimeError("Approved bundle matcher ikke canonical source release-ID")
+        if int(manifest["release_sequence"]) != source_sequence:
+            raise RuntimeError("Approved bundle matcher ikke canonical source release_sequence")
 
         approval = manifest.get("release_approval") or {}
         source = manifest.get("source") or {}

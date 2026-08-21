@@ -27,6 +27,10 @@ This checklist is for the current correctness/isolation phase. Production-readin
 ## Client release/install
 
 - [ ] `client/VERSION` and `client/release/release-input.json` are intentional.
+- [ ] A new source/build identity is not made selectable in `clientflow_release_catalog.json` before its exact approved bundle is physically published in the immutable backend store.
+- [ ] During staged promotion, publication validates the approved bundle against source/build identity; the existing runtime catalog remains on the last physically published approved release.
+- [ ] Catalog promotion is a separate gate performed only after the new store artifact has been re-read and verified by exact release ID, size and whole-bundle SHA-256.
+- [ ] `min_current_version` reflects an actually reachable installed update-controller path; a release must not claim an older bootstrap version that cannot execute the canonical activation chain.
 - [ ] Release build is dispatched from the exact source SHA that already has a successful canonical CI push run.
 - [ ] Runtime-input transport is produced by `scripts/build_clientflow_runtime_input_transport.py`; rebuilding from the same locked platform bytes yields the same TAR SHA-256.
 - [ ] Canonical runtime-input transport SHA-256 is recorded and every platform file matches `client/release/runtime-platform-inputs.lock.json`; no prebuilt `clientflow_runtime` wheel is accepted as a platform input.

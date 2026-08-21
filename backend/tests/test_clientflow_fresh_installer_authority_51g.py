@@ -22,6 +22,11 @@ from clientflow_release_format.constants import MANIFEST_SCHEMA  # noqa: E402
 from clientflow_release_format.manifest import ManifestError, validate_manifest  # noqa: E402
 
 
+CURRENT_VERSION = (ROOT / "client/VERSION").read_text(encoding="utf-8").strip()
+CURRENT_SEQUENCE = int(json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))["release_sequence"])
+CURRENT_RELEASE_ID = f"clientflow-{CURRENT_VERSION}-seq-{CURRENT_SEQUENCE}"
+
+
 def _candidate_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     monkeypatch.setattr(
         builder_module,
@@ -55,7 +60,7 @@ def test_51g_manifest_schema_requires_exact_fresh_installer_descriptor(tmp_path,
 
     assert MANIFEST_SCHEMA == 8
     assert manifest["fresh_installer"] == {
-        "file": "clientflow-installer-1.3.0.pyz",
+        "file": f"clientflow-installer-{CURRENT_VERSION}.pyz",
         "format": "python-zipapp",
         "size": size,
         "sha256": digest,
@@ -104,7 +109,7 @@ def test_51g_approved_bundle_preserves_installer_authority(tmp_path, monkeypatch
     monkeypatch.setattr(approval_module, "prepare_runtime", lambda release_root, manifest: None)
     monkeypatch.setattr(approval_module, "verify_bundle", lambda bundle, require_deployable=True: read_bundle(bundle))
 
-    approved = tmp_path / "clientflow-1.3.0-seq-1201-approved.tar"
+    approved = tmp_path / f"{CURRENT_RELEASE_ID}-approved.tar"
     approval_module.approve_bundle(
         candidate,
         approved,
