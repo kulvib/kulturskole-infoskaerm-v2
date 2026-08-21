@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import tempfile
 from urllib.parse import urlsplit, urlunsplit
 import uuid
@@ -87,16 +88,33 @@ def generate_update_key(private_key: Path) -> tuple[str, str, dict[str, str], st
         raise
 
 
-def public_material(private_key: Path) -> tuple[str, str, dict[str, str], str]:
-    if not private_key.is_file() or private_key.stat().st_mode & 0o077:
+def _private_key_has_safe_mode(private_key: Path, *, forbidden_mode_bits: int) -> bool:
+    try:
+        metadata = private_key.stat()
+    except OSError:
+        return False
+    return stat.S_ISREG(metadata.st_mode) and not (metadata.st_mode & forbidden_mode_bits)
+
+
+def public_material(
+    private_key: Path,
+    *,
+    forbidden_mode_bits: int = 0o077,
+) -> tuple[str, str, dict[str, str], str]:
+    if not _private_key_has_safe_mode(private_key, forbidden_mode_bits=forbidden_mode_bits):
         raise UpdateAuthError("Update private key mangler eller har usikre rettigheder")
     return _public_material(private_key)
 
 
-def _sign(private_key: Path, signing_input: bytes) -> bytes:
+def _sign(
+    private_key: Path,
+    signing_input: bytes,
+    *,
+    forbidden_mode_bits: int = 0o077,
+) -> bytes:
     import subprocess
 
-    if not private_key.is_file() or private_key.stat().st_mode & 0o077:
+    if not _private_key_has_safe_mode(private_key, forbidden_mode_bits=forbidden_mode_bits):
         raise UpdateAuthError("Update private key mangler eller har usikre rettigheder")
     with tempfile.NamedTemporaryFile(prefix="clientflow-update-jwt-", delete=True) as message:
         os.chmod(message.name, 0o600)
@@ -114,11 +132,20 @@ def _sign(private_key: Path, signing_input: bytes) -> bytes:
     return result.stdout
 
 
-def sign_jwt(private_key: Path, *, header: dict, claims: dict) -> str:
+def sign_jwt(
+    private_key: Path,
+    *,
+    header: dict,
+    claims: dict,
+    forbidden_mode_bits: int = 0o077,
+) -> str:
     encoded_header = _json_b64(header)
     encoded_claims = _json_b64(claims)
     signing_input = f"{encoded_header}.{encoded_claims}".encode("ascii")
-    return f"{encoded_header}.{encoded_claims}.{_b64url(_sign(private_key, signing_input))}"
+    return (
+        f"{encoded_header}.{encoded_claims}."
+        f"{_b64url(_sign(private_key, signing_input, forbidden_mode_bits=forbidden_mode_bits))}"
+    )
 
 
 def build_client_assertion(
@@ -127,6 +154,7 @@ def build_client_assertion(
     credential_id: str,
     key_id: str,
     now: datetime | None = None,
+    forbidden_mode_bits: int = 0o077,
 ) -> str:
     current = now or datetime.now(timezone.utc)
     expires = current + timedelta(seconds=60)
@@ -143,6 +171,7 @@ def build_client_assertion(
         private_key,
         header={"alg": "EdDSA", "kid": key_id, "typ": UPDATE_CLIENT_ASSERTION_TYP},
         claims=claims,
+        forbidden_mode_bits=forbidden_mode_bits,
     )
 
 
@@ -158,8 +187,12 @@ def build_dpop_proof(
     url: str,
     access_token: str | None = None,
     now: datetime | None = None,
+    forbidden_mode_bits: int = 0o077,
 ) -> str:
-    _pem, _key_id, jwk, _thumbprint = public_material(private_key)
+    _pem, _key_id, jwk, _thumbprint = public_material(
+        private_key,
+        forbidden_mode_bits=forbidden_mode_bits,
+    )
     current = now or datetime.now(timezone.utc)
     claims = {
         "jti": str(uuid.uuid4()),
@@ -173,6 +206,7 @@ def build_dpop_proof(
         private_key,
         header={"alg": "EdDSA", "typ": UPDATE_DPOP_TYP, "jwk": jwk},
         claims=claims,
+        forbidden_mode_bits=forbidden_mode_bits,
     )
 
 
@@ -183,9 +217,13 @@ def build_key_rotation_proof(
     method: str,
     url: str,
     now: datetime | None = None,
+    forbidden_mode_bits: int = 0o077,
 ) -> str:
     """Prove possession of the proposed successor update private key."""
-    _pem, key_id, _jwk, _thumbprint = public_material(private_key)
+    _pem, key_id, _jwk, _thumbprint = public_material(
+        private_key,
+        forbidden_mode_bits=forbidden_mode_bits,
+    )
     current = now or datetime.now(timezone.utc)
     return sign_jwt(
         private_key,
@@ -197,4 +235,5 @@ def build_key_rotation_proof(
             "iat": int(current.timestamp()),
             "current_credential_id": str(uuid.UUID(current_credential_id)),
         },
+        forbidden_mode_bits=forbidden_mode_bits,
     )

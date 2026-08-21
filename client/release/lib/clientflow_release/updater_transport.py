@@ -106,6 +106,7 @@ class UpdaterTransport:
             method=method,
             url=url,
             access_token=access_token,
+            forbidden_mode_bits=self.config.private_key_forbidden_mode_bits,
         )
         request = urllib.request.Request(url, data=data, method=method, headers=headers)
         with self._open(request, timeout=timeout) as response:
@@ -131,6 +132,7 @@ class UpdaterTransport:
             self.config.private_key,
             credential_id=self.config.credential_id,
             key_id=self.config.key_id,
+            forbidden_mode_bits=self.config.private_key_forbidden_mode_bits,
         )
         payload = {
             "client_assertion_type": CLIENT_ASSERTION_TYPE,
@@ -146,7 +148,12 @@ class UpdaterTransport:
                 "Accept": "application/json",
                 "Content-Type": "application/json",
                 "User-Agent": "ClientFlow-Stable-Updater/51D",
-                "DPoP": build_dpop_proof(self.config.private_key, method="POST", url=url),
+                "DPoP": build_dpop_proof(
+                    self.config.private_key,
+                    method="POST",
+                    url=url,
+                    forbidden_mode_bits=self.config.private_key_forbidden_mode_bits,
+                ),
             },
         )
         with self._open(request, timeout=30) as response:
@@ -253,6 +260,7 @@ class UpdaterTransport:
                     method="GET",
                     url=url,
                     access_token=artifact_token,
+                    forbidden_mode_bits=self.config.private_key_forbidden_mode_bits,
                 ),
                 "User-Agent": "ClientFlow-Stable-Updater/51D",
             },

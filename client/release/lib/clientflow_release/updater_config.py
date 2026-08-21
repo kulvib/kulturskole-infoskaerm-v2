@@ -24,6 +24,7 @@ class UpdaterConfig:
     private_key: Path
     state_root: Path
     ca_file: Path | None = None
+    private_key_forbidden_mode_bits: int = 0o077
 
     @classmethod
     def from_paths(
@@ -33,9 +34,15 @@ class UpdaterConfig:
         private_key: Path,
         state_root: Path,
         ca_file_override: Path | None = None,
+        credential_forbidden_mode_bits: int = 0o077,
+        private_key_forbidden_mode_bits: int = 0o077,
     ) -> "UpdaterConfig":
         try:
-            credential = load_secure_json(Path(credential_file), max_bytes=64 * 1024)
+            credential = load_secure_json(
+                Path(credential_file),
+                max_bytes=64 * 1024,
+                forbidden_mode_bits=credential_forbidden_mode_bits,
+            )
         except (OSError, FilesystemError) as exc:
             raise UpdaterConfigError("Update credential kunne ikke indlæses sikkert") from exc
 
@@ -63,7 +70,10 @@ class UpdaterConfig:
 
         key_path = Path(private_key)
         try:
-            _pem, local_key_id, _jwk, _thumbprint = public_material(key_path)
+            _pem, local_key_id, _jwk, _thumbprint = public_material(
+                key_path,
+                forbidden_mode_bits=private_key_forbidden_mode_bits,
+            )
         except Exception as exc:
             raise UpdaterConfigError("Update private key kunne ikke valideres") from exc
         key_id = str(credential.get("key_id") or "").strip()
@@ -86,6 +96,7 @@ class UpdaterConfig:
             private_key=key_path,
             state_root=Path(state_root),
             ca_file=ca_file,
+            private_key_forbidden_mode_bits=private_key_forbidden_mode_bits,
         )
 
     @classmethod
@@ -99,8 +110,10 @@ class UpdaterConfig:
             default_credential = Path("/etc/clientflow/update/credential.json")
             default_private_key = Path("/etc/clientflow/update/private-key.pem")
 
-        credential_file = Path(os.getenv("CLIENTFLOW_UPDATE_CREDENTIAL_FILE") or default_credential)
-        private_key = Path(os.getenv("CLIENTFLOW_UPDATE_PRIVATE_KEY_FILE") or default_private_key)
+        raw_credential_override = str(os.getenv("CLIENTFLOW_UPDATE_CREDENTIAL_FILE") or "").strip()
+        raw_private_key_override = str(os.getenv("CLIENTFLOW_UPDATE_PRIVATE_KEY_FILE") or "").strip()
+        credential_file = Path(raw_credential_override) if raw_credential_override else default_credential
+        private_key = Path(raw_private_key_override) if raw_private_key_override else default_private_key
         state_root = Path(
             os.getenv("STATE_DIRECTORY")
             or os.getenv("CLIENTFLOW_UPDATE_STATE_DIR")
@@ -108,9 +121,23 @@ class UpdaterConfig:
         )
         raw_ca_override = str(os.getenv("CLIENTFLOW_UPDATE_CA_FILE") or "").strip()
         ca_file_override = Path(raw_ca_override) if raw_ca_override else None
+
+        # systemd LoadCredential= materializes service credentials as 0440 files
+        # inside CREDENTIALS_DIRECTORY.  Permit group-read only for those default
+        # systemd-provided paths; ordinary/overridden credential paths retain
+        # the at-rest 0600 policy.
+        credential_forbidden_mode_bits = (
+            0o007 if credentials_directory and not raw_credential_override else 0o077
+        )
+        private_key_forbidden_mode_bits = (
+            0o007 if credentials_directory and not raw_private_key_override else 0o077
+        )
+
         return cls.from_paths(
             credential_file=credential_file,
             private_key=private_key,
             state_root=state_root,
             ca_file_override=ca_file_override,
+            credential_forbidden_mode_bits=credential_forbidden_mode_bits,
+            private_key_forbidden_mode_bits=private_key_forbidden_mode_bits,
         )
