@@ -10,15 +10,15 @@ services:
     rootDir: backend
     buildCommand: "python -m pip install --upgrade pip==26.1.2 && python -m pip install --require-hashes --no-cache-dir -r requirements.lock.txt"
     preDeployCommand: "python scripts/run_migrations.py"
-    startCommand: "python -m uvicorn service1.main:app --host 0.0.0.0 --port $PORT --workers 1 --log-level info"
+    startCommand: "mkdir -p /var/data/clientflow-release-artifacts/store && chmod 0755 /var/data/clientflow-release-artifacts/store && exec python -m uvicorn service1.main:app --host 0.0.0.0 --port $PORT --workers 1 --log-level info"
     healthCheckPath: /health
 
     domains:
       - api.display.planiq.dk
 
     # 51M: canonical runtime authority for approved immutable ClientFlow bundles.
-    # The filesystem-backed authority requires one persistent disk and one
-    # service instance. Publication happens only in the running service context.
+    # Render owns the persistent mount root. The backend creates and uses a
+    # non-group/world-writable child directory before Uvicorn starts.
     disk:
       name: clientflow-release-artifacts
       mountPath: /var/data/clientflow-release-artifacts
@@ -131,7 +131,7 @@ services:
         value: "90"
 
       - key: CLIENTFLOW_RELEASE_ARTIFACT_DIR
-        value: "/var/data/clientflow-release-artifacts"
+        value: "/var/data/clientflow-release-artifacts/store"
 
       - key: DB_POOL_SIZE
         value: "5"

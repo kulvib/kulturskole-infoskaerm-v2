@@ -39,6 +39,7 @@ or approve release bytes.
   - custom domain `api.display.planiq.dk`
   - 51M disk `clientflow-release-artifacts`
   - mount `/var/data/clientflow-release-artifacts`
+  - secure 51M child `/var/data/clientflow-release-artifacts/store`
 - `planiq-display-v2-frontend`
   - static runtime using current Blueprint syntax (`type: web`, `runtime: static`)
   - custom domain `display.planiq.dk`
@@ -46,6 +47,13 @@ or approve release bytes.
   - direct WebSocket origin `https://api.display.planiq.dk`
 
 There is no `databases:` resource in the Blueprint.
+
+The Render-managed mount root is not used directly as the 51M artifact
+directory. Physical validation showed that Render creates it with mode `2775`,
+while the existing 51M security contract correctly rejects group-/world-writable
+artifact directories. The backend start command therefore creates the `store`
+child and sets mode `0755` before Uvicorn starts. `CLIENTFLOW_RELEASE_ARTIFACT_DIR`
+points only to that secure child.
 
 ## Neon contract
 
@@ -68,7 +76,7 @@ backend and publish it only with the existing gate:
 ```bash
 python scripts/publish_clientflow_release.py \
   /path/to/clientflow-1.3.0-seq-1201-approved.tar \
-  --artifact-dir /var/data/clientflow-release-artifacts \
+  --artifact-dir /var/data/clientflow-release-artifacts/store \
   --expected-bundle-sha256 <EXACT_APPROVED_BUNDLE_SHA256> \
   --expected-approval-reference <EXACT_APPROVAL_REFERENCE> \
   --expected-source-commit <EXACT_SOURCE_COMMIT> \
@@ -156,14 +164,15 @@ For a blank Render workspace using an existing Neon database:
 2. configure `DATABASE_URL` and all required existing runtime secrets;
 3. allow pre-deploy to verify/migrate Neon through the existing fail-closed
    migration runner;
-4. if the database has no administrator, run the existing explicit/manual
+4. allow service startup to create/normalize the secure 51M `store` child;
+5. if the database has no administrator, run the existing explicit/manual
    `backend/scripts/bootstrap_superadmin.py` contract;
-5. publish the already-approved ClientFlow bundle into the mounted 51M disk;
-6. verify persistence across backend restart/redeploy;
-7. create a new installation code in Control Room;
-8. copy the fresh-install handoff to the Ubuntu host;
-9. download and hash the exact approved bundle;
-10. continue through the existing 51I install and manual activation procedure.
+6. publish the already-approved ClientFlow bundle into the secure 51M child;
+7. verify persistence across backend restart/redeploy;
+8. create a new installation code in Control Room;
+9. copy the fresh-install handoff to the Ubuntu host;
+10. download and hash the exact approved bundle;
+11. continue through the existing 51I install and manual activation procedure.
 
 ## Runtime validation after deployment
 
@@ -175,7 +184,9 @@ workspace verify at minimum:
 - browser HTTP remains same-origin through `/api/*` rewrites;
 - browser WebSocket connections use `api.display.planiq.dk`;
 - Neon `/health/db` is ready at the expected schema head;
-- the 51M directory exists with the required ownership/mode;
+- the 51M persistent mount exists;
+- the secure 51M child exists with the required ownership/mode and is the
+  configured `CLIENTFLOW_RELEASE_ARTIFACT_DIR`;
 - the approved artifact survives restart/redeploy with the same SHA-256;
 - enrollment-code creation fails when the approved artifact is absent;
 - a valid code/capability downloads the exact approved bundle;
