@@ -31,9 +31,9 @@ from clientflow_release.archive import read_bundle  # noqa: E402
 from scripts import publish_clientflow_release as publication  # noqa: E402
 
 
-RELEASE_ID = "clientflow-1.3.0-seq-1201"
-VERSION = "1.3.0"
-SEQUENCE = 1201
+RELEASE_ID = "clientflow-1.3.1-seq-1202"
+VERSION = "1.3.1"
+SEQUENCE = 1202
 
 
 def _approved_bundle(
@@ -129,12 +129,8 @@ def _approved_bundle(
     return bundle
 
 
-def _catalog_release() -> dict:
-    return {
-        "version": VERSION,
-        "release_id": RELEASE_ID,
-        "release_sequence": SEQUENCE,
-    }
+def _source_identity() -> tuple[str, int, str]:
+    return VERSION, SEQUENCE, RELEASE_ID
 
 
 def test_51h_publication_streams_from_the_same_open_file_identity_that_was_verified(
@@ -169,7 +165,7 @@ def test_51h_publication_streams_from_the_same_open_file_identity_that_was_verif
 
     monkeypatch.setattr(release_bundle, "validate_runtime_artifacts", lambda _payload, _manifest: None)
     monkeypatch.setattr(publication, "open_verified_bundle", open_then_replace_path)
-    monkeypatch.setattr(publication, "resolve_release", lambda _version: _catalog_release())
+    monkeypatch.setattr(publication, "_source_release_identity", _source_identity)
 
     artifact_dir = tmp_path / "artifact-store"
     artifact_dir.mkdir(mode=0o700)
@@ -200,7 +196,7 @@ def test_51h_idempotent_publication_rejects_insecure_existing_artifact(
     expected_bytes = source.read_bytes()
     expected_sha = hashlib.sha256(expected_bytes).hexdigest()
     monkeypatch.setattr(release_bundle, "validate_runtime_artifacts", lambda _payload, _manifest: None)
-    monkeypatch.setattr(publication, "resolve_release", lambda _version: _catalog_release())
+    monkeypatch.setattr(publication, "_source_release_identity", _source_identity)
 
     artifact_dir = tmp_path / "artifact-store"
     artifact_dir.mkdir(mode=0o700)
@@ -282,6 +278,44 @@ def test_51h_approval_promotes_payload_from_same_open_candidate_identity(
     with tarfile.open(fileobj=io.BytesIO(approved_payload), mode="r:") as archive:
         marker = archive.extractfile(f"clientflow-{VERSION}/marker").read()
     assert marker == b"first-candidate-payload"
+
+
+def test_51h_publication_uses_source_build_identity_not_runtime_selection_catalog() -> None:
+    assert publication._source_release_identity() == (VERSION, SEQUENCE, RELEASE_ID)
+    source = (ROOT / "scripts/publish_clientflow_release.py").read_text(encoding="utf-8")
+    assert "_source_release_identity" in source
+    assert "resolve_release" not in source
+    assert "clientflow_release_catalog" not in source
+
+
+def test_51h_publication_rejects_bundle_from_other_source_release_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = _approved_bundle(
+        tmp_path / "source",
+        approval_reference="approval-first",
+        source_commit="c" * 40,
+        marker=b"approved-bytes",
+    )
+    expected_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    monkeypatch.setattr(release_bundle, "validate_runtime_artifacts", lambda _payload, _manifest: None)
+    monkeypatch.setattr(
+        publication,
+        "_source_release_identity",
+        lambda: ("1.3.2", 1203, "clientflow-1.3.2-seq-1203"),
+    )
+
+    artifact_dir = tmp_path / "artifact-store"
+    artifact_dir.mkdir(mode=0o700)
+    with pytest.raises(RuntimeError, match="canonical source VERSION"):
+        publication.publish(
+            source,
+            artifact_dir,
+            expected_bundle_sha256=expected_sha,
+            expected_approval_reference="approval-first",
+            expected_source_commit="c" * 40,
+        )
 
 
 def test_51h_publication_source_uses_pinned_bundle_and_directory_descriptors():

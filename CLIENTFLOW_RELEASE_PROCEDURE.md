@@ -18,7 +18,9 @@ Canonical source:
 
 Offline runtime inputs are supplied separately through `--runtime-inputs`. They must contain the validated Python runtime and dependency wheelhouse. The ClientFlow runtime wheel itself is always rebuilt from `client/runtime/`; a supplied stale ClientFlow wheel is removed before packaging.
 
-`client/VERSION` is the only manually maintained product-version value. The runtime wheel derives its PEP 621 version dynamically from that same authority, while `release_sequence` remains the separate monotonic anti-rollback identity component. For the current canonical bootstrap release these values are `1.3.0` and `1201`, producing `clientflow-1.3.0-seq-1201`.
+`client/VERSION` is the only manually maintained product-version value. The runtime wheel derives its PEP 621 version dynamically from that same authority, while `release_sequence` remains the separate monotonic anti-rollback identity component. The current source/build identity is `1.3.1` / `1202`, producing `clientflow-1.3.1-seq-1202`.
+
+Source/build identity and runtime selection are intentionally separate release gates. During a release transition the source identity may move ahead **before** the runtime catalog does. The catalog must continue selecting the last physically published approved release until the new approved bundle has been materialized in the immutable 51M store. For the `1.3.1/1202` transition that means `1.3.0/1201` remains the selected fresh-install/update authority until publication is complete. This is a staged promotion state, not a second release authority.
 
 ## 2. Build one canonical reproducible release candidate
 
@@ -68,8 +70,8 @@ Approval uses no release signing key. It is an explicit gate bound to the exact 
 
 ```bash
 python scripts/approve_clientflow_release.py \
-  ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-candidate.tar \
-  --output ./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-approved.tar \
+  ./build/clientflow-1.3.1/clientflow-1.3.1-seq-1202-candidate.tar \
+  --output ./build/clientflow-1.3.1/clientflow-1.3.1-seq-1202-approved.tar \
   --expected-candidate-sha256 <EXACT_CANDIDATE_SHA256> \
   --expected-installer-sha256 <EXACT_INSTALLER_SHA256> \
   --expected-source-commit <FULL_40_CHARACTER_GIT_SHA> \
@@ -81,7 +83,31 @@ Only the approved output may have `deployable: true`. The approval gate opens th
 
 Record the SHA-256 of the approved bundle. That hash is the external trust anchor for the physical handoff.
 
-## 4. Materialize a pinned fresh-install bootstrap before executing installer code
+## 4. Publish approved bytes before runtime-catalog promotion
+
+Publication is deliberately bound to the exact source/build identity from `client/VERSION` and `client/release/release-input.json`, **not** to the runtime selection catalog. This removes the circular dependency where a release had to become selectable before its approved bytes could exist in the backend artifact store.
+
+From the running backend service context where `/var/data/clientflow-release-artifacts/store` is mounted, publish the exact approved bundle:
+
+```bash
+python scripts/publish_clientflow_release.py \
+  ./clientflow-1.3.1-seq-1202-approved.tar \
+  --artifact-dir /var/data/clientflow-release-artifacts/store \
+  --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
+  --expected-approval-reference <CHANGE_OR_RELEASE_REFERENCE> \
+  --expected-source-commit <FULL_40_CHARACTER_GIT_SHA> \
+  --publish-release
+```
+
+The publication gate verifies the approved bundle against the current source checkout's exact `1.3.1/1202` identity, the supplied whole-bundle SHA-256, approval reference and source commit, then atomically no-replace publishes `clientflow-1.3.1-seq-1202.tar`. The old catalog remains active throughout this step.
+
+Only after the immutable store has been independently re-read and verified to contain those exact approved bytes may a **separate catalog-promotion change** move `catalog_sequence`, `latest_stable`, `default_install_version` and the single selectable release to `1.3.1/1202`. That promotion is the point at which fresh-install authorizations may begin selecting the new release.
+
+The approved `1.3.0/1201` source predates the privileged update-controller: its updater host stops at verified/staged state and its installed updater unit has no controller handoff. Therefore the `1.3.1/1202` catalog entry must **not** claim in-place compatibility from `1.3.0`; its minimum current version must be `1.3.1`. The first canonical in-place update proof is from a fresh-installed `1.3.1` client to a later release whose policy explicitly accepts `1.3.1`.
+
+Do not merge catalog promotion before publication. A selected release with no matching immutable artifact, or a compatibility range that claims an unavailable bootstrap path, is a release-chain failure.
+
+## 5. Materialize a pinned fresh-install bootstrap before executing installer code
 
 The approved bundle SHA-256 is the external trust anchor. The fresh installer is **not** a second loose trust artifact: schema 8 embeds its exact bytes inside the approved bundle.
 
@@ -90,7 +116,7 @@ The physical handoff must therefore keep one concrete bundle file identity open 
 Run the following as one uninterrupted shell block. No ClientFlow installer code runs inside the bootstrap block; it uses only host `bash`, `sha256sum`, `tar`, `python3`, `stat`, `cmp`, and filesystem primitives:
 
 ```bash
-BUNDLE=./build/clientflow-1.3.0/clientflow-1.3.0-seq-1201-approved.tar
+BUNDLE=./build/clientflow-1.3.1/clientflow-1.3.1-seq-1202-approved.tar
 APPROVED_BUNDLE_SHA256=<APPROVED_BUNDLE_SHA256>
 
 BOOTSTRAP_DIR="$(
@@ -173,7 +199,7 @@ printf 'BOOTSTRAP_INSTALLER=%s\n' "$PRIVATE_INSTALLER"
 CLIENTFLOW_BOOTSTRAP
 
 BOOTSTRAP_BUNDLE="$BOOTSTRAP_DIR/clientflow-approved.tar"
-BOOTSTRAP_INSTALLER="$BOOTSTRAP_DIR/clientflow-installer-1.3.0.pyz"
+BOOTSTRAP_INSTALLER="$BOOTSTRAP_DIR/clientflow-installer-1.3.1.pyz"
 ```
 
 If any check fails, remove the private bootstrap directory and do not run installer code:
@@ -192,7 +218,7 @@ sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" verify \
   --expected-bundle-sha256 "$APPROVED_BUNDLE_SHA256"
 ```
 
-## 5. Fresh installation
+## 6. Fresh installation
 
 Installation is for a clean Ubuntu Desktop 26.04 `amd64` client with an existing unprivileged kiosk user and a valid one-time enrollment code:
 
@@ -207,19 +233,19 @@ sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" install \
 
 The fresh installer provisions the canonical domain/update credentials, immutable release files and rendered systemd definitions. It stops at `pending_manual_activation`.
 
-## 6. Manual activation
+## 7. Manual activation
 
 Activation is explicit:
 
 ```bash
 sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \
-  --release-id clientflow-1.3.0-seq-1201 \
+  --release-id clientflow-1.3.1-seq-1202 \
   --expected-release-approval-reference <RELEASE_APPROVAL_REFERENCE>
 ```
 
 Staging has already persisted the approved bundle SHA-256/size, candidate SHA-256, source commit and immutable release-approval reference. Activation first requires the operator-provided expected release-approval reference to match that staged provenance; it is not a new free-form approval. It then switches `/opt/clientflow/active`, applies managed definitions and runs health checks. Failure triggers the transaction's rollback behavior.
 
-## 7. Validation before deployment
+## 8. Validation before deployment
 
 At minimum:
 

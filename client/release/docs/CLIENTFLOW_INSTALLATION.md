@@ -1,12 +1,12 @@
-# ClientFlow 1.3.0 — fresh installation from a canonical runtime release
+# ClientFlow 1.3.1 — fresh installation from a canonical runtime release
 
 ## Sikkerhedsstatus
 
-ClientFlow 1.3.0 bruger en **keyless release-model**. Der oprettes, gemmes eller anvendes ingen privat eller offentlig release-signeringsnøgle. En normal build er en reproducerbar, verificeret release candidate med `deployable: false`. Kun en separat manuel godkendelsesgate kan producere en `deployable: true`-bundle.
+ClientFlow 1.3.1 bruger en **keyless release-model**. Der oprettes, gemmes eller anvendes ingen privat eller offentlig release-signeringsnøgle. En normal build er en reproducerbar, verificeret release candidate med `deployable: false`. Kun en separat manuel godkendelsesgate kan producere en `deployable: true`-bundle.
 
 Ingen fysisk installation må ske, før en konkret pilotklient er udpeget og installationen er særskilt godkendt.
 
-ClientFlow 1.3.0 er den canonical bootstrap-baseline for den nye updater-plane. Backendens releasekatalog afviser derfor in-place deployment af 1.3.0 til pre-1.3 installationer; disse skal installeres fresh. Senere canonical releases kan eksplicit åbne update-kompatibilitet fra 1.3.0.
+ClientFlow 1.3.0 er den fysisk godkendte historiske bootstrap-baseline for den stabile, uprivilegerede updater, men den approved 1.3.0-release indeholder ikke den senere privilegerede update-controller. ClientFlow 1.3.1 er derfor den nye canonical **fresh-install bootstrap-baseline** med hele controller-kæden indbygget. 1.3.1 må ikke autoriseres som in-place update fra 1.3.0. Den canonical in-place update-kæde bevises fra en fresh-installeret 1.3.1-klient til en senere release, som eksplicit tillader `min_current_version: 1.3.1`. Pre-1.3.1 installationer skal installeres fresh i denne kæde.
 
 ## Forudsætninger for en senere godkendt installation
 
@@ -60,7 +60,7 @@ Aktivering er et separat trin. Operatøren skal angive den **forventede immutabl
 
 ```bash
 sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \
-  --release-id clientflow-1.3.0-seq-1201 \
+  --release-id clientflow-1.3.1-seq-1202 \
   --expected-release-approval-reference <RELEASE_APPROVAL_REFERENCE>
 ```
 
