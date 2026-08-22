@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+for entry in (ROOT / "backend", ROOT / "client/release/lib"):
+    if str(entry) not in sys.path:
+        sys.path.insert(0, str(entry))
+
+from clientflow_release import cli as installer_cli  # noqa: E402
+from clientflow_release.enrollment import EnrollmentError, validate_fresh_install_binding  # noqa: E402
+
+
+BINDING = {
+    "release_id": "clientflow-1.3.3-seq-1204",
+    "version": "1.3.3",
+    "release_sequence": 1204,
+    "bundle_sha256": "a" * 64,
+    "bundle_size": 80123456,
+    "release_approval_reference": "clientflow-1.3.3-seq-1204/test-approval",
+    "release_candidate_sha256": "b" * 64,
+    "source_commit": "c" * 40,
+}
+
+
+def test_installer_state_schema_persists_complete_non_secret_release_binding():
+    assert installer_cli.INSTALL_STATE_SCHEMA == 2
+    manifest = {
+        "release_id": BINDING["release_id"],
+        "version": BINDING["version"],
+        "release_sequence": BINDING["release_sequence"],
+        "release_approval": {
+            "reference": BINDING["release_approval_reference"],
+            "candidate_sha256": BINDING["release_candidate_sha256"],
+        },
+        "source": {"commit": BINDING["source_commit"], "dirty": False},
+    }
+    actual = installer_cli._fresh_install_binding(
+        manifest,
+        bundle_size=BINDING["bundle_size"],
+        bundle_sha256=BINDING["bundle_sha256"],
+    )
+    assert actual == BINDING
+
+
+def test_release_binding_validator_rejects_incomplete_or_incoherent_identity():
+    incomplete = dict(BINDING)
+    incomplete.pop("source_commit")
+    with pytest.raises(EnrollmentError, match="forkert schema"):
+        validate_fresh_install_binding(incomplete)
+
+    incoherent = dict(BINDING)
+    incoherent["release_sequence"] = 1205
+    with pytest.raises(EnrollmentError, match="matcher ikke"):
+        validate_fresh_install_binding(incoherent)
+
+
+def test_install_parser_allows_receipt_resume_without_one_time_authorities():
+    args = installer_cli.build_parser().parse_args(
+        [
+            "install",
+            "--bundle", "/tmp/bundle.tar",
+            "--expected-bundle-sha256", "a" * 64,
+            "--backend-url", "https://display.example.invalid",
+            "--kiosk-user", "kiosk",
+        ]
+    )
+    assert args.enrollment_code is None
+    assert args.fresh_install_authorization is None
+
+
+def test_new_install_requires_code_and_authorization_before_clientflow_state_mutation():
+    source = (ROOT / "client/release/lib/clientflow_release/cli.py").read_text(encoding="utf-8")
+    start = source.index("def install_fresh(")
+    end = source.index("def _common_transaction_parser", start)
+    install = source[start:end]
+
+    new_state = install.index("else:\n        # A brand-new consuming transaction")
+    code_gate = install.index("Ny fresh install kræver en one-time enrollment code", new_state)
+    auth_gate = install.index("Ny fresh install kræver fresh-install authorization", new_state)
+    state_root = install.index("ensure_real_directory(layout.state_root", new_state)
+    assert new_state < code_gate < auth_gate < state_root
+
+
+def test_install_state_never_persists_one_time_code_or_authorization():
+    source = (ROOT / "client/release/lib/clientflow_release/cli.py").read_text(encoding="utf-8")
+    start = source.index('install_state = {')
+    end = source.index('atomic_write_json(state_path, install_state', start)
+    initialized_state = source[start:end]
+    assert '"fresh_install_binding": binding' in initialized_state
+    assert '"enrollment_code"' not in initialized_state
+    assert '"fresh_install_authorization"' not in initialized_state
+
+
+def test_installer_carries_same_binding_into_claim_and_complete_resume_transactions():
+    source = (ROOT / "client/release/lib/clientflow_release/cli.py").read_text(encoding="utf-8")
+    assert "fresh_install_binding=binding" in source
+    claim_index = source.index("response = claim(")
+    complete_index = source.index("complete(backend_url=backend_url", claim_index)
+    assert source.index("fresh_install_binding=binding", claim_index) < complete_index
+    assert "fresh_install_binding=binding" in source[complete_index:complete_index + 240]

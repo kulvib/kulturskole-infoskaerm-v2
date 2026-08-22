@@ -51,3 +51,15 @@ def test_procedure_does_not_reintroduce_the_stale_131_bootstrap_assignment():
 
     assert 'BOOTSTRAP_INSTALLER="$BOOTSTRAP_DIR/clientflow-installer-1.3.1.pyz"' not in source
     assert "current source/build identity is `1.3.1` / `1202`" not in source
+
+
+def test_fresh_install_consuming_command_carries_same_handoff_authorization():
+    source = PROCEDURE.read_text(encoding="utf-8")
+    install = _section(source, 6)
+
+    assert 'test -n "${ENROLLMENT_CODE:-}"' in install
+    assert 'test -n "${FRESH_INSTALL_AUTHORIZATION:-}"' in install
+    assert '--enrollment-code "$ENROLLMENT_CODE"' in install
+    assert '--fresh-install-authorization "$FRESH_INSTALL_AUTHORIZATION"' in install
+    assert "must not be written into ClientFlow install-state" in install
+    assert "receipt" in install.lower()

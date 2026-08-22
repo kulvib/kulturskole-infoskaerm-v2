@@ -5,7 +5,9 @@ import binascii
 from datetime import timedelta
 import hashlib
 import hmac
+import json
 import os
+import re
 import secrets
 import string
 from typing import List, Optional
@@ -68,6 +70,11 @@ DOMAIN_NAMES = ("status", "display", "livestream", "remote_desktop", "terminal",
 SHARED_CREDENTIAL_DOMAINS = ("status", "display", "system")
 _RSA_ENCRYPTION_OID_DER = bytes.fromhex("06092a864886f70d010101")
 FRESH_INSTALL_ARTIFACT_URL = "/api/enrollment/fresh-install-artifact"
+_RELEASE_ID_RE = re.compile(r"^clientflow-(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-seq-([1-9]\d*)$")
+_VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_SOURCE_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_APPROVAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/@+-]{0,199}$")
 
 
 def _generate_enrollment_code() -> str:
@@ -244,8 +251,21 @@ class EnrollmentUpdateAuthRead(BaseModel):
     access_token_audience: str
 
 
+class FreshInstallClaimBinding(BaseModel):
+    release_id: str = PydanticField(min_length=1, max_length=160)
+    version: str = PydanticField(min_length=1, max_length=32)
+    release_sequence: int = PydanticField(ge=1)
+    bundle_sha256: str = PydanticField(min_length=64, max_length=64)
+    bundle_size: int = PydanticField(ge=1)
+    release_approval_reference: str = PydanticField(min_length=1, max_length=200)
+    release_candidate_sha256: str = PydanticField(min_length=64, max_length=64)
+    source_commit: str = PydanticField(min_length=40, max_length=40)
+
+
 class EnrollmentClaimRequest(BaseModel):
-    enrollment_code: str = PydanticField(min_length=1, max_length=128)
+    enrollment_code: Optional[str] = PydanticField(default=None, min_length=1, max_length=128)
+    fresh_install_authorization: Optional[str] = PydanticField(default=None, min_length=32, max_length=4096)
+    fresh_install_binding: FreshInstallClaimBinding
     install_id: str = PydanticField(min_length=36, max_length=36)
     credential_seed_b64: str = PydanticField(min_length=40, max_length=64)
     resume_proof: str = PydanticField(min_length=32, max_length=128)
@@ -276,6 +296,182 @@ class EnrollmentClaimResponse(BaseModel):
 class EnrollmentCompleteRequest(BaseModel):
     install_id: str = PydanticField(min_length=36, max_length=36)
     resume_proof: str = PydanticField(min_length=32, max_length=128)
+    fresh_install_binding: FreshInstallClaimBinding
+
+
+def _normalize_fresh_install_binding_fields(
+    *,
+    release_id: object,
+    version: object,
+    release_sequence: object,
+    bundle_sha256: object,
+    bundle_size: object,
+    release_approval_reference: object,
+    release_candidate_sha256: object,
+    source_commit: object,
+) -> dict[str, object]:
+    normalized_release_id = str(release_id or "").strip()
+    normalized_version = str(version or "").strip()
+    try:
+        normalized_sequence = int(release_sequence)
+        normalized_bundle_size = int(bundle_size)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Fresh-install release-binding har ugyldige talfelter") from exc
+    normalized_bundle_sha256 = str(bundle_sha256 or "").strip().lower()
+    normalized_approval = str(release_approval_reference or "").strip()
+    normalized_candidate = str(release_candidate_sha256 or "").strip().lower()
+    normalized_source = str(source_commit or "").strip().lower()
+
+    release_match = _RELEASE_ID_RE.fullmatch(normalized_release_id)
+    if not release_match or not _VERSION_RE.fullmatch(normalized_version):
+        raise ValueError("Fresh-install release-binding har ugyldig release-identitet")
+    if normalized_release_id != f"clientflow-{normalized_version}-seq-{normalized_sequence}":
+        raise ValueError("Fresh-install release-binding release-identitet matcher ikke")
+    if normalized_sequence < 1 or normalized_bundle_size < 1:
+        raise ValueError("Fresh-install release-binding har ugyldige talfelter")
+    if not _SHA256_RE.fullmatch(normalized_bundle_sha256) or not _SHA256_RE.fullmatch(normalized_candidate):
+        raise ValueError("Fresh-install release-binding mangler gyldig SHA-256")
+    if not _APPROVAL_RE.fullmatch(normalized_approval):
+        raise ValueError("Fresh-install release-binding mangler gyldig approval-reference")
+    if not _SOURCE_COMMIT_RE.fullmatch(normalized_source):
+        raise ValueError("Fresh-install release-binding mangler gyldigt source commit")
+    return {
+        "release_id": normalized_release_id,
+        "version": normalized_version,
+        "release_sequence": normalized_sequence,
+        "bundle_sha256": normalized_bundle_sha256,
+        "bundle_size": normalized_bundle_size,
+        "release_approval_reference": normalized_approval,
+        "release_candidate_sha256": normalized_candidate,
+        "source_commit": normalized_source,
+    }
+
+
+def _claim_fresh_install_binding(data: FreshInstallClaimBinding) -> dict[str, object]:
+    try:
+        return _normalize_fresh_install_binding_fields(
+            release_id=data.release_id,
+            version=data.version,
+            release_sequence=data.release_sequence,
+            bundle_sha256=data.bundle_sha256,
+            bundle_size=data.bundle_size,
+            release_approval_reference=data.release_approval_reference,
+            release_candidate_sha256=data.release_candidate_sha256,
+            source_commit=data.source_commit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _authorization_fresh_install_binding(authorization) -> dict[str, object]:
+    return {
+        "release_id": authorization.release_id,
+        "version": authorization.version,
+        "release_sequence": int(authorization.release_sequence),
+        "bundle_sha256": authorization.bundle_sha256,
+        "bundle_size": int(authorization.bundle_size),
+        "release_approval_reference": authorization.approval_reference,
+        "release_candidate_sha256": authorization.candidate_sha256,
+        "source_commit": authorization.source_commit,
+    }
+
+
+def _require_same_fresh_install_binding(
+    supplied: dict[str, object],
+    expected: dict[str, object],
+    *,
+    detail: str,
+) -> None:
+    for key in (
+        "release_id",
+        "version",
+        "release_sequence",
+        "bundle_sha256",
+        "bundle_size",
+        "release_approval_reference",
+        "release_candidate_sha256",
+        "source_commit",
+    ):
+        left = supplied[key]
+        right = expected[key]
+        if key in {"bundle_sha256", "release_candidate_sha256", "source_commit"}:
+            if not hmac.compare_digest(str(left), str(right)):
+                raise HTTPException(status_code=409, detail=detail)
+        elif left != right:
+            raise HTTPException(status_code=409, detail=detail)
+
+
+def _bound_resume_proof_hash(resume_proof: str, binding: dict[str, object]) -> str:
+    canonical = json.dumps(
+        {key: binding[key] for key in (
+            "release_id",
+            "version",
+            "release_sequence",
+            "bundle_sha256",
+            "bundle_size",
+            "release_approval_reference",
+            "release_candidate_sha256",
+            "source_commit",
+        )},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("ascii")
+    digest = hashlib.sha256()
+    digest.update(b"clientflow-enrollment-resume-binding-v1\0")
+    digest.update(resume_proof.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(canonical)
+    return digest.hexdigest()
+
+
+def _require_bound_resume_receipt(
+    receipt: ClientEnrollmentReceipt,
+    *,
+    resume_proof: str,
+    binding: dict[str, object],
+) -> None:
+    expected = _bound_resume_proof_hash(resume_proof, binding)
+    if secrets.compare_digest(receipt.resume_proof_hash, expected):
+        return
+    # Historical receipts used only SHA-256(resume_proof) and therefore carry
+    # no release commitment. They must fail closed rather than gain an implicit
+    # compatibility path that bypasses the new trust boundary.
+    if secrets.compare_digest(receipt.resume_proof_hash, _resume_proof_hash(resume_proof)):
+        raise HTTPException(
+            status_code=409,
+            detail="Enrollment receipt er legacy og mangler canonical fresh-install release-binding",
+        )
+    raise HTTPException(status_code=401, detail="Enrollment resume-proof eller release-binding er ugyldig")
+
+
+def _verify_initial_fresh_install_authorization(
+    *,
+    token: EnrollmentToken,
+    authorization_value: str | None,
+    binding: dict[str, object],
+):
+    raw = str(authorization_value or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Fresh-install authorization mangler")
+    try:
+        authorization = verify_fresh_install_authorization(
+            raw,
+            enrollment_token_id=int(token.id),
+        )
+    except ClientFlowFreshInstallAuthorizationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    if authorization.expires_at_epoch != utc_epoch(token.expires_at):
+        raise HTTPException(
+            status_code=401,
+            detail="Fresh-install authorization matcher ikke installationskodens udløb",
+        )
+    _require_same_fresh_install_binding(
+        binding,
+        _authorization_fresh_install_binding(authorization),
+        detail="Fresh-install release-binding matcher ikke authorization",
+    )
+    return authorization
 
 
 def _token_to_read(token: EnrollmentToken, session: Optional[Session] = None) -> EnrollmentTokenRead:
@@ -619,6 +815,7 @@ def _resume_existing(
     session: Session,
     *,
     receipt: ClientEnrollmentReceipt,
+    binding: dict[str, object],
     seed: bytes,
     resume_proof: str,
     public_key_pem: str,
@@ -628,8 +825,11 @@ def _resume_existing(
 ) -> EnrollmentClaimResponse:
     if receipt.expires_at < utcnow() and receipt.completed_at is None:
         raise HTTPException(status_code=410, detail="Enrollment resume-vinduet er udløbet")
-    if not secrets.compare_digest(receipt.resume_proof_hash, _resume_proof_hash(resume_proof)):
-        raise HTTPException(status_code=401, detail="Enrollment resume-proof er ugyldig")
+    _require_bound_resume_receipt(
+        receipt,
+        resume_proof=resume_proof,
+        binding=binding,
+    )
     client = session.get(Client, receipt.client_id)
     system_key = session.exec(
         select(ClientSystemEncryptionKey).where(ClientSystemEncryptionKey.client_id == receipt.client_id)
@@ -662,6 +862,7 @@ def claim_enrollment_token(
         detail="For mange forsøg med installationskode. Prøv igen senere.",
     )
     install_id = _normalize_install_id(data.install_id)
+    binding = _claim_fresh_install_binding(data.fresh_install_binding)
     seed = _decode_seed(data.credential_seed_b64)
     expected_proof = _derive_resume_proof(seed, install_id)
     if not secrets.compare_digest(expected_proof, data.resume_proof):
@@ -674,11 +875,16 @@ def claim_enrollment_token(
     except ClientFlowUpdateAuthError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    # A committed first claim may have consumed the one-time code before the
+    # client persisted credentials. Resume is therefore authenticated by the
+    # install receipt proof + original key material + immutable release binding,
+    # not by a code/authorization that may already be used or expired.
     receipt = session.get(ClientEnrollmentReceipt, install_id)
     if receipt is not None:
         return _resume_existing(
             session,
             receipt=receipt,
+            binding=binding,
             seed=seed,
             resume_proof=data.resume_proof,
             public_key_pem=public_key_pem,
@@ -687,9 +893,12 @@ def claim_enrollment_token(
             update_key_id=update_key_id,
         )
 
-    code = (data.enrollment_code or "").strip().upper()
+    code = str(data.enrollment_code or "").strip().upper()
     if not code:
-        raise HTTPException(status_code=400, detail="Installationskode mangler")
+        raise HTTPException(status_code=400, detail="Installationskode mangler for første enrollment claim")
+    if not str(data.fresh_install_authorization or "").strip():
+        raise HTTPException(status_code=400, detail="Fresh-install authorization mangler for første enrollment claim")
+
     now = utcnow()
     candidates = session.exec(
         select(EnrollmentToken).where(
@@ -704,6 +913,15 @@ def claim_enrollment_token(
     token = session.exec(select(EnrollmentToken).where(EnrollmentToken.id == token.id).with_for_update()).one()
     if token.used_at is not None or token.revoked_at is not None or token.expires_at < now:
         raise HTTPException(status_code=401, detail="Installationskoden er ugyldig, brugt eller udløbet")
+
+    # This is the consuming trust gate. Nothing client/credential-related is
+    # created before the signed authorization and the locally verified bundle
+    # provenance have been proven to describe the same exact approved release.
+    _verify_initial_fresh_install_authorization(
+        token=token,
+        authorization_value=data.fresh_install_authorization,
+        binding=binding,
+    )
 
     hostname = (data.hostname or "").strip()
     name = (data.name or "").strip() or hostname or "Ny infoskærm"
@@ -746,7 +964,7 @@ def claim_enrollment_token(
     receipt = ClientEnrollmentReceipt(
         install_id=install_id,
         client_id=client_id,
-        resume_proof_hash=_resume_proof_hash(data.resume_proof),
+        resume_proof_hash=_bound_resume_proof_hash(data.resume_proof, binding),
         created_at=now,
         expires_at=now + timedelta(hours=ENROLLMENT_RESUME_HOURS),
     )
@@ -831,6 +1049,14 @@ def claim_enrollment_token(
         details={
             "enrollment_token_id": token.id,
             "install_id": install_id,
+            "fresh_install_release_id": binding["release_id"],
+            "fresh_install_version": binding["version"],
+            "fresh_install_release_sequence": binding["release_sequence"],
+            "fresh_install_bundle_sha256": binding["bundle_sha256"],
+            "fresh_install_bundle_size": binding["bundle_size"],
+            "fresh_install_approval_reference": binding["release_approval_reference"],
+            "fresh_install_candidate_sha256": binding["release_candidate_sha256"],
+            "fresh_install_source_commit": binding["source_commit"],
             "credential_domains": list(DOMAIN_NAMES),
             "update_auth_key_id": update_key_id,
             "machine_id_present": bool(client.machine_id),
@@ -856,6 +1082,7 @@ def complete_enrollment(
         detail="For mange enrollment-complete forsøg. Prøv igen senere.",
     )
     install_id = _normalize_install_id(data.install_id)
+    binding = _claim_fresh_install_binding(data.fresh_install_binding)
     receipt = session.exec(
         select(ClientEnrollmentReceipt)
         .where(ClientEnrollmentReceipt.install_id == install_id)
@@ -863,8 +1090,11 @@ def complete_enrollment(
     ).one_or_none()
     if receipt is None:
         raise HTTPException(status_code=404, detail="Enrollment receipt blev ikke fundet")
-    if not secrets.compare_digest(receipt.resume_proof_hash, _resume_proof_hash(data.resume_proof)):
-        raise HTTPException(status_code=401, detail="Enrollment resume-proof er ugyldig")
+    _require_bound_resume_receipt(
+        receipt,
+        resume_proof=data.resume_proof,
+        binding=binding,
+    )
     if receipt.completed_at is None:
         if receipt.expires_at < utcnow():
             raise HTTPException(status_code=410, detail="Enrollment resume-vinduet er udløbet")

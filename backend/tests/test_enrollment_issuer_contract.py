@@ -63,28 +63,81 @@ class EnrollmentIssuerContractTests(unittest.TestCase):
             "name": "CI screen",
         }
 
-    def test_claim_accepts_per_domain_issuers_without_top_level_issuer(self) -> None:
-        response = self._response()
-        install_id = str(uuid.uuid4())
-        seed = bytes(range(32))
-        with patch.object(release_enrollment, "_post_json", return_value=response):
+    def _binding(self) -> dict:
+        return {
+            "release_id": "clientflow-1.3.3-seq-1204",
+            "version": "1.3.3",
+            "release_sequence": 1204,
+            "bundle_sha256": "a" * 64,
+            "bundle_size": 123456,
+            "release_approval_reference": "clientflow-1.3.3-seq-1204/test",
+            "release_candidate_sha256": "b" * 64,
+            "source_commit": "c" * 40,
+        }
+
+    def _claim(self, response: dict, *, enrollment_code="CF-TEST-TEST-TEST", authorization="cf-fresh-v1.payload.signature"):
+        captured: dict = {}
+
+        def fake_post(_url, payload, *, ca_file):
+            captured.update(payload)
+            return response
+
+        with patch.object(release_enrollment, "_post_json", side_effect=fake_post):
             actual = release_enrollment.claim(
                 backend_url="https://display.example.invalid",
-                enrollment_code="CF-TEST-TEST-TEST",
-                install_id=install_id,
-                seed=seed,
+                enrollment_code=enrollment_code,
+                fresh_install_authorization=authorization,
+                fresh_install_binding=self._binding(),
+                install_id=str(uuid.uuid4()),
+                seed=bytes(range(32)),
                 public_key_pem="-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----",
                 update_auth_public_key_pem="-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAzU6003WsShJbh/Yk3H4tAwXd4ep+A128YEJSAYemC68=\n-----END PUBLIC KEY-----",
                 name="CI screen",
                 locality=None,
                 ca_file=None,
             )
+        return actual, captured
+
+    def test_claim_accepts_per_domain_issuers_without_top_level_issuer(self) -> None:
+        response = self._response()
+        actual, captured = self._claim(response)
         self.assertEqual(actual, response)
         self.assertNotIn("token_issuer", actual)
+        self.assertEqual(captured["enrollment_code"], "CF-TEST-TEST-TEST")
+        self.assertEqual(captured["fresh_install_authorization"], "cf-fresh-v1.payload.signature")
+        self.assertEqual(captured["fresh_install_binding"], self._binding())
         self.assertNotEqual(
             next(row["token_issuer"] for row in actual["credentials"] if row["domain"] == "livestream"),
             next(row["token_issuer"] for row in actual["credentials"] if row["domain"] == "status"),
         )
+
+    def test_claim_can_send_receipt_resume_without_one_time_authorities(self) -> None:
+        response = self._response()
+        actual, captured = self._claim(response, enrollment_code=None, authorization=None)
+        self.assertEqual(actual, response)
+        self.assertIsNone(captured["enrollment_code"])
+        self.assertIsNone(captured["fresh_install_authorization"])
+        self.assertEqual(captured["fresh_install_binding"], self._binding())
+
+
+    def test_complete_carries_same_release_binding_as_claim_resume(self) -> None:
+        captured: dict = {}
+
+        def fake_post(_url, payload, *, ca_file):
+            captured.update(payload)
+            return {"ok": True}
+
+        with patch.object(release_enrollment, "_post_json", side_effect=fake_post):
+            result = release_enrollment.complete(
+                backend_url="https://display.example.invalid",
+                install_id=str(uuid.uuid4()),
+                seed=bytes(range(32)),
+                fresh_install_binding=self._binding(),
+                ca_file=None,
+            )
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(captured["fresh_install_binding"], self._binding())
+        self.assertIn("resume_proof", captured)
 
     def test_persist_enrollment_keeps_each_domain_issuer(self) -> None:
         seed = bytes(range(32))
@@ -121,19 +174,8 @@ class EnrollmentIssuerContractTests(unittest.TestCase):
     def test_claim_rejects_missing_domain_issuer(self) -> None:
         response = self._response()
         response["credentials"][0].pop("token_issuer")
-        with patch.object(release_enrollment, "_post_json", return_value=response):
-            with self.assertRaisesRegex(release_enrollment.EnrollmentError, "mangler token issuer"):
-                release_enrollment.claim(
-                    backend_url="https://display.example.invalid",
-                    enrollment_code="CF-TEST-TEST-TEST",
-                    install_id=str(uuid.uuid4()),
-                    seed=bytes(range(32)),
-                    public_key_pem="-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----",
-                    update_auth_public_key_pem="-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAzU6003WsShJbh/Yk3H4tAwXd4ep+A128YEJSAYemC68=\n-----END PUBLIC KEY-----",
-                    name="CI screen",
-                    locality=None,
-                    ca_file=None,
-                )
+        with self.assertRaisesRegex(release_enrollment.EnrollmentError, "mangler token issuer"):
+            self._claim(response)
 
 
 if __name__ == "__main__":

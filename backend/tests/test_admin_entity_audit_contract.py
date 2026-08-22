@@ -23,12 +23,17 @@ os.environ.setdefault(
     "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
 )
 os.environ.setdefault("CLIENTFLOW_ROOT_TERMINAL_KEY_ID", "ci-root-terminal-key-v1")
+os.environ.setdefault(
+    "CLIENTFLOW_FRESH_INSTALL_AUTH_KEY_B64",
+    "a2tra2tra2tra2tra2tra2tra2tra2tra2tra2tra2s=",
+)
 
 from fastapi import Request
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from service1.auth import get_password_hash
+from service1.clientflow_fresh_install_auth import issue_fresh_install_authorization
 from service1.models import (
     AuditLog,
     CalendarMarking,
@@ -56,6 +61,7 @@ from service1.remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktop
 from service1.terminal_v2_models import TerminalClient, TerminalCredential
 from service1.routers.enrollment import (
     EnrollmentClaimRequest,
+    FreshInstallClaimBinding,
     EnrollmentTokenCreate,
     _derive_resume_proof,
     claim_enrollment_token,
@@ -85,13 +91,48 @@ MCowBQYDK2VwAyEAzU6003WsShJbh/Yk3H4tAwXd4ep+A128YEJSAYemC68=
 -----END PUBLIC KEY-----
 """
 
+TEST_FRESH_INSTALL_BINDING = {
+    "release_id": "clientflow-9.8.7-seq-6543",
+    "version": "9.8.7",
+    "release_sequence": 6543,
+    "bundle_sha256": "a" * 64,
+    "bundle_size": 80123456,
+    "release_approval_reference": "audit-contract/approved",
+    "release_candidate_sha256": "b" * 64,
+    "source_commit": "c" * 40,
+}
 
-def _canonical_enrollment_claim(*, code: str, hostname: str, machine_id: str | None = None) -> EnrollmentClaimRequest:
+
+def _canonical_enrollment_claim(
+    *,
+    token: EnrollmentToken,
+    code: str,
+    hostname: str,
+    machine_id: str | None = None,
+) -> EnrollmentClaimRequest:
+    if token.id is None:
+        raise AssertionError("Enrollment token skal være persisted før claim-testen")
     install_id = str(uuid.uuid4())
     seed = bytes(range(32))
     seed_b64 = base64.urlsafe_b64encode(seed).rstrip(b"=").decode("ascii")
+    authorization = issue_fresh_install_authorization(
+        enrollment_token_id=int(token.id),
+        expires_at=token.expires_at,
+        snapshot={
+            "target_release_id": TEST_FRESH_INSTALL_BINDING["release_id"],
+            "target_version": TEST_FRESH_INSTALL_BINDING["version"],
+            "target_release_sequence": TEST_FRESH_INSTALL_BINDING["release_sequence"],
+            "bundle_sha256": TEST_FRESH_INSTALL_BINDING["bundle_sha256"],
+            "bundle_size": TEST_FRESH_INSTALL_BINDING["bundle_size"],
+            "release_approval_reference": TEST_FRESH_INSTALL_BINDING["release_approval_reference"],
+            "release_candidate_sha256": TEST_FRESH_INSTALL_BINDING["release_candidate_sha256"],
+            "source_commit": TEST_FRESH_INSTALL_BINDING["source_commit"],
+        },
+    )
     return EnrollmentClaimRequest(
         enrollment_code=code,
+        fresh_install_authorization=authorization,
+        fresh_install_binding=FreshInstallClaimBinding(**TEST_FRESH_INSTALL_BINDING),
         install_id=install_id,
         credential_seed_b64=seed_b64,
         resume_proof=_derive_resume_proof(seed, install_id),
@@ -398,6 +439,7 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
         response = claim_enrollment_token(
             _request("POST", "/api/enrollment/claim"),
             _canonical_enrollment_claim(
+                token=token,
                 code=code,
                 hostname="batch4-screen",
                 machine_id="batch4-machine-id",
@@ -459,6 +501,7 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
                 claim_enrollment_token(
                     _request("POST", "/api/enrollment/claim"),
                     _canonical_enrollment_claim(
+                        token=token,
                         code=code,
                         hostname="must-not-persist",
                     ),

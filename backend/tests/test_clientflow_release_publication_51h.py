@@ -31,9 +31,9 @@ from clientflow_release.archive import read_bundle  # noqa: E402
 from scripts import publish_clientflow_release as publication  # noqa: E402
 
 
-RELEASE_ID = "clientflow-1.3.2-seq-1203"
-VERSION = "1.3.2"
-SEQUENCE = 1203
+VERSION = (ROOT / "client/VERSION").read_text(encoding="utf-8").strip()
+SEQUENCE = int(json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))["release_sequence"])
+RELEASE_ID = f"clientflow-{VERSION}-seq-{SEQUENCE}"
 
 
 def _approved_bundle(
@@ -306,7 +306,7 @@ def test_51h_publication_rejects_bundle_from_other_source_release_identity(
     monkeypatch.setattr(
         publication,
         "_source_release_identity",
-        lambda: ("1.3.3", 1204, "clientflow-1.3.3-seq-1204"),
+        lambda: ("9.9.9", 9999, "clientflow-9.9.9-seq-9999"),
     )
 
     artifact_dir = tmp_path / "artifact-store"

@@ -16,7 +16,14 @@ import uuid
 from .bundle import verify_bundle
 from .constants import DOMAIN_NAMES, INSTALL_MODE_FRESH, MAX_BUNDLE_BYTES
 from .crypto import sha256_file
-from .enrollment import claim, complete, generate_system_key, persist_enrollment, validate_backend_url
+from .enrollment import (
+    claim,
+    complete,
+    generate_system_key,
+    persist_enrollment,
+    validate_backend_url,
+    validate_fresh_install_binding,
+)
 from .update_auth import generate_update_key, public_material as update_public_material
 from .filesystem import atomic_write_bytes, atomic_write_json, ensure_real_directory, load_secure_json
 from .transaction import (
@@ -30,7 +37,7 @@ from .transaction import (
 )
 from .wipe import wipe
 
-INSTALL_STATE_SCHEMA = 1
+INSTALL_STATE_SCHEMA = 2
 
 
 def _layout(value: str | None) -> Layout:
@@ -288,17 +295,51 @@ def _validate_inactive_install(layout: Layout, release_id: str) -> None:
             raise RuntimeError("clientflow.target må ikke være aktiv før manuel godkendelse")
 
 
-def _verify_expected_bundle_hash(bundle: Path, expected_sha256: str) -> str:
+def _verify_expected_bundle_identity(bundle: Path, expected_sha256: str) -> tuple[int, str]:
     expected = str(expected_sha256 or "").strip().lower()
     if not re.fullmatch(r"[0-9a-f]{64}", expected):
         raise RuntimeError("expected_bundle_sha256 skal være præcis SHA-256")
     try:
-        _size, actual = sha256_file(bundle, max_bytes=MAX_BUNDLE_BYTES)
+        size, actual = sha256_file(bundle, max_bytes=MAX_BUNDLE_BYTES)
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"Releasebundlen kunne ikke hashes sikkert: {exc}") from exc
     if actual != expected:
         raise RuntimeError("Releasebundlens SHA-256 matcher ikke den eksplicit forventede hash")
-    return actual
+    return size, actual
+
+
+def _verify_expected_bundle_hash(bundle: Path, expected_sha256: str) -> str:
+    return _verify_expected_bundle_identity(bundle, expected_sha256)[1]
+
+
+def _fresh_install_binding(manifest: dict, *, bundle_size: int, bundle_sha256: str) -> dict:
+    approval = manifest.get("release_approval") or {}
+    source = manifest.get("source") or {}
+    return validate_fresh_install_binding(
+        {
+            "release_id": manifest.get("release_id"),
+            "version": manifest.get("version"),
+            "release_sequence": manifest.get("release_sequence"),
+            "bundle_sha256": bundle_sha256,
+            "bundle_size": bundle_size,
+            "release_approval_reference": approval.get("reference"),
+            "release_candidate_sha256": approval.get("candidate_sha256"),
+            "source_commit": source.get("commit"),
+        }
+    )
+
+
+def _state_fresh_install_binding(install_state: dict) -> dict:
+    try:
+        binding = install_state["fresh_install_binding"]
+    except KeyError as exc:
+        raise RuntimeError(
+            "Uafsluttet installation mangler canonical fresh-install release-binding"
+        ) from exc
+    try:
+        return validate_fresh_install_binding(binding)
+    except Exception as exc:
+        raise RuntimeError("Uafsluttet installation har ugyldig fresh-install release-binding") from exc
 
 
 def install_fresh(args: argparse.Namespace) -> dict:
@@ -306,20 +347,32 @@ def install_fresh(args: argparse.Namespace) -> dict:
     _require_root(layout)
     kiosk_user = _validate_kiosk_user(args.kiosk_user, layout)
     backend_url = validate_backend_url(args.backend_url)
-    approved_bundle_sha256 = _verify_expected_bundle_hash(args.bundle, args.expected_bundle_sha256)
+    bundle_size, approved_bundle_sha256 = _verify_expected_bundle_identity(
+        args.bundle, args.expected_bundle_sha256
+    )
     manifest, _payload = verify_bundle(
         args.bundle, require_deployable=True, required_install_mode=INSTALL_MODE_FRESH
     )
-    release_id = manifest["release_id"]
+    binding = _fresh_install_binding(
+        manifest,
+        bundle_size=bundle_size,
+        bundle_sha256=approved_bundle_sha256,
+    )
+    release_id = str(binding["release_id"])
     state_path = _install_state_path(layout)
+
     if state_path.exists():
         install_state = load_secure_json(state_path)
-        if install_state.get("schema_version") != INSTALL_STATE_SCHEMA or install_state.get("release_id") != release_id:
-            raise RuntimeError("En anden uafsluttet ClientFlow-installation findes allerede")
+        if install_state.get("schema_version") != INSTALL_STATE_SCHEMA:
+            raise RuntimeError(
+                "Uafsluttet ClientFlow-installation bruger et ældre ubundet install-state schema; "
+                "den kan ikke resumes sikkert af denne installer"
+            )
+        state_binding = _state_fresh_install_binding(install_state)
+        if state_binding != binding:
+            raise RuntimeError("Resume kræver præcis samme godkendte fresh-install release-binding")
         if install_state.get("backend_url") != backend_url or install_state.get("kiosk_user") != kiosk_user:
             raise RuntimeError("Resume kræver samme backend_url og kiosk-user som den oprindelige installation")
-        if install_state.get("bundle_sha256") != approved_bundle_sha256:
-            raise RuntimeError("Resume kræver præcis samme godkendte releasebundle")
         if install_state.get("status") == "pending_manual_activation":
             install_stable_updater_host(release_id, layout=layout)
             _validate_inactive_install(layout, release_id)
@@ -330,6 +383,13 @@ def install_fresh(args: argparse.Namespace) -> dict:
                 "automatic_reboot": False,
             }
     else:
+        # A brand-new consuming transaction must have both one-time authorities
+        # before any ClientFlow filesystem state is created. They are never
+        # persisted locally; only the non-secret verified release binding is.
+        if not str(args.enrollment_code or "").strip():
+            raise RuntimeError("Ny fresh install kræver en one-time enrollment code")
+        if not str(args.fresh_install_authorization or "").strip():
+            raise RuntimeError("Ny fresh install kræver fresh-install authorization")
         conflicts = _fresh_conflicts(layout)
         if conflicts:
             raise RuntimeError(
@@ -340,12 +400,11 @@ def install_fresh(args: argparse.Namespace) -> dict:
         seed = secrets.token_bytes(32)
         install_state = {
             "schema_version": INSTALL_STATE_SCHEMA,
-            "release_id": release_id,
+            "fresh_install_binding": binding,
             "install_id": str(uuid.uuid4()),
             "credential_seed_b64": base64.urlsafe_b64encode(seed).rstrip(b"=").decode("ascii"),
             "backend_url": backend_url,
             "kiosk_user": kiosk_user,
-            "bundle_sha256": approved_bundle_sha256,
             "status": "initialized",
         }
         atomic_write_json(state_path, install_state, mode=0o600)
@@ -386,6 +445,8 @@ def install_fresh(args: argparse.Namespace) -> dict:
         response = claim(
             backend_url=backend_url,
             enrollment_code=args.enrollment_code,
+            fresh_install_authorization=args.fresh_install_authorization,
+            fresh_install_binding=binding,
             install_id=install_id,
             seed=seed,
             public_key_pem=public_key_pem,
@@ -407,7 +468,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
         install_state["status"] = "credentials_persisted"
         atomic_write_json(state_path, install_state, mode=0o600)
     if install_state.get("status") != "enrollment_completed":
-        complete(backend_url=backend_url, install_id=install_id, seed=seed, ca_file=request_ca_file)
+        complete(backend_url=backend_url, install_id=install_id, seed=seed, fresh_install_binding=binding, ca_file=request_ca_file)
         install_state["status"] = "enrollment_completed"
         atomic_write_json(state_path, install_state, mode=0o600)
 
@@ -415,11 +476,10 @@ def install_fresh(args: argparse.Namespace) -> dict:
     _validate_inactive_install(layout, release_id)
     final_state = {
         "schema_version": INSTALL_STATE_SCHEMA,
-        "release_id": release_id,
+        "fresh_install_binding": binding,
         "install_id": install_id,
         "backend_url": backend_url,
         "kiosk_user": kiosk_user,
-        "bundle_sha256": approved_bundle_sha256,
         "status": "pending_manual_activation",
     }
     atomic_write_json(state_path, final_state, mode=0o600)
@@ -445,7 +505,11 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--bundle", type=Path, required=True)
     install.add_argument("--expected-bundle-sha256", required=True)
     install.add_argument("--backend-url", required=True)
-    install.add_argument("--enrollment-code", required=True)
+    # These are optional at argparse level so an ambiguous post-claim crash can
+    # resume from the receipt without a consumed/expired one-time authority.
+    # install_fresh requires both before creating state for a brand-new install.
+    install.add_argument("--enrollment-code")
+    install.add_argument("--fresh-install-authorization")
     install.add_argument("--kiosk-user", required=True)
     install.add_argument("--name")
     install.add_argument("--locality")
