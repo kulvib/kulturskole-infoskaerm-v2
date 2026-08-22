@@ -7,15 +7,15 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_step51_follows_canonical_foundations_and_is_new_head():
+def test_step51_follows_canonical_foundations_and_remains_in_reviewed_head_chain():
     migration = read("migrations/versions/20260819_51a_clientflow_update_control.py")
     contract = read("scripts/display_schema_contract.py")
     runner = read("scripts/run_migrations.py")
     assert 'revision = "20260819_51a_update_control"' in migration
     assert 'down_revision = "20260819_50a_canonical"' in migration
-    assert 'EXPECTED_HEAD_REVISION = "20260820_51b_update_auth"' in contract
+    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20260822_52a_client_liveness"'
     assert 'REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION = "20260819_51a_update_control"' in runner
-    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260820_51b_update_auth"' in runner
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260822_52a_client_liveness"' in runner
 
 
 def test_step51_has_separate_update_identity_and_first_class_deployment_tables():

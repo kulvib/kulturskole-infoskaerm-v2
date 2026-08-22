@@ -183,7 +183,7 @@ function UpdateStepTimeline({ steps, currentIndex = -1, terminal = false, error 
   );
 }
 
-function ClientFlowUpdateControl({ clientId, clientOnline, clientVersion, pendingOsUpdate, showSnackbar, onFinished }) {
+function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, showSnackbar, onFinished }) {
   const [deployment, setDeployment] = React.useState(null);
   const [polling, setPolling] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
@@ -278,7 +278,7 @@ function ClientFlowUpdateControl({ clientId, clientOnline, clientVersion, pendin
   }, [feedbackVisible, inProgress, starting, cancelling, finished, state]);
 
   const executeClientFlowUpdate = async ({ confirmDowngrade = false, reason = null } = {}) => {
-    if (!clientId || clientOnline === false || starting || inProgress || otherUpdateInProgress || sameVersionSelected) return;
+    if (!clientId || starting || inProgress || otherUpdateInProgress || sameVersionSelected) return;
     setFeedbackVisible(true);
     setStarting(true);
     try {
@@ -332,7 +332,7 @@ function ClientFlowUpdateControl({ clientId, clientOnline, clientVersion, pendin
     setDowngradeReason("");
   };
 
-  const disabled = !clientId || clientOnline === false || starting || inProgress || otherUpdateInProgress || !releaseCatalog || !selectedRelease || sameVersionSelected;
+  const disabled = !clientId || starting || inProgress || otherUpdateInProgress || !releaseCatalog || !selectedRelease || sameVersionSelected;
   const stateIsError = state === "failed" || state === "recovery_failed";
   const stateIsWarning = state === "cancelled" || state === "rolled_back" || state === "rolling_back";
   const stateIsSuccess = state === "succeeded";
@@ -846,7 +846,7 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) 
   const startUbuntuUpdate = async (event) => {
     event?.preventDefault?.();
     event?.stopPropagation?.();
-    if (!client?.id || clientOnline === false || starting || inProgress || otherUpdateInProgress) return;
+    if (!client?.id || clientOnline !== true || starting || inProgress || otherUpdateInProgress) return;
 
     const now = new Date().toISOString();
     setStarting(true);
@@ -891,7 +891,7 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) 
     }
   };
 
-  const disabled = !client?.id || clientOnline === false || starting || inProgress || otherUpdateInProgress;
+  const disabled = !client?.id || clientOnline !== true || starting || inProgress || otherUpdateInProgress;
 
   return (
     <Box sx={{ p: 1.15, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
@@ -1046,27 +1046,24 @@ function normalizeNetworkStatus(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-function networkStatusLevel(client, isOnline = true) {
+function networkStatusLevel(client) {
   const status = normalizeNetworkStatus(client?.network_status);
-  if (client?.network_has_connection === false || status === "offline" || status === "no_network") return "error";
-  if (isOnline === false) return "error";
+  if (client?.network_has_connection === false || ["no_network", "disconnected", "missing"].includes(status)) return "error";
   if (status === "ok" || client?.network_has_connection === true) return "ok";
-  if (status === "unknown" || !status) return "warn";
   return "warn";
 }
 
-function networkStatusMessage(client, isOnline = true) {
+function networkStatusMessage(client) {
   if (client?.network_status_message) return client.network_status_message;
-  if (isOnline === false) return "Klienten har ingen forbindelse til backend";
   const type = normalize(client?.active_network_type);
   const ip = normalize(client?.active_network_ip || client?.wifi_ip_address || client?.lan_ip_address);
-  if (type || ip) return `Netværk aktivt${type ? `: ${type}` : ""}${ip ? ` · ${ip}` : ""}`;
-  return "Netværksstatus ukendt";
+  if (type || ip) return `Seneste netværksdiagnostik${type ? `: ${type}` : ""}${ip ? ` · ${ip}` : ""}`;
+  return "Netværksdiagnostik ukendt";
 }
 
-function isNetworkUnavailable(client, isOnline = true) {
+function isNetworkUnavailable(client) {
   const status = normalizeNetworkStatus(client?.network_status);
-  return isOnline === false || client?.network_has_connection === false || ["offline", "no_network", "disconnected", "missing"].includes(status);
+  return client?.network_has_connection === false || ["no_network", "disconnected", "missing"].includes(status);
 }
 
 function formatDateTime(value, withSeconds = false) {
@@ -1723,10 +1720,10 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
           md: 5
         }}>
         <DataPanel title="Drift">
-          <InfoRow label="Online" value={clientOnline === false ? "Nej" : "Ja"} color={clientOnline === false ? "#f87171" : "#22c55e"} />
+          <InfoRow label="Online" value={clientOnline === true ? "Ja" : "Nej"} color={clientOnline === true ? "#22c55e" : "#f87171"} />
           <InfoRow label="State" value={client?.state || "ukendt"} />
           <InfoRow label="Oppetid" value={formatUptime(uptime ?? client?.uptime)} />
-          <InfoRow label="Sidst set" value={formatDateTime(lastSeen || client?.last_seen, true)} />
+          <InfoRow label="Sidst set" value={formatDateTime(lastSeen || client?.presence?.status?.reported_at, true)} />
           <InfoRow label="Tilføjet" value={formatDateTime(client?.created_at, true)} />
         </DataPanel>
       </Grid>
@@ -1750,7 +1747,6 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
           <Stack spacing={1.1}>
             <ClientFlowUpdateControl
               clientId={client?.id}
-              clientOnline={clientOnline}
               clientVersion={client?.client_version}
               pendingOsUpdate={client?.pending_os_update}
               showSnackbar={showSnackbar}
@@ -1770,14 +1766,12 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
 }
 
 function NetworkPanel({ client }) {
-  const onlineValue = client?.isOnline ?? client?.is_online;
-  const isOnline = onlineValue !== false;
-  const level = networkStatusLevel(client, isOnline);
-  const message = networkStatusMessage(client, isOnline);
+  const level = networkStatusLevel(client);
+  const message = networkStatusMessage(client);
 
   const activeRows = [
     ["Netværksstatus", message],
-    ["Statuskode", client?.network_status || (isOnline ? "unknown" : "offline")],
+    ["Statuskode", client?.network_status || "unknown"],
     ["Aktiv forbindelse", client?.active_network_type],
     ["Aktiv IP", client?.active_network_ip],
     ["Aktivt interface", client?.active_network_interface],
@@ -2033,7 +2027,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     await save();
   };
 
-  const canResetBrowser = canEditBrowserMaintenance && !!handleClientAction && clientOnline !== false && !resettingBrowser;
+  const canResetBrowser = canEditBrowserMaintenance && !!handleClientAction && clientOnline === true && !resettingBrowser;
 
   const openResetBrowserDialog = () => {
     if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
@@ -2670,11 +2664,11 @@ function DiagnosticsPanel({ client, onRefresh }) {
 
   const normalizeText = (value) => String(value || "").trim().toLowerCase();
   const statusText = (value, fallback = "ukendt") => formatDiagnosticValue(value, fallback);
-  const onlineValue = client?.isOnline ?? client?.is_online;
+  const onlineValue = client?.presence?.is_online;
   const isOnline = onlineValue === true;
-  const networkLevel = networkStatusLevel(client, isOnline);
-  const networkMessage = networkStatusMessage(client, isOnline);
-  const networkUnavailable = isNetworkUnavailable(client, isOnline);
+  const networkLevel = networkStatusLevel(client);
+  const networkMessage = networkStatusMessage(client);
+  const networkUnavailable = isNetworkUnavailable(client);
   const ubuntuUpdateCount = Number.parseInt(String(client?.ubuntu_updates_available ?? ""), 10);
   const hasUbuntuUpdates = Number.isFinite(ubuntuUpdateCount) && ubuntuUpdateCount > 0;
   const pendingChromeAction = normalizeText(client?.pending_chrome_action || "none");
@@ -2831,7 +2825,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
         { label: "Klientnavn", value: client?.name || client?.client_name },
         { label: "ClientFlow version", value: client?.client_version ? `v${String(client.client_version).replace(/^v/i, "")}` : "" },
         { label: "State", value: client?.state, status: true },
-        { label: "Sidst set", value: formatDiagnosticDate(client?.last_seen) },
+        { label: "Sidst set", value: formatDiagnosticDate(client?.presence?.status?.reported_at) },
         { label: "Chrome status", value: client?.chrome_status, status: true, wide: true },
         { label: "Netværk", value: networkMessage, level: networkLevel, wide: true },
         { label: "Display", value: `${displaySummary} · ${statusText(client?.display_resolution_current_output)}`, level: getStatusLevel(client?.display_resolution_status) },
@@ -2907,7 +2901,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
         { label: "ClientFlow version", value: client?.client_version ? `v${String(client.client_version).replace(/^v/i, "")}` : "" },
         { label: "Ubuntu version", value: client?.ubuntu_version },
         { label: "Oppetid", value: formatUptime(client?.uptime) },
-        { label: "Sidst set", value: formatDiagnosticDate(client?.last_seen) },
+        { label: "Sidst set", value: formatDiagnosticDate(client?.presence?.status?.reported_at) },
         { label: "Diagnostik opdateret", value: formatDiagnosticDate(client?.diagnostics_updated_at), wide: true },
       ],
     },
@@ -2932,7 +2926,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
       columns: 2,
       rows: [
         { label: "Netværksstatus", value: networkMessage, level: networkLevel, wide: true },
-        { label: "Statuskode", value: client?.network_status || (isOnline ? "unknown" : "offline"), status: true },
+        { label: "Statuskode", value: client?.network_status || "unknown", status: true },
         { label: "Aktiv type", value: client?.active_network_type, status: true },
         { label: "Aktivt interface", value: client?.active_network_interface, copy: true },
         { label: "Aktiv IP", value: client?.active_network_ip, copy: true },

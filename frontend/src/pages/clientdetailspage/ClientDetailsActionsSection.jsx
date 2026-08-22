@@ -411,9 +411,7 @@ export default function ClientDetailsActionsSection({
   handleOpenRemoteDesktop,
   refreshing,
   showSnackbar: showSnackbarProp,
-  clientOnline = true,
-  networkUnavailable = false,
-  networkStatusMessage = null,
+  clientOnline = false,
   clientActionPending = false,
   liveStep = null,
   liveChromeStatus = null,
@@ -486,12 +484,8 @@ export default function ClientDetailsActionsSection({
   const normalizedClientState = String(clientState || "").trim().toLowerCase();
   const normalizedPendingAction = String(pendingChromeAction || "").trim().toLowerCase();
   const hasPendingAction = !!normalizedPendingAction && normalizedPendingAction !== "none";
-  const networkIssueActive = clientOnline === false || !!networkUnavailable;
-  const networkIssueMessage =
-    networkStatusMessage ||
-    (clientOnline === false
-      ? "Klienten har ingen forbindelse til backend"
-      : "Ingen aktiv netværksforbindelse registreret på klienten");
+  const clientUnavailable = clientOnline !== true;
+  const clientUnavailableMessage = "Klienten er ikke online via canonical Status-domain";
   const normalizedClientStatus = String(clientStatus || "").trim().toLowerCase();
   const clientIsApproved = normalizedClientStatus === "approved";
   const normalizedLivestreamStatus = String(livestreamStatus || "").trim().toLowerCase();
@@ -644,9 +638,9 @@ export default function ClientDetailsActionsSection({
 
   const doAction = useCallback(
     async (action) => {
-      if (networkIssueActive) {
+      if (clientUnavailable) {
         notify({
-          message: `${networkIssueMessage} — handling afvist`,
+          message: `${clientUnavailableMessage} — handling afvist`,
           severity: "warning",
         });
         return;
@@ -714,8 +708,8 @@ export default function ClientDetailsActionsSection({
       }
     },
     [
-      networkIssueActive,
-      networkIssueMessage,
+      clientUnavailable,
+      clientUnavailableMessage,
       isSystemLocked,
       clientflowUpdateBusy,
       clientflowBusyTooltip,
@@ -732,7 +726,7 @@ export default function ClientDetailsActionsSection({
 
   const getActionDisabledInfo = useCallback(
     (key) => {
-      if (networkIssueActive) return { disabled: true, reason: networkIssueMessage };
+      if (clientUnavailable) return { disabled: true, reason: clientUnavailableMessage };
       if (isSystemLocked) return { disabled: true, reason: "Klienten genstarter eller lukker ned" };
       if (clientflowUpdateBusy) return { disabled: true, reason: clientflowBusyTooltip };
       if (ubuntuUpdateBusy) return { disabled: true, reason: ubuntuUpdateBusyTooltip };
@@ -762,8 +756,8 @@ export default function ClientDetailsActionsSection({
       return { disabled: false, reason: null };
     },
     [
-      networkIssueActive,
-      networkIssueMessage,
+      clientUnavailable,
+      clientUnavailableMessage,
       isSystemLocked,
       clientflowUpdateBusy,
       clientflowBusyTooltip,
@@ -1047,7 +1041,7 @@ export default function ClientDetailsActionsSection({
     );
   };
 
-  const cardStyle = networkIssueActive ? { opacity: 0.85 } : {};
+  const cardStyle = clientUnavailable ? { opacity: 0.85 } : {};
 
   const controlRoomCardSx = controlRoom
     ? {
@@ -1165,19 +1159,16 @@ export default function ClientDetailsActionsSection({
           {systemButtons.length > 0 && renderActionGroup("Strøm", systemButtons, "danger")}
         </Box>
 
-        {networkIssueActive && (
+        {clientUnavailable && (
           <Typography
             variant="body2"
-            sx={{
-              color: "text.secondary",
-              mt: 1.5,
-              fontSize: isMobile ? 11 : 13
-            }}>
-            {networkIssueMessage} — handlinger er ikke tilgængelige.
+            sx={{ color: "text.secondary", mt: 1.5, fontSize: isMobile ? 11 : 13 }}
+          >
+            {clientUnavailableMessage} — live-handlinger er ikke tilgængelige.
           </Typography>
         )}
 
-        {isSleeping && !networkIssueActive && !ubuntuUpdateBusy && (
+        {isSleeping && !clientUnavailable && !ubuntuUpdateBusy && (
           <Typography
             variant="body2"
             color="primary"

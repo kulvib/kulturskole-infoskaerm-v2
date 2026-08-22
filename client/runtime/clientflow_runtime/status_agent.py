@@ -10,7 +10,7 @@ import time
 from typing import Any
 
 from .config import DomainCredential
-from .constants import Domain
+from .constants import Domain, SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS
 from .logging_utils import configure_logging
 from .net import DomainTransport, backoff_seconds
 from .status import report_status
@@ -56,13 +56,12 @@ def main() -> int:
     logger = configure_logging("clientflow.status")
     credential = DomainCredential.load(Domain.STATUS)
     transport = DomainTransport(credential)
-    interval = max(15, int(os.getenv("CLIENTFLOW_STATUS_INTERVAL_SECONDS", "30")))
     attempt = 0
     while True:
         try:
             report_status(transport, observed_state="online", payload=collect_host_status())
             attempt = 0
-            time.sleep(interval)
+            time.sleep(SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS)
         except KeyboardInterrupt:
             return 0
         except Exception:

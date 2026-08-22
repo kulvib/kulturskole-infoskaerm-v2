@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_step51b_migration_and_head_contract_are_explicit():
+def test_step51b_migration_and_current_head_chain_are_explicit():
     migration = (ROOT / "backend/migrations/versions/20260820_51b_clientflow_update_auth.py").read_text()
     runner = (ROOT / "backend/scripts/run_migrations.py").read_text()
     display = (ROOT / "backend/scripts/display_schema_contract.py").read_text()
@@ -12,8 +12,8 @@ def test_step51b_migration_and_head_contract_are_explicit():
     assert 'revision = "20260820_51b_update_auth"' in migration
     assert 'down_revision = "20260819_51a_update_control"' in migration
     assert 'REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION = "20260820_51b_update_auth"' in runner
-    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260820_51b_update_auth"' in runner
-    assert 'EXPECTED_HEAD_REVISION = "20260820_51b_update_auth"' in display
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260822_52a_client_liveness"' in runner
+    assert display.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20260822_52a_client_liveness"'
     assert "clientflow_update_replay" in contract
     assert "clientflow_update_provisioning_token" in contract
 

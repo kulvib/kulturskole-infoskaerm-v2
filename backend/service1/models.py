@@ -218,8 +218,6 @@ class Client(ClientBase, table=True):
     deleted_previous_status: Optional[str] = _nullable_text_field()
     restored_at: Optional[datetime] = None
     restored_by_user_id: Optional[int] = None
-    isOnline: Optional[bool] = False
-    last_seen: Optional[datetime] = None
     sort_order: Optional[int] = None
     kiosk_url: Optional[str] = None
     browser_refresh_interval_sec: Optional[int] = Field(default=900)
@@ -366,6 +364,28 @@ class Client(ClientBase, table=True):
     local_management_error: Optional[str] = _nullable_text_field()
 
 
+class ClientDomainPresenceRead(SQLModel):
+    domain: str
+    is_online: bool = False
+    reason: str = "not_evaluated"
+    observed_state: Optional[str] = None
+    reported_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    agent_version: Optional[str] = None
+    boot_id: Optional[str] = None
+
+
+def _default_domain_presence(domain: str) -> ClientDomainPresenceRead:
+    return ClientDomainPresenceRead(domain=domain)
+
+
+class ClientPresenceRead(SQLModel):
+    is_online: bool = False
+    status: ClientDomainPresenceRead = Field(default_factory=lambda: _default_domain_presence("status"))
+    display: ClientDomainPresenceRead = Field(default_factory=lambda: _default_domain_presence("display"))
+    system: ClientDomainPresenceRead = Field(default_factory=lambda: _default_domain_presence("system"))
+
+
 class ClientRead(ClientBase):
     model_config = ConfigDict(from_attributes=True)
 
@@ -390,8 +410,7 @@ class ClientRead(ClientBase):
     deleted_previous_status: Optional[str] = None
     restored_at: Optional[datetime] = None
     restored_by_user_id: Optional[int] = None
-    isOnline: Optional[bool] = False
-    last_seen: Optional[datetime] = None
+    presence: ClientPresenceRead = Field(default_factory=ClientPresenceRead)
     sort_order: Optional[int] = None
     kiosk_url: Optional[str] = None
     browser_refresh_interval_sec: Optional[int] = Field(default=900)
@@ -629,7 +648,6 @@ class ClientUpdate(SQLModel):
     chrome_color: Optional[str] = None
     # FIX: chrome_step kan nu opdateres via /update endpoint
     chrome_step: Optional[str] = None
-    last_seen: Optional[datetime] = None
     created_at: Optional[datetime] = None
     pending_chrome_action: Optional[ChromeAction] = None
     pending_chrome_action_source: Optional[str] = None

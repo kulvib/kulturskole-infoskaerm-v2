@@ -992,3 +992,15 @@ EXPECTED_COLUMNS.update(CLIENTFLOW_UPDATE_AUTH_COLUMNS)
 EXPECTED_CONSTRAINTS.update(CLIENTFLOW_UPDATE_AUTH_CONSTRAINTS)
 EXPECTED_INDEXES.update(CLIENTFLOW_UPDATE_AUTH_INDEXES)
 EXPECTED_FINGERPRINT = "977a891ea299860d941b9ddb6a1a3c7ec4f9403b493611eb3c7a5ade9d36f222"
+
+# Step 52A: retire split-brain legacy client liveness columns.
+from client_liveness_schema_contract import CLIENT_LIVENESS_RETIRED_CLIENT_COLUMNS
+EXPECTED_HEAD_REVISION = "20260822_52a_client_liveness"
+_client_columns = dict(EXPECTED_COLUMNS["client"])
+for _retired_column in CLIENT_LIVENESS_RETIRED_CLIENT_COLUMNS:
+    if _retired_column not in _client_columns:
+        raise RuntimeError(f"Step 52A expected legacy client column {_retired_column!r} before retirement")
+    _client_columns.pop(_retired_column)
+EXPECTED_COLUMNS["client"] = _client_columns
+# Replaced below after deterministic contract fingerprint calculation.
+EXPECTED_FINGERPRINT = "259e2623c532f66facb7a1083401355832f5f7d5e5e716c83337cf9daebcda03"

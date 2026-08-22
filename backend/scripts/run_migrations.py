@@ -64,6 +64,7 @@ from clientflow_deployment_schema_contract import (
     CLIENTFLOW_DEPLOYMENT_INDEXES,
     CLIENTFLOW_DEPLOYMENT_TABLES,
 )
+from client_liveness_schema_contract import CLIENT_LIVENESS_RETIRED_CLIENT_COLUMNS
 
 ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = ROOT / "alembic.ini"
@@ -72,7 +73,7 @@ ADVISORY_LOCK_KEY = -614927384150371204
 # Baseline adoption is deliberately reviewed only for this exact graph. If a
 # later migration changes the head, the adoption path fails closed until the
 # baseline delta is reviewed again.
-REVIEWED_BASELINE_ADOPTION_HEAD = "20260820_51b_update_auth"
+REVIEWED_BASELINE_ADOPTION_HEAD = "20260822_52a_client_liveness"
 REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 
 # Production was observed at this Alembic label before Step 40A was deployed,
@@ -81,7 +82,7 @@ REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 # 39A schema; otherwise deployment fails closed without stamping or DDL.
 RECOVERABLE_LEGACY_REVISION = "20260730_41a"
 RECOVERABLE_LEGACY_TARGET = "20260717_39a_livestream_leases"
-REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260820_51b_update_auth"
+REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260822_52a_client_liveness"
 REVIEWED_LIVESTREAM_V2_PREDECESSOR = "20260814_40a_livestream_control"
 REVIEWED_LIVESTREAM_V2_REVISION = "20260814_41a_livestream_v2"
 REVIEWED_TERMINAL_V2_REVISION = "20260816_42a_terminal_v2"
@@ -95,6 +96,7 @@ REVIEWED_DATABASE_CONTRACT_REVISION = "20260819_49a_db_contract"
 REVIEWED_CANONICAL_FOUNDATIONS_REVISION = "20260819_50a_canonical"
 REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION = "20260819_51a_update_control"
 REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION = "20260820_51b_update_auth"
+REVIEWED_CLIENT_LIVENESS_REVISION = "20260822_52a_client_liveness"
 LIVESTREAM_V2_TABLES = frozenset({
     "livestream_v2_agent_status",
     "livestream_v2_command",
@@ -412,6 +414,22 @@ def _catalog_snapshot(connection) -> dict:
     }
 
 
+def _without_client_liveness_schema(
+    columns: dict[str, dict],
+    constraints: dict[str, str],
+    indexes: dict[str, str],
+) -> tuple[dict[str, dict], dict[str, str], dict[str, str]]:
+    """Restore Step 52A retired columns when reconstructing older schemas."""
+    cleaned_columns = {table: dict(values) for table, values in columns.items()}
+    client_columns = dict(cleaned_columns["client"])
+    overlap = sorted(set(client_columns) & set(CLIENT_LIVENESS_RETIRED_CLIENT_COLUMNS))
+    if overlap:
+        raise RuntimeError(f"Head-kontrakten indeholder stadig retired liveness-kolonner: {overlap}")
+    client_columns.update(CLIENT_LIVENESS_RETIRED_CLIENT_COLUMNS)
+    cleaned_columns["client"] = client_columns
+    return cleaned_columns, dict(constraints), dict(indexes)
+
+
 def _without_clientflow_deployment_schema(
     columns: dict[str, dict],
     constraints: dict[str, str],
@@ -489,10 +507,13 @@ def _baseline_schema_contract() -> tuple[dict[str, dict], dict[str, str], dict[s
             "Display baseline-adoption er ikke gennemgået for den aktuelle Alembic-kæde"
         )
 
-    columns, constraints, indexes = _without_clientflow_deployment_schema(
+    columns, constraints, indexes = _without_client_liveness_schema(
         {table: dict(values) for table, values in EXPECTED_COLUMNS.items()},
         dict(EXPECTED_CONSTRAINTS),
         dict(EXPECTED_INDEXES),
+    )
+    columns, constraints, indexes = _without_clientflow_deployment_schema(
+        columns, constraints, indexes
     )
     columns, constraints, indexes = _without_canonical_foundations_schema(
         columns, constraints, indexes
@@ -597,10 +618,13 @@ def _pre_livestream_control_schema_contract() -> tuple[dict[str, dict], dict[str
             "Legacy-revision reconciliation er ikke gennemgået for den aktuelle Alembic-kæde"
         )
 
-    columns, constraints, indexes = _without_clientflow_deployment_schema(
+    columns, constraints, indexes = _without_client_liveness_schema(
         {table: dict(values) for table, values in EXPECTED_COLUMNS.items()},
         dict(EXPECTED_CONSTRAINTS),
         dict(EXPECTED_INDEXES),
+    )
+    columns, constraints, indexes = _without_clientflow_deployment_schema(
+        columns, constraints, indexes
     )
     columns, constraints, indexes = _without_canonical_foundations_schema(
         columns, constraints, indexes
@@ -890,6 +914,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
             canonical_foundations_revision = script.get_revision(REVIEWED_CANONICAL_FOUNDATIONS_REVISION)
             clientflow_deployment_revision = script.get_revision(REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION)
             clientflow_update_auth_revision = script.get_revision(REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION)
+            client_liveness_revision = script.get_revision(REVIEWED_CLIENT_LIVENESS_REVISION)
             head_revision = script.get_revision(head)
             if any(
                 item is None
@@ -898,7 +923,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                     terminal_v2_revision, terminal_policy_revision, terminal_storage_revision,
                     terminal_client_revision, remote_desktop_revision, client_activity_revision, lifecycle_revision,
                     database_contract_revision, canonical_foundations_revision, clientflow_deployment_revision,
-                    clientflow_update_auth_revision, head_revision,
+                    clientflow_update_auth_revision, client_liveness_revision, head_revision,
                 )
             ):
                 raise RuntimeError("Legacy-revision reconciliation mangler kendte Alembic-noder")
@@ -916,10 +941,11 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                 or canonical_foundations_revision.down_revision != REVIEWED_DATABASE_CONTRACT_REVISION
                 or clientflow_deployment_revision.down_revision != REVIEWED_CANONICAL_FOUNDATIONS_REVISION
                 or clientflow_update_auth_revision.down_revision != REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION
-                or head != REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION
+                or client_liveness_revision.down_revision != REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION
+                or head != REVIEWED_CLIENT_LIVENESS_REVISION
             ):
                 raise RuntimeError(
-                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B-kæde"
+                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B -> 52A-kæde"
                 )
             legacy_columns, legacy_constraints, legacy_indexes = (
                 _pre_livestream_control_schema_contract()

@@ -168,9 +168,6 @@ services:
       - key: SMTP_FROM
         sync: false
 
-      - key: CLIENTFLOW_ONLINE_TIMEOUT_SECONDS
-        value: "30"
-
       # Frozen Livestream/HLS runtime configuration: values preserved, code untouched.
       - key: HLS_BASE_DIR
         value: "/opt/render/project/src/backend/service1/hls"
