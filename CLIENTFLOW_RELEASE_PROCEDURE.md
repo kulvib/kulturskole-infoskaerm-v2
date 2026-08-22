@@ -239,16 +239,26 @@ sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" verify \
 
 ## 6. Fresh installation
 
-Installation is for a clean Ubuntu Desktop 26.04 `amd64` client with an existing unprivileged kiosk user and a valid one-time enrollment code:
+Installation is for a clean Ubuntu Desktop 26.04 `amd64` client with an existing unprivileged kiosk user. The **first** consuming claim requires the same one-time enrollment code and signed `FRESH_INSTALL_AUTHORIZATION` that authorized the exact approved bundle download. Both are transient capabilities and must not be written into ClientFlow install-state.
+
+When using the generated admin handoff, keep the same shell so `ENROLLMENT_CODE` and `FRESH_INSTALL_AUTHORIZATION` remain available, and require both before starting the first mutation:
 
 ```bash
+test -n "${ENROLLMENT_CODE:-}"
+test -n "${FRESH_INSTALL_AUTHORIZATION:-}"
+
 sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" install \
   --bundle "$BOOTSTRAP_BUNDLE" \
   --expected-bundle-sha256 "$APPROVED_BUNDLE_SHA256" \
   --backend-url https://<backend-origin> \
-  --enrollment-code <one-time-code> \
+  --enrollment-code "$ENROLLMENT_CODE" \
+  --fresh-install-authorization "$FRESH_INSTALL_AUTHORIZATION" \
   --kiosk-user <kiosk-user>
 ```
+
+The installer derives a non-secret release binding from the locally verified approved bundle: release ID/version/sequence, whole-bundle SHA-256/size, immutable approval reference, candidate provenance and source commit. Backend claim verifies that complete binding against the signed authorization for the same enrollment-token **before** creating client/credential state or consuming the code. The existing enrollment receipt then commits its resume-proof hash to that exact binding, so crash recovery cannot switch release provenance without introducing a parallel release-authority table.
+
+If the install command is interrupted after local install-state exists, rerun against the **same** bundle, backend and kiosk user. If the original one-time code/authorization are no longer available, those two options may be omitted only for recovery: the backend will resume without them **only if** the first claim had already committed a receipt whose resume-proof commitment matches the same install ID and exact release binding, while the original system/update keys still match. If consumption never committed, the retry is rejected instead of silently authorizing a different release.
 
 The fresh installer provisions the canonical domain/update credentials, immutable release files and rendered systemd definitions. It stops at `pending_manual_activation`.
 

@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import ssl
 import subprocess
@@ -21,6 +22,23 @@ from .filesystem import atomic_write_json, ensure_real_directory, fsync_director
 
 class EnrollmentError(RuntimeError):
     pass
+
+
+_RELEASE_ID_RE = re.compile(r"^clientflow-(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-seq-([1-9]\d*)$")
+_VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_SOURCE_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_APPROVAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/@+-]{0,199}$")
+_FRESH_INSTALL_BINDING_KEYS = {
+    "release_id",
+    "version",
+    "release_sequence",
+    "bundle_sha256",
+    "bundle_size",
+    "release_approval_reference",
+    "release_candidate_sha256",
+    "source_commit",
+}
 
 
 def _encode(value: bytes) -> str:
@@ -46,6 +64,45 @@ def validate_backend_url(value: str) -> str:
     if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
         raise EnrollmentError("backend_url må ikke indeholde path, query eller fragment")
     return url
+
+
+def validate_fresh_install_binding(value: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _FRESH_INSTALL_BINDING_KEYS:
+        raise EnrollmentError("Fresh-install release-binding har forkert schema")
+    release_id = str(value.get("release_id") or "").strip()
+    version = str(value.get("version") or "").strip()
+    try:
+        release_sequence = int(value.get("release_sequence"))
+        bundle_size = int(value.get("bundle_size"))
+    except (TypeError, ValueError) as exc:
+        raise EnrollmentError("Fresh-install release-binding har ugyldige talfelter") from exc
+    bundle_sha256 = str(value.get("bundle_sha256") or "").strip().lower()
+    approval_reference = str(value.get("release_approval_reference") or "").strip()
+    candidate_sha256 = str(value.get("release_candidate_sha256") or "").strip().lower()
+    source_commit = str(value.get("source_commit") or "").strip().lower()
+
+    if not _RELEASE_ID_RE.fullmatch(release_id) or not _VERSION_RE.fullmatch(version):
+        raise EnrollmentError("Fresh-install release-binding har ugyldig release-identitet")
+    if release_id != f"clientflow-{version}-seq-{release_sequence}":
+        raise EnrollmentError("Fresh-install release-binding release-identitet matcher ikke")
+    if release_sequence < 1 or bundle_size < 1:
+        raise EnrollmentError("Fresh-install release-binding har ugyldige talfelter")
+    if not _SHA256_RE.fullmatch(bundle_sha256) or not _SHA256_RE.fullmatch(candidate_sha256):
+        raise EnrollmentError("Fresh-install release-binding mangler gyldig SHA-256")
+    if not _APPROVAL_RE.fullmatch(approval_reference):
+        raise EnrollmentError("Fresh-install release-binding mangler gyldig approval-reference")
+    if not _SOURCE_COMMIT_RE.fullmatch(source_commit):
+        raise EnrollmentError("Fresh-install release-binding mangler gyldigt source commit")
+    return {
+        "release_id": release_id,
+        "version": version,
+        "release_sequence": release_sequence,
+        "bundle_sha256": bundle_sha256,
+        "bundle_size": bundle_size,
+        "release_approval_reference": approval_reference,
+        "release_candidate_sha256": candidate_sha256,
+        "source_commit": source_commit,
+    }
 
 
 def _post_json(url: str, payload: dict[str, Any], *, ca_file: Path | None, timeout: int = 30) -> dict[str, Any]:
@@ -141,7 +198,9 @@ def host_facts() -> dict[str, Any]:
 def claim(
     *,
     backend_url: str,
-    enrollment_code: str,
+    enrollment_code: str | None,
+    fresh_install_authorization: str | None,
+    fresh_install_binding: dict[str, Any],
     install_id: str,
     seed: bytes,
     public_key_pem: str,
@@ -151,9 +210,14 @@ def claim(
     ca_file: Path | None,
 ) -> dict[str, Any]:
     backend = validate_backend_url(backend_url)
+    binding = validate_fresh_install_binding(fresh_install_binding)
     facts = host_facts()
     payload = {
-        "enrollment_code": enrollment_code.strip().upper(),
+        "enrollment_code": (str(enrollment_code).strip().upper() if enrollment_code else None),
+        "fresh_install_authorization": (
+            str(fresh_install_authorization).strip() if fresh_install_authorization else None
+        ),
+        "fresh_install_binding": binding,
         "install_id": str(uuid.UUID(install_id)),
         "credential_seed_b64": _encode(seed),
         "resume_proof": derive_resume_proof(seed, install_id),
@@ -286,10 +350,22 @@ def _system_key_id(private_key: Path) -> str:
     return hashlib.sha256(result.stdout).hexdigest()[:32]
 
 
-def complete(*, backend_url: str, install_id: str, seed: bytes, ca_file: Path | None) -> dict[str, Any]:
+def complete(
+    *,
+    backend_url: str,
+    install_id: str,
+    seed: bytes,
+    fresh_install_binding: dict[str, Any],
+    ca_file: Path | None,
+) -> dict[str, Any]:
     backend = validate_backend_url(backend_url)
+    binding = validate_fresh_install_binding(fresh_install_binding)
     return _post_json(
         f"{backend}/api/enrollment/complete",
-        {"install_id": str(uuid.UUID(install_id)), "resume_proof": derive_resume_proof(seed, install_id)},
+        {
+            "install_id": str(uuid.UUID(install_id)),
+            "resume_proof": derive_resume_proof(seed, install_id),
+            "fresh_install_binding": binding,
+        },
         ca_file=ca_file,
     )
