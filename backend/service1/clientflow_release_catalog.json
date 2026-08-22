@@ -1,9 +1,9 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1204,
-  "latest_stable": "1.3.3",
-  "default_install_version": "1.3.3",
+  "catalog_sequence": 1205,
+  "latest_stable": "1.3.4",
+  "default_install_version": "1.3.4",
   "retention_policy": {
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
@@ -11,10 +11,10 @@
   "created_at": "2026-08-22T00:00:00Z",
   "releases": [
     {
-      "version": "1.3.3",
-      "client_version": "1.3.3",
-      "release_sequence": 1204,
-      "revision": "clientflow-1.3.3-seq-1204",
+      "version": "1.3.4",
+      "client_version": "1.3.4",
+      "release_sequence": 1205,
+      "revision": "clientflow-1.3.4-seq-1205",
       "status": "stable",
       "installable": true,
       "update_allowed": true,
@@ -34,11 +34,11 @@
         "requires_platform_preflight": true
       },
       "notes": [
-        "Canonical ClientFlow 1.3.3 release with the consuming fresh-install claim bound to the signed authorization and exact approved release provenance before enrollment mutation or consumption.",
-        "Supports canonical fresh install and in-place update from the physically proven ClientFlow 1.3.1 bootstrap baseline; the 1.3.3 trust-boundary change does not narrow update compatibility.",
-        "Promoted only after the exact approved 1.3.3/1204 artifact was published and independently re-validated in the canonical 51M artifact store."
+        "Canonical ClientFlow 1.3.4 release with the shared clientflow.target boot-ordering cycle removed so the canonical target can start during graphical boot without changing domain unit definitions.",
+        "Supports canonical fresh install and in-place update from the physically proven ClientFlow 1.3.1 bootstrap baseline; the 1.3.4 shared boot-orchestration change does not narrow update compatibility.",
+        "Promoted only after the exact approved 1.3.4/1205 artifact was published and independently re-validated in the canonical 51M artifact store."
       ],
-      "release_id": "clientflow-1.3.3-seq-1204",
+      "release_id": "clientflow-1.3.4-seq-1205",
       "artifact_type": "runtime_release",
       "install_modes": [
         "fresh_install",
