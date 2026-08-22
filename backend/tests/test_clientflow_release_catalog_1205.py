@@ -18,12 +18,12 @@ ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = ROOT / "backend/service1/clientflow_release_catalog.json"
 
 
-def test_catalog_1204_promotes_exact_133_release_identity() -> None:
+def test_catalog_1205_promotes_exact_134_release_identity() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    assert data["catalog_sequence"] == 1204
-    assert data["latest_stable"] == "1.3.3"
-    assert data["default_install_version"] == "1.3.3"
+    assert data["catalog_sequence"] == 1205
+    assert data["latest_stable"] == "1.3.4"
+    assert data["default_install_version"] == "1.3.4"
     assert data["retention_policy"] == {
         "max_installable_versions": 1,
         "keep_blocked_metadata": False,
@@ -31,11 +31,11 @@ def test_catalog_1204_promotes_exact_133_release_identity() -> None:
 
     assert len(data["releases"]) == 1
     release = data["releases"][0]
-    assert release["version"] == "1.3.3"
-    assert release["client_version"] == "1.3.3"
-    assert release["release_sequence"] == 1204
-    assert release["release_id"] == "clientflow-1.3.3-seq-1204"
-    assert release["revision"] == "clientflow-1.3.3-seq-1204"
+    assert release["version"] == "1.3.4"
+    assert release["client_version"] == "1.3.4"
+    assert release["release_sequence"] == 1205
+    assert release["release_id"] == "clientflow-1.3.4-seq-1205"
+    assert release["revision"] == "clientflow-1.3.4-seq-1205"
     assert release["status"] == "stable"
     assert release["installable"] is True
     assert release["update_allowed"] is True
@@ -44,9 +44,9 @@ def test_catalog_1204_promotes_exact_133_release_identity() -> None:
     assert release["min_current_version"] == "1.3.1"
 
 
-def test_catalog_1204_rejects_update_from_130_and_keeps_131_as_minimum_bootstrap() -> None:
+def test_catalog_1205_rejects_update_from_130_and_keeps_131_as_minimum_bootstrap() -> None:
     load_catalog.cache_clear()
-    release = resolve_release("1.3.3")
+    release = resolve_release("1.3.4")
 
     with pytest.raises(ClientFlowCatalogError, match="kræver mindst ClientFlow 1.3.1"):
         validate_release_compatibility(
@@ -55,7 +55,7 @@ def test_catalog_1204_rejects_update_from_130_and_keeps_131_as_minimum_bootstrap
             ubuntu_version="26.04",
         )
 
-    for current_version in ("1.3.1", "1.3.2", "1.3.3"):
+    for current_version in ("1.3.1", "1.3.2", "1.3.3", "1.3.4"):
         validate_release_compatibility(
             release,
             current_version=current_version,
@@ -63,7 +63,7 @@ def test_catalog_1204_rejects_update_from_130_and_keeps_131_as_minimum_bootstrap
         )
 
 
-def test_catalog_1204_remains_published_133_while_source_advances_to_134_1205() -> None:
+def test_catalog_1205_matches_source_after_separate_publication_and_promotion() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -75,15 +75,15 @@ def test_catalog_1204_remains_published_133_while_source_advances_to_134_1205() 
     assert source_version == "1.3.4"
     assert release_input["release_sequence"] == 1205
 
-    # Source/build identity intentionally moves ahead while 1.3.4/1205 is built,
-    # manually approved and immutably published. The runtime catalog remains the
-    # selector for the already approved 1.3.3/1204 release until promotion.
-    assert data["catalog_sequence"] == 1204
-    assert data["latest_stable"] == "1.3.3"
-    assert data["default_install_version"] == "1.3.3"
-    assert release["version"] == "1.3.3"
-    assert release["release_sequence"] == 1204
-    assert release["release_id"] == "clientflow-1.3.3-seq-1204"
+    # Catalog promotion is a separate selector-policy gate. The exact approved
+    # 1.3.4/1205 bytes have already been immutably published and re-validated,
+    # so selector policy may now align with source/build identity.
+    assert data["catalog_sequence"] == 1205
+    assert data["latest_stable"] == "1.3.4"
+    assert data["default_install_version"] == "1.3.4"
+    assert release["version"] == source_version
+    assert release["release_sequence"] == release_input["release_sequence"]
+    assert release["release_id"] == "clientflow-1.3.4-seq-1205"
 
     for field in (
         "bundle_sha256",
@@ -96,15 +96,15 @@ def test_catalog_1204_remains_published_133_while_source_advances_to_134_1205() 
         assert field not in release
 
 
-def test_catalog_1204_resolvers_select_133_for_update_and_fresh_install() -> None:
+def test_catalog_1205_resolvers_select_134_for_update_and_fresh_install() -> None:
     load_catalog.cache_clear()
-    update = resolve_release("1.3.3")
+    update = resolve_release("1.3.4")
     fresh = resolve_fresh_install_release()
 
     for release in (update, fresh):
-        assert release["version"] == "1.3.3"
-        assert release["release_id"] == "clientflow-1.3.3-seq-1204"
-        assert release["release_sequence"] == 1204
+        assert release["version"] == "1.3.4"
+        assert release["release_id"] == "clientflow-1.3.4-seq-1205"
+        assert release["release_sequence"] == 1205
         assert release["status"] == "stable"
 
     assert update["update_allowed"] is True
