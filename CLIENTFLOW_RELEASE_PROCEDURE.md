@@ -18,9 +18,9 @@ Canonical source:
 
 Offline runtime inputs are supplied separately through `--runtime-inputs`. They must contain the validated Python runtime and dependency wheelhouse. The ClientFlow runtime wheel itself is always rebuilt from `client/runtime/`; a supplied stale ClientFlow wheel is removed before packaging.
 
-`client/VERSION` is the only manually maintained product-version value. The runtime wheel derives its PEP 621 version dynamically from that same authority, while `release_sequence` remains the separate monotonic anti-rollback identity component. The current source/build identity is `1.3.1` / `1202`, producing `clientflow-1.3.1-seq-1202`.
+`client/VERSION` is the only manually maintained product-version value. The runtime wheel derives its PEP 621 version dynamically from that same authority, while `release_sequence` remains the separate monotonic anti-rollback identity component. Together they produce `clientflow-<version>-seq-<release_sequence>`. Active release commands in this procedure must derive or receive that exact identity; they must not copy a previous release's version, sequence or installer filename.
 
-Source/build identity and runtime selection are intentionally separate release gates. During a release transition the source identity may move ahead **before** the runtime catalog does. The catalog must continue selecting the last physically published approved release until the new approved bundle has been materialized in the immutable 51M store. For the `1.3.1/1202` transition that means `1.3.0/1201` remains the selected fresh-install/update authority until publication is complete. This is a staged promotion state, not a second release authority.
+Source/build identity and runtime selection are intentionally separate release gates. During a release transition the source identity may move ahead **before** the runtime catalog does. The catalog must continue selecting the last physically published approved release until the new approved bundle has been materialized in the immutable 51M store. The `1.3.1/1202` transition from `1.3.0/1201` is a historical example of this staged promotion state, not an active selector instruction.
 
 ## 2. Build one canonical reproducible release candidate
 
@@ -66,12 +66,15 @@ For local development only, `scripts/build_clientflow_release.py` remains availa
 
 ## 3. Approve one exact candidate
 
-Approval uses no release signing key. It is an explicit gate bound to the exact reproducible candidate hash, exact source commit and an approval reference:
+Approval uses no release signing key. It is an explicit gate bound to the exact reproducible candidate hash, exact source commit and an approval reference. Use the exact candidate pathname from the reproducible handoff; do not reconstruct its release identity from an older example:
 
 ```bash
+CANDIDATE_BUNDLE="/path/to/exact-reproducible-candidate.tar"
+APPROVED_BUNDLE="/path/to/approved-output.tar"
+
 python scripts/approve_clientflow_release.py \
-  ./build/clientflow-1.3.1/clientflow-1.3.1-seq-1202-candidate.tar \
-  --output ./build/clientflow-1.3.1/clientflow-1.3.1-seq-1202-approved.tar \
+  "$CANDIDATE_BUNDLE" \
+  --output "$APPROVED_BUNDLE" \
   --expected-candidate-sha256 <EXACT_CANDIDATE_SHA256> \
   --expected-installer-sha256 <EXACT_INSTALLER_SHA256> \
   --expected-source-commit <FULL_40_CHARACTER_GIT_SHA> \
@@ -90,8 +93,10 @@ Publication is deliberately bound to the exact source/build identity from `clien
 From the running backend service context where `/var/data/clientflow-release-artifacts/store` is mounted, publish the exact approved bundle:
 
 ```bash
+APPROVED_BUNDLE="/path/to/exact-approved-bundle.tar"
+
 python scripts/publish_clientflow_release.py \
-  ./clientflow-1.3.1-seq-1202-approved.tar \
+  "$APPROVED_BUNDLE" \
   --artifact-dir /var/data/clientflow-release-artifacts/store \
   --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
   --expected-approval-reference <CHANGE_OR_RELEASE_REFERENCE> \
@@ -99,9 +104,9 @@ python scripts/publish_clientflow_release.py \
   --publish-release
 ```
 
-The publication gate verifies the approved bundle against the current source checkout's exact `1.3.1/1202` identity, the supplied whole-bundle SHA-256, approval reference and source commit, then atomically no-replace publishes `clientflow-1.3.1-seq-1202.tar`. The old catalog remains active throughout this step.
+The publication gate verifies the approved bundle against the current source checkout's exact source/build identity, the supplied whole-bundle SHA-256, approval reference and source commit, then atomically no-replace publishes `<release-id>.tar`. The old catalog remains active throughout this step.
 
-Only after the immutable store has been independently re-read and verified to contain those exact approved bytes may a **separate catalog-promotion change** move `catalog_sequence`, `latest_stable`, `default_install_version` and the single selectable release to `1.3.1/1202`. That promotion is the point at which fresh-install authorizations may begin selecting the new release.
+Only after the immutable store has been independently re-read and verified to contain those exact approved bytes may a **separate catalog-promotion change** move `catalog_sequence`, `latest_stable`, `default_install_version` and the single selectable release to that exact published release. That promotion is the point at which fresh-install authorizations may begin selecting the new release.
 
 The approved `1.3.0/1201` source predates the privileged update-controller: its updater host stops at verified/staged state and its installed updater unit has no controller handoff. Therefore the `1.3.1/1202` catalog entry must **not** claim in-place compatibility from `1.3.0`; its minimum current version must be `1.3.1`. The first canonical in-place update proof is from a fresh-installed `1.3.1` client to a later release whose policy explicitly accepts `1.3.1`.
 
@@ -113,11 +118,11 @@ The approved bundle SHA-256 is the external trust anchor. The fresh installer is
 
 The physical handoff must therefore keep one concrete bundle file identity open while it hashes that file, reads `manifest.json`, and extracts the embedded installer. The extracted installer and an exact copy of the approved bundle are materialized into a new root-owned private directory under `/run`; installer code is first executed from that private copy, never from a user-writable build/download pathname.
 
-Run the following as one uninterrupted shell block. No ClientFlow installer code runs inside the bootstrap block; it uses only host `bash`, `sha256sum`, `tar`, `python3`, `stat`, `cmp`, and filesystem primitives:
+Run the following as one uninterrupted Bash block. `BUNDLE` is the exact artifact obtained through the approved fresh-install download handoff, and `APPROVED_BUNDLE_SHA256` is the whole-bundle trust anchor carried by that authorization. No ClientFlow installer code runs inside the bootstrap block; it uses only host `bash`, `sha256sum`, `tar`, `python3`, `stat`, `cmp`, and filesystem primitives:
 
 ```bash
-BUNDLE=./build/clientflow-1.3.1/clientflow-1.3.1-seq-1202-approved.tar
-APPROVED_BUNDLE_SHA256=<APPROVED_BUNDLE_SHA256>
+BUNDLE="/path/to/downloaded-approved-bundle.tar"
+APPROVED_BUNDLE_SHA256='<APPROVED_BUNDLE_SHA256>'
 
 BOOTSTRAP_DIR="$(
   sudo /usr/bin/mktemp -d /run/clientflow-fresh-install.XXXXXXXX
@@ -125,10 +130,11 @@ BOOTSTRAP_DIR="$(
 sudo /usr/bin/chown root:root "$BOOTSTRAP_DIR"
 sudo /usr/bin/chmod 0700 "$BOOTSTRAP_DIR"
 
-sudo /usr/bin/bash -s -- \
-  "$BUNDLE" \
-  "$APPROVED_BUNDLE_SHA256" \
-  "$BOOTSTRAP_DIR" <<'CLIENTFLOW_BOOTSTRAP'
+mapfile -t BOOTSTRAP_RESULT < <(
+  sudo /usr/bin/bash -s -- \
+    "$BUNDLE" \
+    "$APPROVED_BUNDLE_SHA256" \
+    "$BOOTSTRAP_DIR" <<'CLIENTFLOW_BOOTSTRAP'
 set -euo pipefail
 
 BUNDLE_PATH=$1
@@ -144,14 +150,15 @@ test "$(/usr/bin/stat -Lc %F "$BUNDLE_FD_PATH")" = "regular file"
 printf '%s  %s\n' \
   "$EXPECTED_BUNDLE_SHA256" \
   "$BUNDLE_FD_PATH" |
-  /usr/bin/sha256sum --check --strict -
+  /usr/bin/sha256sum --check --strict - >&2
 
-read -r INSTALLER_FILE INSTALLER_SIZE INSTALLER_SHA256 < <(
+read -r RELEASE_ID INSTALLER_FILE INSTALLER_SIZE INSTALLER_SHA256 < <(
   /usr/bin/tar -xOf "$BUNDLE_FD_PATH" manifest.json |
   /usr/bin/python3 -I -c \
-    'import json,sys; x=json.load(sys.stdin)["fresh_installer"]; print(x["file"], x["size"], x["sha256"])'
+    'import json,sys; m=json.load(sys.stdin); x=m["fresh_installer"]; print(m["release_id"], x["file"], x["size"], x["sha256"])'
 )
 
+test -n "$RELEASE_ID"
 case "$INSTALLER_FILE" in
   clientflow-installer-*.pyz) ;;
   *) echo "Ugyldigt fresh_installer-filnavn" >&2; exit 1 ;;
@@ -182,9 +189,9 @@ cat "$BUNDLE_FD_PATH" >"$TMP_BUNDLE"
 
 test "$(/usr/bin/stat -Lc %s "$TMP_INSTALLER")" -eq "$INSTALLER_SIZE"
 printf '%s  %s\n' "$INSTALLER_SHA256" "$TMP_INSTALLER" |
-  /usr/bin/sha256sum --check --strict -
+  /usr/bin/sha256sum --check --strict - >&2
 printf '%s  %s\n' "$EXPECTED_BUNDLE_SHA256" "$TMP_BUNDLE" |
-  /usr/bin/sha256sum --check --strict -
+  /usr/bin/sha256sum --check --strict - >&2
 
 /usr/bin/mv -n "$TMP_BUNDLE" "$PRIVATE_BUNDLE"
 /usr/bin/mv -n "$TMP_INSTALLER" "$PRIVATE_INSTALLER"
@@ -194,12 +201,24 @@ test -f "$PRIVATE_INSTALLER"
 # Prove the private bundle copy still equals the pinned opened bytes.
 cmp -s "$BUNDLE_FD_PATH" "$PRIVATE_BUNDLE"
 
-printf 'BOOTSTRAP_BUNDLE=%s\n' "$PRIVATE_BUNDLE"
-printf 'BOOTSTRAP_INSTALLER=%s\n' "$PRIVATE_INSTALLER"
+# Stdout is deliberately reserved for these three machine-readable values;
+# integrity-check output above is sent to stderr and remains visible.
+printf '%s\n' "$RELEASE_ID"
+printf '%s\n' "$PRIVATE_BUNDLE"
+printf '%s\n' "$PRIVATE_INSTALLER"
 CLIENTFLOW_BOOTSTRAP
+)
 
-BOOTSTRAP_BUNDLE="$BOOTSTRAP_DIR/clientflow-approved.tar"
-BOOTSTRAP_INSTALLER="$BOOTSTRAP_DIR/clientflow-installer-1.3.1.pyz"
+test "${#BOOTSTRAP_RESULT[@]}" -eq 3
+BOOTSTRAP_RELEASE_ID="${BOOTSTRAP_RESULT[0]}"
+BOOTSTRAP_BUNDLE="${BOOTSTRAP_RESULT[1]}"
+BOOTSTRAP_INSTALLER="${BOOTSTRAP_RESULT[2]}"
+
+test "$BOOTSTRAP_BUNDLE" = "$BOOTSTRAP_DIR/clientflow-approved.tar"
+case "$BOOTSTRAP_INSTALLER" in
+  "$BOOTSTRAP_DIR"/clientflow-installer-*.pyz) ;;
+  *) echo "Ugyldig materialiseret installersti" >&2; exit 1 ;;
+esac
 ```
 
 If any check fails, remove the private bootstrap directory and do not run installer code:
@@ -208,7 +227,7 @@ If any check fails, remove the private bootstrap directory and do not run instal
 sudo /usr/bin/rm -rf -- "$BOOTSTRAP_DIR"
 ```
 
-The two root-owned files in `$BOOTSTRAP_DIR` are now the only accepted fresh-install inputs. The original download/build paths are no longer referenced.
+The two root-owned files in `$BOOTSTRAP_DIR` are now the only accepted fresh-install inputs. The original download/build paths are no longer referenced. `BOOTSTRAP_RELEASE_ID` and `BOOTSTRAP_INSTALLER` came from the same pinned approved bundle manifest used for extraction; no release version or installer filename is hardcoded by the procedure.
 
 Verify the private handoff once more through the installer parser:
 
@@ -235,11 +254,11 @@ The fresh installer provisions the canonical domain/update credentials, immutabl
 
 ## 7. Manual activation
 
-Activation is explicit:
+Activation is explicit and uses the release identity recovered from the same pinned approved bundle in section 5:
 
 ```bash
 sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \
-  --release-id clientflow-1.3.1-seq-1202 \
+  --release-id "$BOOTSTRAP_RELEASE_ID" \
   --expected-release-approval-reference <RELEASE_APPROVAL_REFERENCE>
 ```
 
@@ -251,7 +270,7 @@ At minimum:
 
 ```bash
 python -m compileall -q backend/service1 backend/migrations client/runtime client/release/lib scripts
-python -m pytest -q backend/tests/test_*source*.py
+python -m pytest -q backend/tests/test_*source*.py scripts/tests/test_clientflow_release_procedure_contract.py
 ```
 
 A release/install change is not accepted as physically validated until the relevant Ubuntu installation/update and frozen-domain regressions have been run.
