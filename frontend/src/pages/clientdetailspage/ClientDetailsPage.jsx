@@ -1392,7 +1392,6 @@ export default function ClientDetailsPage({
       liveNetworkStatus,
       liveUpdateFields,
       localOsUpdateBusy,
-      clientOnline,
       displayUptime,
       livePresence,
       effectivePendingAction,
