@@ -25,6 +25,7 @@ import { compactDarkChipSx } from "../../utils/chipStyles";
 
 import {
   getChromeStatus,
+  getClientPresence,
   clientAction,
   openRemoteDesktop,
   getClient,
@@ -310,19 +311,18 @@ function normalizeNetworkStatus(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-function getNetworkStatusMessage(client, online) {
+function getNetworkStatusMessage(client) {
   const explicit = client?.network_status_message;
   if (explicit) return explicit;
   const status = normalizeNetworkStatus(client?.network_status);
-  if (online === false || status === "offline") return "Klienten har ingen forbindelse til backend";
-  if (["no_network", "missing", "disconnected"].includes(status)) return "Ingen aktiv netværksforbindelse registreret på klienten";
-  if (status === "unknown") return "Netværksstatus ukendt";
+  if (["no_network", "missing", "disconnected"].includes(status)) return "Seneste diagnostik registrerede ingen aktiv netværksforbindelse";
+  if (status === "unknown") return "Netværksdiagnostik ukendt";
   return null;
 }
 
-function isNetworkUnavailable(client, online) {
+function isNetworkUnavailable(client) {
   const status = normalizeNetworkStatus(client?.network_status);
-  return online === false || client?.network_has_connection === false || ["offline", "no_network", "missing", "disconnected"].includes(status);
+  return client?.network_has_connection === false || ["no_network", "missing", "disconnected"].includes(status);
 }
 
 function resolveChromeStepPayload(data) {
@@ -775,12 +775,15 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
           alignItems: "center",
           justifyContent: isMobile ? "flex-start" : "flex-end"
         }}>
-        <DashboardChip dark label={networkUnavailable ? "Netværk mangler" : clientOnline ? "Online" : "Offline"} color={networkUnavailable ? "error" : clientOnline ? "success" : "error"} variant="filled" />
+        <DashboardChip dark label={clientOnline ? "Online" : "Offline"} color={clientOnline ? "success" : "error"} variant="filled" />
         <DashboardChip dark label={clientState || "ukendt"} color={clientState === "normal" ? "success" : "warning"} />
         {powerEventLabel && (
           <DashboardChip dark label={powerEventLabel} color={powerEventColor(client)} />
         )}
-        <DashboardChip dark label={networkUnavailable ? (networkMessage || "Ingen netværk") : clientOnline ? (liveChromeStatus || "Browser ukendt") : "Browser offline"} color={networkUnavailable ? "error" : clientOnline ? "info" : "default"} />
+        <DashboardChip dark label={clientOnline ? (liveChromeStatus || "Browser ukendt") : "Browser offline"} color={clientOnline ? "info" : "default"} />
+        {networkUnavailable && (
+          <DashboardChip dark label={`Netværk: ${networkMessage || "diagnostik melder fejl"}`} color="error" />
+        )}
         <Button
           size="small"
           variant="outlined"
@@ -939,11 +942,10 @@ export default function ClientDetailsPage({
   // ---------------------------------------------------------------------------
   // Dynamisk oppetid
   // ---------------------------------------------------------------------------
-  const [uptime, setUptime]     = useState(null);
-  const uptimeBaseRef           = useRef(null);
-  const uptimeFetchRef          = useRef(null);
-  const [lastSeen, setLastSeen] = useState(client?.last_seen ?? null);
-  const [liveClientOnline, setLiveClientOnline] = useState(client?.isOnline ?? false);
+  const [uptime, setUptime] = useState(null);
+  const uptimeBaseRef = useRef(null);
+  const uptimeFetchRef = useRef(null);
+  const [livePresence, setLivePresence] = useState(client?.presence ?? null);
 
   useEffect(() => {
     if (client?.uptime != null) {
@@ -954,8 +956,7 @@ export default function ClientDetailsPage({
         setUptime(parsed);
       }
     }
-    if (client?.last_seen)             setLastSeen(client.last_seen);
-    if (typeof client?.isOnline === "boolean") setLiveClientOnline(client.isOnline);
+    setLivePresence(client?.presence ?? null);
     if (client?.chrome_status != null) setLiveChromeStatus(client.chrome_status);
     if (client?.chrome_color != null)  setLiveChromeColor(client.chrome_color);
     if (client?.chrome_step !== undefined) {
@@ -989,6 +990,57 @@ export default function ClientDetailsPage({
   }, [client?.id]);
 
   // ---------------------------------------------------------------------------
+  // Canonical presence polling. 5 s is presentation latency only; the backend
+  // owns the 90 s freshness lease and evaluates expiry fail-closed.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!client?.id) return undefined;
+    let cancelled = false;
+
+    async function refreshPresence() {
+      try {
+        const presence = await getClientPresence(client.id);
+        if (!cancelled) setLivePresence(presence);
+      } catch {
+        // Presence is authoritative server state. If the UI cannot obtain a fresh
+        // evaluation, fail closed locally instead of displaying cached domain
+        // presence past its server-evaluated lease.
+        if (!cancelled) {
+          setLivePresence((previous) => ({
+            ...(previous || {}),
+            is_online: false,
+            status: {
+              ...(previous?.status || {}),
+              domain: "status",
+              is_online: false,
+              reason: "presence_fetch_failed",
+            },
+            display: {
+              ...(previous?.display || {}),
+              domain: "display",
+              is_online: false,
+              reason: "presence_fetch_failed",
+            },
+            system: {
+              ...(previous?.system || {}),
+              domain: "system",
+              is_online: false,
+              reason: "presence_fetch_failed",
+            },
+          }));
+        }
+      }
+    }
+
+    refreshPresence();
+    const timer = setInterval(refreshPresence, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [client?.id]);
+
+  // ---------------------------------------------------------------------------
   // Chrome-status polling — hvert 1s
   // ---------------------------------------------------------------------------
   const mountedRef = useRef(true);
@@ -1015,18 +1067,11 @@ export default function ClientDetailsPage({
             polledChromeRunning = data.chromeRunning;
             polledChromeRunningHasValue = true;
           }
-          if (data?.last_seen != null)     setLastSeen(data.last_seen);
           if (data?.pending_chrome_action != null) {
             const pca = String(data.pending_chrome_action || "none").toLowerCase();
             setLocalPendingAction(pca || "none");
           }
           if (data?.state) setLocalClientState(data.state);
-          if (typeof data?.isOnline === "boolean") {
-            setLiveClientOnline(data.isOnline);
-          } else if (typeof data?.is_online === "boolean") {
-            setLiveClientOnline(data.is_online);
-          }
-
           const nextDisplayResolution = pickDisplayResolutionFields(data);
           if (Object.keys(nextDisplayResolution).length > 0) {
             setLiveDisplayResolution((prev) => ({ ...prev, ...nextDisplayResolution }));
@@ -1275,12 +1320,13 @@ export default function ClientDetailsPage({
   // ---------------------------------------------------------------------------
   // Afledte værdier
   // ---------------------------------------------------------------------------
-  const clientOnline  = liveClientOnline;
+  const clientOnline = livePresence?.is_online === true;
+  const lastSeen = livePresence?.status?.reported_at ?? null;
   const displayUptime = uptime != null ? uptime : client?.uptime ?? null;
 
   // Livestream auto-heal efter hurtig reboot:
-  // Backendens online-timeout kan være længere end selve rebootet, så
-  // clientOnline når ikke altid at blive false. Uptime-reset er derfor det
+  // Presence-leasen kan være længere end selve rebootet, så clientOnline
+  // når ikke altid at blive false. Uptime-reset er derfor det
   // mest pålidelige signal for "ny boot" mens detaljesiden står åben.
   const lastLivestreamBootUptimeRef = useRef(null);
   const lastLivestreamBootRefreshAtRef = useRef(0);
@@ -1330,10 +1376,8 @@ export default function ClientDetailsPage({
       // null er en autoritativ værdi her: den betyder at mailbox/reason er ryddet.
       // Brug derfor ikke ??-fallback til et ældre client-snapshot.
       livestream_stop_reason: liveLivestreamStopReason,
-      isOnline: clientOnline,
-      is_online: clientOnline,
+      presence: livePresence,
       uptime: displayUptime ?? client?.uptime ?? null,
-      last_seen: lastSeen ?? client?.last_seen ?? null,
       pending_chrome_action: effectivePendingAction,
       state: effectiveClientState,
       chrome_status: liveChromeStatus ?? client?.chrome_status ?? null,
@@ -1350,7 +1394,7 @@ export default function ClientDetailsPage({
       localOsUpdateBusy,
       clientOnline,
       displayUptime,
-      lastSeen,
+      livePresence,
       effectivePendingAction,
       effectiveClientState,
       liveChromeStatus,
@@ -1364,9 +1408,8 @@ export default function ClientDetailsPage({
     ]
   );
 
-  const networkUnavailable = isNetworkUnavailable(liveClient, clientOnline);
-  const networkMessage = getNetworkStatusMessage(liveClient, clientOnline);
-  const clientReachable = clientOnline !== false && !networkUnavailable;
+  const networkUnavailable = isNetworkUnavailable(liveClient);
+  const networkMessage = getNetworkStatusMessage(liveClient);
 
   const handleControlRoomBack = useCallback(() => {
     // Navigation er ikke en eksplicit stophandling. Livestreamens desired state
@@ -1420,8 +1463,6 @@ export default function ClientDetailsPage({
               handleOpenRemoteDesktop={handleOpenRemoteDesktop}
               refreshing={refreshing}
               clientOnline={clientOnline}
-              networkUnavailable={networkUnavailable}
-              networkStatusMessage={networkMessage}
               clientActionPending={wakeCompleteWithoutPending ? false : clientActionPending}
               liveStep={liveStep}
               liveChromeStatus={liveChromeStatus}
@@ -1475,7 +1516,7 @@ export default function ClientDetailsPage({
                 onRestartStream={onRestartStream}
                 onCommandSent={refreshAfterExternalCommand}
                 onDisplayResolutionSettingsSaved={silentRefresh}
-                clientOnline={clientReachable}
+                clientOnline={clientOnline}
                 />
               </Suspense>
             </Box>
@@ -1488,9 +1529,9 @@ export default function ClientDetailsPage({
               client={liveClient}
               markedDays={markedDays}
               uptime={displayUptime}
-              lastSeen={lastSeen ?? client?.last_seen}
+              lastSeen={lastSeen}
               setCalendarDialogOpen={setCalendarDialogOpen}
-              clientOnline={clientReachable}
+              clientOnline={clientOnline}
               calendarLoading={calendarLoading}
               showSnackbar={showSnackbar}
               onUbuntuUpdateStarted={refreshAfterUbuntuUpdate}

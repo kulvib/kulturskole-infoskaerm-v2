@@ -330,8 +330,8 @@ class TerminalV2ContractTests(unittest.TestCase):
         self.assertIn('down_revision = "20260816_42a_terminal_v2"', policy_migration)
         self.assertIn('down_revision = "20260816_43a_terminal_policy"', isolation_migration)
         self.assertIn('down_revision = "20260816_44a_terminal_store"', client_isolation_migration)
-        self.assertIn('EXPECTED_HEAD_REVISION = "20260818_47a_client_activity"', contract)
-        self.assertIn('REVIEWED_BASELINE_ADOPTION_HEAD = "20260820_51b_update_auth"', runner)
+        self.assertEqual(contract.rsplit('EXPECTED_HEAD_REVISION = ', 1)[1].splitlines()[0], '"20260822_52a_client_liveness"')
+        self.assertIn('REVIEWED_BASELINE_ADOPTION_HEAD = "20260822_52a_client_liveness"', runner)
         self.assertIn("HEAD_LEGACY_PRESERVED_TABLES", runner)
         self.assertIn("_without_terminal_v2_schema", runner)
 

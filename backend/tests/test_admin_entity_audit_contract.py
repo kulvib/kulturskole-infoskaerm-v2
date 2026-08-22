@@ -199,7 +199,6 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
             name="Batch 4 klient",
             status=status,
             organization_id=self.organization.id,
-            isOnline=False,
         )
         self.session.add(client)
         self.session.commit()

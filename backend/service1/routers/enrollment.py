@@ -935,8 +935,6 @@ def claim_enrollment_token(
         lan_mac_address=data.lan_mac_address,
         machine_id=data.machine_id,
         status="pending",
-        isOnline=False,
-        last_seen=now,
         sort_order=None,
         kiosk_url=None,
         ubuntu_version=data.ubuntu_version,

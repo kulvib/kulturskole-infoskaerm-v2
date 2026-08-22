@@ -6,6 +6,7 @@ import threading
 import time
 from typing import Any, Callable
 
+from .constants import SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS
 from .logging_utils import configure_logging
 from .net import DomainTransport, TransportError, backoff_seconds
 from .status import report_status
@@ -90,7 +91,7 @@ class QueueAgent:
 
     def _report_status_if_due(self, *, force: bool = False, state: str = "online") -> None:
         now = time.monotonic()
-        if not force and now - self._last_status < 30:
+        if not force and now - self._last_status < SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS:
             return
         report_status(self.transport, observed_state=state, payload=self.status_payload())
         self._last_status = now

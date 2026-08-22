@@ -17,13 +17,6 @@ import { createApiError, formatApiError, normalizeApiError } from "./apiError";
     — "shutdown" → pending_shutdown: true
     — "start" → pending_chrome_action: "start"
     — "stop" → pending_chrome_action: "stop"
-
-  FIX: getChromeStatus fallback returnerer nu altid uptime + last_seen
-    fra getClient() hvis chrome-status endpointet ikke returnerer dem.
-
-  FIX: getChromeStatus returnerer nu også isOnline/is_online fra enten
-    chrome-status endpointet eller fallback getClient(). Det sikrer at
-    detaljesiden ikke viser stale online/offline-status.
 */
 
 // Worklog/Flow-princip: tom VITE_API_URL betyder same-origin.
@@ -476,11 +469,20 @@ export async function getClient(id) {
   return readJsonResponse(res);
 }
 
+export async function getClientPresence(id) {
+  const res = await apiFetch(`${apiUrl}/api/clients/${id}/presence`, {
+    headers: authHeaders({ Accept: "application/json" }),
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
+  if (!res.ok) throw new Error(await extractError(res, "Kunne ikke hente klient-presence"));
+  return readJsonResponse(res, "Kunne ikke læse klient-presence");
+}
+
 /**
- * Hent chrome-status for en klient.
- * @param {number|string} id - Klient ID
- * @param {{ fallbackToClient?: boolean }} options
- * @returns {{ chrome_status, chrome_color, chrome_last_updated, last_seen, uptime }}
+ * Hent browser/runtime-status. Global client-liveness hentes separat fra
+ * /presence og må aldrig rekonstrueres fra chrome-status eller Client-felter.
  */
 export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
   const res = await apiFetch(`${apiUrl}/api/clients/${id}/chrome-status`, {
@@ -508,10 +510,7 @@ export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
         pending_os_update: full.pending_os_update ?? false,
         ubuntu_updates_available: full.ubuntu_updates_available ?? 0,
         service_ubuntu_update_status: full.service_ubuntu_update_status ?? null,
-        last_seen: full.last_seen ?? null,
         uptime: full.uptime ?? null,
-        isOnline: full.isOnline ?? full.is_online ?? null,
-        is_online: full.is_online ?? full.isOnline ?? null,
         chrome_running: full.chrome_running ?? full.chromeRunning ?? null,
         network_status: full.network_status ?? null,
         network_status_message: full.network_status_message ?? null,
@@ -533,13 +532,9 @@ export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
 
   const json = normalizeChromeStatusPayload(await readJsonResponse(res, "Kunne ikke læse chrome status"));
 
-  // FIX: Supplér last_seen, uptime og online-status fra getClient hvis
-  // chrome-status endpointet ikke returnerer dem (ikke alle backends gør det).
   if (
     fallbackToClient &&
-    (json?.last_seen == null ||
-      json?.uptime == null ||
-      (json?.isOnline == null && json?.is_online == null) ||
+    (json?.uptime == null ||
       json?.pending_os_update == null ||
       json?.service_ubuntu_update_status == null)
   ) {
@@ -547,10 +542,7 @@ export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
       const full = await getClient(id);
       return normalizeChromeStatusPayload({
         ...json,
-        last_seen: json.last_seen ?? full.last_seen ?? null,
         uptime: json.uptime ?? full.uptime ?? null,
-        isOnline: json.isOnline ?? json.is_online ?? full.isOnline ?? full.is_online ?? null,
-        is_online: json.is_online ?? json.isOnline ?? full.is_online ?? full.isOnline ?? null,
         pending_os_update: json.pending_os_update ?? full.pending_os_update ?? false,
         ubuntu_updates_available: json.ubuntu_updates_available ?? full.ubuntu_updates_available ?? 0,
         service_ubuntu_update_status: json.service_ubuntu_update_status ?? full.service_ubuntu_update_status ?? null,
@@ -575,7 +567,7 @@ export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
         lan_mac_address: json.lan_mac_address ?? full.lan_mac_address ?? null,
       });
     } catch {
-      return json;
+      // Chrome/runtime endpointet er stadig autoritativt for de felter det sendte.
     }
   }
 

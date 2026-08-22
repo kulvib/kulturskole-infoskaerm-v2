@@ -1,18 +1,19 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Body, Request
+from fastapi import APIRouter, Depends, HTTPException, Body, Request, Response
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import select
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 from ..db import get_session
 from ..audit import add_audit_log
-from ..models import Client, ClientRead, ClientCreate, ClientUpdate, CalendarMarking, ChromeAction, Organization
+from ..models import Client, ClientRead, ClientPresenceRead, ClientCreate, ClientUpdate, CalendarMarking, ChromeAction, Organization
 from ..auth import get_current_user, get_current_admin_user, get_current_superadmin_user, get_current_user_or_client, require_client_self_or_user, principal_is_client, get_password_hash, validate_password_strength
 from ..models import utcnow
 from ..observability import log_safe_exception
 from ..lifecycle import ClientPurgeBlocked, prepare_client_for_permanent_delete
 from ..clientflow_deployments import active_deployment
+from ..client_presence import ClientPresence, load_client_presence, load_client_presences
 from ..terminal_v2_models import TerminalClient, TerminalCredential
 from ..remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
 from ..season_service import (
@@ -32,11 +33,6 @@ import re
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Brug samme timeout alle steder i backend. 15 sek. kan give meget hurtige
-# offline/online-skift, især omkring reboot. Sæt env til 15 hvis du vil bevare
-# den gamle adfærd.
-ONLINE_TIMEOUT_SECONDS = int(os.getenv("CLIENTFLOW_ONLINE_TIMEOUT_SECONDS", "120"))
 
 VALID_CLIENT_STATES = {"normal", "sleeping", "wakeup", "shutdown", "error", "updating", "rebooting"}
 BROWSER_REFRESH_DEFAULT_SECONDS = int(os.getenv("CLIENTFLOW_BROWSER_REFRESH_DEFAULT_SECONDS", "900"))
@@ -360,7 +356,6 @@ CLIENT_SELF_UPDATE_FIELDS = {
     "chrome_last_updated",
     "chrome_color",
     "chrome_step",
-    "last_seen",
     "pending_reboot",
     "pending_shutdown",
     "pending_chrome_action",
@@ -437,8 +432,8 @@ def normalize_client_state(value: str) -> str:
 
 def _as_naive_utc(dt):
     """
-    DB-feltet last_seen/chrome_last_updated kan være naive UTC eller timezone-aware.
-    Sammenlign altid som naive UTC, så is_online ikke fejler eller giver forkert resultat.
+    DB-datetimefelter kan være naive UTC eller timezone-aware.
+    Sammenlign altid som naive UTC.
     """
     if dt is None:
         return None
@@ -811,14 +806,6 @@ def _apply_display_resolution_fields(client: Client, client_update: ClientUpdate
     if "display_detected_updated_at" in fields:
         client.display_detected_updated_at = client_update.display_detected_updated_at
 
-def is_online(client: Client) -> bool:
-    last_seen = _as_naive_utc(client.last_seen)
-    if last_seen is None:
-        return False
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    return (now - last_seen) < timedelta(seconds=ONLINE_TIMEOUT_SECONDS)
-
-
 def _client_is_deleted(client: Client) -> bool:
     return getattr(client, "deleted_at", None) is not None or str(getattr(client, "status", "") or "").lower() == "deleted"
 
@@ -981,20 +968,14 @@ def _has_network_value(value: Optional[str]) -> bool:
     return bool(raw) and raw.lower() not in NETWORK_EMPTY_VALUES
 
 
-def _derive_network_status(client: Client, *, online: Optional[bool] = None) -> Dict[str, Any]:
-    """Derivér en læsestatus for klientens netværk uden at gætte på processer.
+def _derive_network_status(client: Client) -> Dict[str, Any]:
+    """Derive network diagnostics without turning diagnostics into liveness.
 
-    Backend kan ikke modtage en live-fejl fra klienten, når netværket helt er
-    væk. Derfor er den autoritative server-status:
-      - offline: heartbeat/chrome-status er for gammel
-      - no_network: klienten er online, men den seneste diagnostik siger at der
-        ikke findes aktiv IP/type/interface
-      - ok: klienten er online og diagnostik har en aktiv forbindelse
-      - unknown: klienten er online, men har endnu ikke sendt netværksdiagnostik
+    Shared Status-domain presence is the sole authority for backend reachability.
+    These fields describe the last network snapshot reported by the client and
+    are intentionally informational: stale or missing diagnostics must never
+    override canonical liveness or gate control-plane actions.
     """
-    if online is None:
-        online = is_online(client)
-
     active_type = str(getattr(client, "active_network_type", "") or "").strip()
     active_ip = str(getattr(client, "active_network_ip", "") or "").strip()
     active_interface = str(getattr(client, "active_network_interface", "") or "").strip()
@@ -1002,14 +983,6 @@ def _derive_network_status(client: Client, *, online: Optional[bool] = None) -> 
     wifi_ip = str(getattr(client, "wifi_ip_address", "") or "").strip()
     lan_ip = str(getattr(client, "lan_ip_address", "") or "").strip()
     diagnostics_at = getattr(client, "diagnostics_updated_at", None)
-
-    if not online:
-        return {
-            "network_status": "offline",
-            "network_status_message": "Klienten har ingen forbindelse til backend",
-            "network_status_color": "red",
-            "network_has_connection": False,
-        }
 
     has_active_network = any(_has_network_value(v) for v in (active_type, active_ip, active_interface, active_mac))
     has_adapter_ip = any(_has_network_value(v) for v in (wifi_ip, lan_ip))
@@ -1020,7 +993,7 @@ def _derive_network_status(client: Client, *, online: Optional[bool] = None) -> 
         suffix = f" · {ip}" if _has_network_value(ip) else ""
         return {
             "network_status": "ok",
-            "network_status_message": f"Netværk aktivt: {label}{suffix}",
+            "network_status_message": f"Seneste netværksdiagnostik: {label}{suffix}",
             "network_status_color": "green",
             "network_has_connection": True,
         }
@@ -1028,28 +1001,21 @@ def _derive_network_status(client: Client, *, online: Optional[bool] = None) -> 
     if diagnostics_at is not None:
         return {
             "network_status": "no_network",
-            "network_status_message": "Ingen aktiv netværksforbindelse registreret på klienten",
+            "network_status_message": "Seneste diagnostik registrerede ingen aktiv netværksforbindelse",
             "network_status_color": "red",
             "network_has_connection": False,
         }
 
     return {
         "network_status": "unknown",
-        "network_status_message": "Netværksstatus ukendt — afventer diagnostik fra klienten",
+        "network_status_message": "Netværksdiagnostik er endnu ikke rapporteret",
         "network_status_color": "orange",
         "network_has_connection": None,
     }
 
 
 def _set_runtime_read_attr(obj, key: str, value) -> None:
-    """
-    Sæt afledte læsefelter på en SQLModel-instans uden at kræve,
-    at feltet findes som DB-kolonne på selve Client-modellen.
-
-    SQLModel/Pydantic v2 afviser normalt setattr(obj, "ukendt_felt", ...).
-    ClientRead må gerne have ekstra runtime-felter som network_status, men
-    Client-tabellen skal ikke have dem som persistente kolonner.
-    """
+    """Attach response-only fields to a SQLModel instance."""
     try:
         setattr(obj, key, value)
     except ValueError as exc:
@@ -1061,16 +1027,72 @@ def _set_runtime_read_attr(obj, key: str, value) -> None:
             object.__setattr__(obj, key, value)
 
 
-def _apply_network_status_for_read(client: Client, *, online: Optional[bool] = None) -> None:
-    for key, value in _derive_network_status(client, online=online).items():
+def _apply_network_status_for_read(client: Client) -> None:
+    for key, value in _derive_network_status(client).items():
         _set_runtime_read_attr(client, key, value)
 
 
-def _client_network_unavailable(client: Client, *, online: Optional[bool] = None) -> Optional[str]:
-    status = _derive_network_status(client, online=online)
-    if status.get("network_has_connection") is False:
-        return status.get("network_status_message") or "Klienten har ingen aktiv netværksforbindelse"
-    return None
+def _apply_status_runtime_snapshot(client: Client, presence: ClientPresence) -> None:
+    """Use canonical Status telemetry for read-time runtime reconciliation.
+
+    The Status agent reports host uptime in its authenticated status payload.
+    Copy it only onto the in-memory response object; ClientDomainStatus remains
+    the persistence authority and no duplicate liveness timestamp is created.
+    """
+    payload = presence.status.status_payload or {}
+    uptime_seconds = payload.get("uptime_seconds")
+    if uptime_seconds is not None:
+        try:
+            _set_runtime_read_attr(client, "uptime", str(max(0, int(float(uptime_seconds)))))
+        except (TypeError, ValueError):
+            pass
+
+
+def _apply_presence_for_read(client: Client, presence: ClientPresence) -> None:
+    _set_runtime_read_attr(client, "presence", presence.public_dict())
+    _apply_status_runtime_snapshot(client, presence)
+
+
+def _prepare_client_read(client: Client, presence: ClientPresence) -> Client:
+    _apply_presence_for_read(client, presence)
+    _normalize_runtime_state(client, online=presence.is_online)
+    _apply_network_status_for_read(client)
+    return client
+
+
+def _prepare_clients_read(session, clients: List[Client]) -> List[Client]:
+    presences = load_client_presences(session, clients)
+    for client in clients:
+        presence = presences.get(int(client.id)) if client.id is not None else None
+        if presence is None:
+            presence = load_client_presence(session, client)
+        _prepare_client_read(client, presence)
+    return clients
+
+
+def _require_client_online(
+    session,
+    client: Client,
+    *,
+    presence: Optional[ClientPresence] = None,
+) -> ClientPresence:
+    """Require fresh canonical Status-domain liveness for live-only legacy actions.
+
+    This deliberately does not infer readiness from Display/System presence: the
+    current legacy action endpoints are not producers for the shared ClientCommand
+    queue. Binding them to those domains would create an unverified contract.
+    """
+    evidence = presence or load_client_presence(session, client)
+    if not evidence.is_online:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Klienten er ikke online via canonical Status-domain "
+                f"({evidence.status.reason}). Handlingen er ikke sendt."
+            ),
+        )
+    return evidence
+
 
 BOOT_RECOVERED_CHROME_STATUS = "Klient online efter genstart — afventer aktuel browserstatus"
 BOOT_RECOVERED_CHROME_COLOR = "orange"
@@ -1146,14 +1168,12 @@ def is_step_from_previous_boot(client: Client) -> bool:
     return step_time is not None and step_time < (current_boot_time - timedelta(seconds=2))
 
 
-def _looks_like_boot_recovered_stale_step(client: Client, *, online: Optional[bool] = None) -> bool:
+def _looks_like_boot_recovered_stale_step(client: Client, *, online: bool = False) -> bool:
     step = str(getattr(client, "chrome_step", "") or "").strip().lower()
     if step not in SYSTEM_TERMINAL_STEPS:
         return False
     if is_step_from_previous_boot(client):
         return True
-    if online is None:
-        online = is_online(client)
     if not online:
         return False
     # Beskyt aktiv reboot/shutdown: hvis backend stadig har en eksplicit pending-flag,
@@ -1171,8 +1191,8 @@ def _pending_action_name(client: Client) -> str:
     ) or "none"
 
 
-def _normalize_runtime_state(client: Client, *, online: Optional[bool] = None) -> bool:
-    """Normalisér stale runtime-state på tværs af read/heartbeat/update.
+def _normalize_runtime_state(client: Client, *, online: bool = False) -> bool:
+    """Normalisér stale runtime-state på tværs af canonical reads og updates.
 
     `state` bør primært være klientens varige runtime-tilstand. Transiente
     handlinger som reboot/shutdown styres af pending_* og chrome_step. Efter en
@@ -1180,8 +1200,6 @@ def _normalize_runtime_state(client: Client, *, online: Optional[bool] = None) -
     Returnerer True hvis objektet blev ændret og bør committes af caller.
     """
     changed = False
-    if online is None:
-        online = is_online(client)
 
     state = str(getattr(client, "state", "") or "").strip().lower()
     step = str(getattr(client, "chrome_step", "") or "").strip().lower()
@@ -1241,15 +1259,6 @@ def _normalize_runtime_state(client: Client, *, online: Optional[bool] = None) -
     return changed
 
 
-def _apply_runtime_status_for_read(client: Client, *, online: Optional[bool] = None) -> None:
-    """Sanitér læse-respons uden commit, så Controlroom ikke viser stale state."""
-    if online is None:
-        online = is_online(client)
-    _normalize_runtime_state(client, online=online)
-    _apply_network_status_for_read(client, online=online)
-
-
-
 @router.get("/clients/me", response_model=List[ClientRead])
 def get_clients_for_my_organization(session=Depends(get_session), user=Depends(get_current_user)):
     if not user.organization_id:
@@ -1257,9 +1266,7 @@ def get_clients_for_my_organization(session=Depends(get_session), user=Depends(g
     clients = session.exec(
         select(Client).where(Client.status == "approved", Client.organization_id == user.organization_id, Client.deleted_at == None)
     ).all()
-    for client in clients:
-        client.isOnline = is_online(client)
-        _apply_runtime_status_for_read(client, online=client.isOnline)
+    _prepare_clients_read(session, clients)
     clients.sort(key=lambda c: (c.sort_order is None, c.sort_order if c.sort_order is not None else 9999, c.id))
     return clients
 
@@ -1282,9 +1289,7 @@ def get_clients(session=Depends(get_session), user=Depends(get_current_user)):
         )
 
     clients = session.exec(query).all()
-    for client in clients:
-        client.isOnline = is_online(client)
-        _apply_runtime_status_for_read(client, online=client.isOnline)
+    _prepare_clients_read(session, clients)
     clients.sort(key=lambda c: (c.sort_order is None, c.sort_order if c.sort_order is not None else 9999, c.id))
     return clients
 
@@ -1295,9 +1300,7 @@ def get_deleted_clients(session=Depends(get_session), user=Depends(get_current_u
         raise HTTPException(status_code=403, detail="Papirkurv kræver superadministrator eller Se adgang")
     query = select(Client).where(Client.deleted_at != None)
     clients = session.exec(query).all()
-    for client in clients:
-        client.isOnline = is_online(client)
-        _apply_runtime_status_for_read(client, online=client.isOnline)
+    _prepare_clients_read(session, clients)
     clients.sort(key=lambda c: (c.deleted_at is None, c.deleted_at or datetime.min), reverse=True)
     return clients
 
@@ -1312,10 +1315,9 @@ def get_client(id: int, include_deleted: bool = False, session=Depends(get_sessi
     client = session.get(Client, id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
-    client.isOnline = is_online(client)
     _require_client_read_access(user, client, include_deleted=include_deleted)
-    _apply_runtime_status_for_read(client, online=client.isOnline)
-    return client
+    presence = load_client_presence(session, client)
+    return _prepare_client_read(client, presence)
 
 
 @router.get("/clients/{id}/local-management")
@@ -1424,11 +1426,25 @@ def update_client_local_management_status(
         client.local_management_secret = None
         client.local_management_action = None
         client.local_management_desired_hostname = None
-    client.last_seen = utcnow()
     session.add(client)
     session.commit()
     session.refresh(client)
     return _local_management_payload(client, include_secret=False)
+
+
+@router.get("/clients/{id}/presence", response_model=ClientPresenceRead)
+def get_client_presence(
+    id: int,
+    response: Response,
+    session=Depends(get_session),
+    user=Depends(get_current_user_or_client),
+):
+    client = session.get(Client, id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    _require_client_read_access(user, client)
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return load_client_presence(session, client).public_dict()
 
 
 @router.get("/clients/{id}/chrome-status")
@@ -1438,9 +1454,10 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client)
 
-    online = is_online(client)
-    _normalize_runtime_state(client, online=online)
-    stale_boot_status = _looks_like_boot_recovered_stale_step(client, online=online)
+    presence = load_client_presence(session, client)
+    _apply_status_runtime_snapshot(client, presence)
+    _normalize_runtime_state(client, online=presence.is_online)
+    stale_boot_status = _looks_like_boot_recovered_stale_step(client, online=presence.is_online)
 
     # FIX: Læser chrome_step fra database, men filtrerer gamle system-steps fra
     # forrige boot. Ellers kan frontend blive ved med at vise
@@ -1469,16 +1486,9 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "chrome_color": chrome_color_value,
         "chrome_step": chrome_step_value,
         "chrome_running": _infer_chrome_running_from_status(chrome_status_value, chrome_step_value),
-        **_derive_network_status(client, online=online),
+        **_derive_network_status(client),
         "step": step_obj,
-        "last_seen": client.last_seen,
         "uptime": client.uptime,
-
-        # Vigtigt for ClientDetailsPage: den poller dette endpoint hvert sekund.
-        # Uden isOnline her bliver siden ved med at bruge den gamle client.isOnline
-        # fra initial getClient/silentRefresh.
-        "isOnline": online,
-        "is_online": online,
 
         # Gør frontend i stand til at slippe låse/banner uden at vente på fuldt
         # /clients/{id}/ refresh.
@@ -1586,17 +1596,17 @@ def update_chrome_status(
             client.chrome_step = data.get("chrome_step")
         client.chrome_last_updated = step_time or utcnow()
 
-    # Et chrome-status push er også et livstegn fra klienten.
-    # Best practice: hvis klienten sender versionsfelter her, må de ikke gå tabt.
-    # Det gør /chrome-status til et robust live-feed efter self-update/Ubuntu-update,
-    # også før næste normale heartbeat eller fulde /update-payload.
+    # Chrome-status er browser/runtime-data, ikke client-liveness. Versionsfelter
+    # må stadig opdateres her, når klienten eksplicit rapporterer dem; canonical
+    # liveness kommer udelukkende fra Status-domain presence.
     if data.get("client_version") is not None:
         client.client_version = str(data.get("client_version") or "").strip() or client.client_version
     if data.get("ubuntu_version") is not None:
         client.ubuntu_version = str(data.get("ubuntu_version") or "").strip() or client.ubuntu_version
 
-    client.last_seen = utcnow()
-    _normalize_runtime_state(client, online=True)
+    presence = load_client_presence(session, client)
+    _apply_status_runtime_snapshot(client, presence)
+    _normalize_runtime_state(client, online=presence.is_online)
     session.add(client)
     session.commit()
     session.refresh(client)
@@ -1628,7 +1638,9 @@ def get_client_state(id: int, session=Depends(get_session), user=Depends(get_cur
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client)
-    _normalize_runtime_state(client)
+    presence = load_client_presence(session, client)
+    _apply_status_runtime_snapshot(client, presence)
+    _normalize_runtime_state(client, online=presence.is_online)
     return {"state": client.state}
 
 
@@ -1686,9 +1698,7 @@ def set_chrome_command(
         getattr(client.pending_chrome_action, "value", None) or str(client.pending_chrome_action or "none")
     ) or "none"
 
-    network_error = _client_network_unavailable(client)
-    if network_error:
-        raise HTTPException(status_code=409, detail=network_error)
+    _require_client_online(session, client)
 
     state_guard_result = _validate_chrome_command_state(client, action, current_pca)
     if state_guard_result is not None:
@@ -1801,7 +1811,9 @@ def _os_update_is_stale(client: Client) -> bool:
     if pca not in ("", "none", "os_update"):
         return False
 
-    ref = _as_naive_utc(getattr(client, "chrome_last_updated", None)) or _as_naive_utc(getattr(client, "last_seen", None))
+    ref = _as_naive_utc(getattr(client, "ubuntu_update_updated_at", None)) or _as_naive_utc(
+        getattr(client, "ubuntu_update_started_at", None)
+    )
     if ref is None:
         return False
 
@@ -1830,8 +1842,7 @@ async def trigger_os_update(
         raise HTTPException(status_code=404, detail="Client not found")
     _require_admin_client_access(user, client)
     _require_no_active_clientflow_deployment(session, id)
-    if not is_online(client):
-        raise HTTPException(status_code=400, detail="Klienten er offline — kan ikke starte opdatering")
+    _require_client_online(session, client)
 
     _normalize_os_update_state_if_finished(client)
 
@@ -1980,8 +1991,6 @@ async def create_client(
         deleted_previous_status=None,
         restored_at=None,
         restored_by_user_id=None,
-        isOnline=False,
-        last_seen=None,
         sort_order=client_in.sort_order,
         kiosk_url=getattr(client_in, "kiosk_url", None),
         browser_refresh_interval_sec=_normalize_browser_refresh_interval(getattr(client_in, "browser_refresh_interval_sec", None)),
@@ -2071,7 +2080,7 @@ async def create_client(
     )
     session.commit()
     session.refresh(client)
-    return client
+    return _prepare_client_read(client, load_client_presence(session, client))
 
 
 def _authorize_client_update_fields(user, client: Client, client_update: ClientUpdate, fields: set[str]) -> None:
@@ -2124,22 +2133,25 @@ def _validate_client_update_privileges(user, client: Client, fields: set[str]) -
 def _validate_client_update_command_availability(session, user, client: Client, client_update: ClientUpdate, fields: set[str]) -> None:
     if principal_is_client(user):
         return
+
     wants_reboot = "pending_reboot" in fields and bool(client_update.pending_reboot)
     wants_shutdown = "pending_shutdown" in fields and bool(client_update.pending_shutdown)
     display_action_value = str(getattr(client_update, "display_resolution_action", "") or "").strip().lower()
     wants_display_action = "display_resolution_action" in fields and display_action_value in VALID_DISPLAY_RESOLUTION_ACTIONS
     pending_action_value = _normalize_chrome_action_name(getattr(client_update, "pending_chrome_action", None))
     wants_pending_action = "pending_chrome_action" in fields and pending_action_value not in (None, "none")
+
     if pending_action_value == "clientflow_update":
         raise HTTPException(
             status_code=410,
             detail="Legacy clientflow_update er fjernet. Brug canonical ClientFlow deployment-endpointet.",
         )
-    if wants_reboot or wants_shutdown or wants_display_action or wants_pending_action:
-        _require_no_active_clientflow_deployment(session, client.id)
-        network_error = _client_network_unavailable(client)
-        if network_error:
-            raise HTTPException(status_code=409, detail=network_error)
+
+    if not (wants_reboot or wants_shutdown or wants_display_action or wants_pending_action):
+        return
+
+    _require_no_active_clientflow_deployment(session, client.id)
+    _require_client_online(session, client)
 
 
 @router.put("/clients/{id}/update", response_model=ClientRead)
@@ -2179,7 +2191,6 @@ async def update_client(
         client.chrome_last_updated = client_update.chrome_last_updated
     elif "chrome_status" in fields or "chrome_step" in fields:
         client.chrome_last_updated = utcnow()
-    if "last_seen" in fields: client.last_seen = client_update.last_seen
     if "created_at" in fields: client.created_at = client_update.created_at
     if "pending_reboot" in fields:
         client.pending_reboot = client_update.pending_reboot
@@ -2315,7 +2326,9 @@ async def update_client(
     if "display_detected_updated_at" in fields: client.display_detected_updated_at = client_update.display_detected_updated_at
 
     if principal_is_client(user):
-        _normalize_runtime_state(client, online=True)
+        presence = load_client_presence(session, client)
+        _apply_status_runtime_snapshot(client, presence)
+        _normalize_runtime_state(client, online=presence.is_online)
 
     if "pending_chrome_action" in fields or "pending_chrome_action_source" in fields:
         principal_type, principal_id, principal_role = _principal_log_context(user)
@@ -2333,7 +2346,7 @@ async def update_client(
     session.add(client)
     session.commit()
     session.refresh(client)
-    return client
+    return _prepare_client_read(client, load_client_presence(session, client))
 
 
 @router.put("/clients/{id}/kiosk_url", response_model=ClientRead)
@@ -2362,7 +2375,7 @@ async def update_kiosk_url(
     session.add(client)
     session.commit()
     session.refresh(client)
-    return client
+    return _prepare_client_read(client, load_client_presence(session, client))
 
 
 def _current_season_str() -> str:
@@ -2516,10 +2529,15 @@ async def change_client_organization(
     )
     session.commit()
     session.refresh(client)
-    client.isOnline = is_online(client)
+    _prepare_client_read(client, load_client_presence(session, client))
 
     return {
         **client.model_dump(),
+        "presence": client.__dict__.get("presence"),
+        "network_status": client.__dict__.get("network_status"),
+        "network_status_message": client.__dict__.get("network_status_message"),
+        "network_status_color": client.__dict__.get("network_status_color"),
+        "network_has_connection": client.__dict__.get("network_has_connection"),
         "organization_id": client.organization_id,
         **result,
     }
@@ -2624,80 +2642,7 @@ async def approve_client(
     )
     session.commit()
     session.refresh(client)
-    return client
-
-
-@router.post("/clients/{id}/heartbeat", response_model=ClientRead)
-def client_heartbeat(
-    id: int,
-    data: dict = Body(default=None),
-    session=Depends(get_session),
-    user=Depends(get_current_user_or_client),
-):
-    """
-    Heartbeat er klientens hurtige livstegn.
-
-    Vigtigt:
-    Webfrontend viser uptime fra backend. Den lokale klient-GUI viser uptime
-    direkte fra clientflow_config.json, som opdateres fra /proc/uptime.
-    Derfor skal heartbeat også opdatere backend.uptime, ellers kan webvisningen
-    være bagud i forhold til den lokale GUI.
-    """
-    require_client_self_or_user(user, id)
-    client = session.get(Client, id)
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-
-    client.last_seen = utcnow()
-
-    if isinstance(data, dict):
-        if data.get("uptime") is not None:
-            client.uptime = str(data.get("uptime"))
-        if data.get("ubuntu_version") is not None:
-            client.ubuntu_version = data.get("ubuntu_version")
-        if data.get("client_version") is not None:
-            client.client_version = data.get("client_version")
-
-        # Valgfrit, men nyttigt hvis heartbeat senere bruges til netværksdata.
-        for field in (
-            "wifi_ip_address",
-            "wifi_mac_address",
-            "lan_ip_address",
-            "lan_mac_address",
-            "diagnostics_updated_at",
-            "active_network_type",
-            "active_network_interface",
-            "active_network_ip",
-            "active_network_mac",
-            "service_clientflow_status",
-            "service_calendar_status",
-            "service_browser_guard_status",
-            "service_remote_terminal_status",
-            "service_admin_terminal_status",
-            "service_remote_desktop_status",
-            "service_kiosk_x11_guard_status",
-            "service_livestream_status",
-            "service_selfupdate_status",
-            "service_ubuntu_update_status",
-            "service_local_reboot_reporter_status",
-            "service_local_shutdown_reporter_status",
-            "livestream_process_status",
-            "system_timezone",
-            "ntp_enabled",
-            "ntp_synchronized",
-            "client_time_utc",
-        ):
-            if data.get(field) is not None:
-                setattr(client, field, data.get(field))
-        _apply_time_integrity_report(client, set(data))
-
-    _normalize_runtime_state(client, online=True)
-    session.add(client)
-    session.commit()
-    session.refresh(client)
-    client.isOnline = True
-    _apply_runtime_status_for_read(client, online=True)
-    return client
+    return _prepare_client_read(client, load_client_presence(session, client))
 
 
 def _generate_client_secret() -> str:
@@ -2857,7 +2802,6 @@ async def remove_client(
     client.restored_at = None
     client.restored_by_user_id = None
     client.status = "deleted"
-    client.isOnline = False
     client.pending_chrome_action = ChromeAction.NONE
     client.pending_chrome_action_source = None
 
@@ -2897,8 +2841,7 @@ async def restore_client(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     if not _client_is_deleted(client):
-        client.isOnline = is_online(client)
-        return client
+        return _prepare_client_read(client, load_client_presence(session, client))
 
     restored_status = client.deleted_previous_status or "approved"
     if restored_status == "deleted":
@@ -2926,8 +2869,7 @@ async def restore_client(
     )
     session.commit()
     session.refresh(client)
-    client.isOnline = is_online(client)
-    return client
+    return _prepare_client_read(client, load_client_presence(session, client))
 
 
 @router.delete("/clients/{id}/purge")

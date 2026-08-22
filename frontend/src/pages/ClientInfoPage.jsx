@@ -77,7 +77,6 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
   - Polling pauser under drag/sort.
   - Hurtigere online/offline-polling med guard mod overlappende requests.
   - Fokus/visibility refresh, så listen opdateres straks når fanen åbnes igen.
-  - Robust online-fortolkning fra både isOnline og is_online.
   - Netværksfelter viser "ikke tilsluttet" for LAN når backend angiver det.
 */
 
@@ -148,13 +147,7 @@ function getClientLocality(client) {
 }
 
 function getClientOnline(client) {
-  const value = client?.isOnline ?? client?.is_online ?? client?.online;
-  return (
-    value === true ||
-    value === 1 ||
-    value === "1" ||
-    String(value).toLowerCase() === "true"
-  );
+  return client?.presence?.is_online === true;
 }
 
 function normalizeNetworkValue(value) {
@@ -382,7 +375,7 @@ function getDeletedReason(client) {
 }
 
 // Sammenlign kun felter, der bruges på denne oversigt.
-// uptime og last_seen ændres ofte via heartbeat, men vises ikke her.
+// Uptime ændres løbende, men vises ikke her.
 function isClientListEqual(a = [], b = []) {
   if (a.length !== b.length) return false;
 
