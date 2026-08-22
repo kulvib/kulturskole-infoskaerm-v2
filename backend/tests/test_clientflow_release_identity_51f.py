@@ -24,20 +24,18 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     release_input = json.loads(RELEASE_INPUT_PATH.read_text(encoding="utf-8"))
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    # Source/build identity advances before publication. The runtime catalog
-    # must continue selecting the last physically approved/published release.
     assert version == "1.3.3"
     assert release_input["release_sequence"] == 1204
     source_release_id = f"clientflow-{version}-seq-{release_input['release_sequence']}"
     assert source_release_id == "clientflow-1.3.3-seq-1204"
 
-    # Catalog promotion remains a separate gate and therefore stays at the
-    # physically published 1.3.2/1203 authority until 1.3.3/1204 is approved
-    # and materialized in the immutable artifact store.
-    assert catalog["catalog_sequence"] == 1203
-    assert catalog["latest_stable"] == "1.3.2"
-    assert catalog["default_install_version"] == "1.3.2"
-    assert catalog["catalog_sequence"] < release_input["release_sequence"]
+    # Source/build identity may move ahead while a candidate is built, approved
+    # and published. After the separate catalog-promotion gate, the selector is
+    # allowed to align with source, but it must never lead source/build identity.
+    assert catalog["catalog_sequence"] == 1204
+    assert catalog["latest_stable"] == "1.3.3"
+    assert catalog["default_install_version"] == "1.3.3"
+    assert catalog["catalog_sequence"] <= release_input["release_sequence"]
     assert len(catalog["releases"]) == 1
 
     selected = catalog["releases"][0]
@@ -49,14 +47,20 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
 
     selected_tuple = tuple(int(part) for part in selected["version"].split("."))
     source_tuple = tuple(int(part) for part in version.split("."))
-    assert selected_tuple < source_tuple
-    assert selected["release_sequence"] < release_input["release_sequence"]
+    assert selected_tuple <= source_tuple
+    assert selected["release_sequence"] <= release_input["release_sequence"]
+
+    # This promotion intentionally aligns selector policy with the exact
+    # 1.3.3/1204 source/build identity after immutable publication.
+    assert selected_tuple == source_tuple
+    assert selected["release_sequence"] == release_input["release_sequence"]
+    assert selected["release_id"] == source_release_id
 
 
-def test_51f_132_update_keeps_131_as_minimum_proven_bootstrap() -> None:
+def test_51f_133_update_keeps_131_as_minimum_proven_bootstrap() -> None:
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = catalog["releases"][0]
-    assert release["version"] == "1.3.2"
+    assert release["version"] == "1.3.3"
     assert release["min_current_version"] == "1.3.1"
     assert "fresh_install" in release["install_modes"]
     assert "in_place_update" in release["install_modes"]
