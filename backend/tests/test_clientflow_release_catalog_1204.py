@@ -63,7 +63,7 @@ def test_catalog_1204_rejects_update_from_130_and_keeps_131_as_minimum_bootstrap
         )
 
 
-def test_catalog_1204_matches_source_after_separate_publication_and_promotion() -> None:
+def test_catalog_1204_remains_published_133_while_source_advances_to_134_1205() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -72,17 +72,17 @@ def test_catalog_1204_matches_source_after_separate_publication_and_promotion() 
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
 
-    assert source_version == "1.3.3"
-    assert release_input["release_sequence"] == 1204
+    assert source_version == "1.3.4"
+    assert release_input["release_sequence"] == 1205
 
-    # Catalog promotion is a separate selector-policy gate. Once the exact
-    # approved bytes have been published and re-validated, source and selector
-    # identity may align again without moving byte authority into the catalog.
+    # Source/build identity intentionally moves ahead while 1.3.4/1205 is built,
+    # manually approved and immutably published. The runtime catalog remains the
+    # selector for the already approved 1.3.3/1204 release until promotion.
     assert data["catalog_sequence"] == 1204
     assert data["latest_stable"] == "1.3.3"
     assert data["default_install_version"] == "1.3.3"
-    assert release["version"] == source_version
-    assert release["release_sequence"] == release_input["release_sequence"]
+    assert release["version"] == "1.3.3"
+    assert release["release_sequence"] == 1204
     assert release["release_id"] == "clientflow-1.3.3-seq-1204"
 
     for field in (
