@@ -237,7 +237,7 @@ def _put_status(
             "schema_version": 1,
             "observed_state": "online",
             "status_payload": {"claim_integration": True},
-            "agent_version": "integration",
+            "agent_version": TEST_RELEASE_SNAPSHOT["target_version"],
             "boot_id": boot_id,
         },
     )
