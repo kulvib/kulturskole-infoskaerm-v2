@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "operations": [
+    {
+      "name": "getClients",
+      "method": "GET",
+      "path": "/api/clients/",
+      "example_path": "/api/clients/",
+      "success_status": "200",
+      "response_item_properties": ["id", "status", "presence"]
+    },
+    {
+      "name": "getClient",
+      "method": "GET",
+      "path": "/api/clients/{id}/",
+      "example_path": "/api/clients/42/",
+      "success_status": "200",
+      "response_properties": ["id", "status", "presence"]
+    },
+    {
+      "name": "getClientPresence",
+      "method": "GET",
+      "path": "/api/clients/{id}/presence",
+      "example_path": "/api/clients/42/presence",
+      "success_status": "200",
+      "response_properties": ["is_online", "status", "display", "system"]
+    },
+    {
+      "name": "approveClient",
+      "method": "POST",
+      "path": "/api/clients/{id}/approve",
+      "example_path": "/api/clients/42/approve",
+      "success_status": "200",
+      "request_properties": ["organization_id"],
+      "response_properties": ["id", "status", "presence"]
+    },
+    {
+      "name": "getClientflowReleases",
+      "method": "GET",
+      "path": "/api/clientflow/releases",
+      "example_path": "/api/clientflow/releases",
+      "success_status": "200"
+    },
+    {
+      "name": "getClientflowDeployments",
+      "method": "GET",
+      "path": "/api/clients/{client_id}/clientflow-deployments",
+      "example_path": "/api/clients/42/clientflow-deployments",
+      "success_status": "200",
+      "response_item_properties": [
+        "id", "client_id", "target_release_id", "target_version",
+        "target_release_sequence", "bundle_sha256", "bundle_size",
+        "release_approval_reference", "state", "state_updated_at"
+      ]
+    },
+    {
+      "name": "getActiveClientflowDeployment",
+      "method": "GET",
+      "path": "/api/clients/{client_id}/clientflow-deployments/active",
+      "example_path": "/api/clients/42/clientflow-deployments/active",
+      "success_status": "200",
+      "response_properties": [
+        "id", "client_id", "target_release_id", "target_version",
+        "target_release_sequence", "bundle_sha256", "bundle_size",
+        "release_approval_reference", "state", "state_updated_at"
+      ]
+    },
+    {
+      "name": "requestClientflowDeployment",
+      "method": "POST",
+      "path": "/api/clients/{client_id}/clientflow-deployments",
+      "example_path": "/api/clients/42/clientflow-deployments",
+      "success_status": "201",
+      "request_properties": ["target_version", "confirm_downgrade", "reason"],
+      "response_properties": [
+        "id", "client_id", "target_release_id", "target_version",
+        "target_release_sequence", "bundle_sha256", "bundle_size",
+        "release_approval_reference", "state", "state_updated_at"
+      ]
+    },
+    {
+      "name": "cancelClientflowDeployment",
+      "method": "POST",
+      "path": "/api/clientflow-deployments/{deployment_id}/cancel",
+      "example_path": "/api/clientflow-deployments/deployment-123/cancel",
+      "success_status": "200",
+      "request_properties": ["reason"],
+      "response_properties": [
+        "id", "client_id", "target_release_id", "target_version",
+        "target_release_sequence", "bundle_sha256", "bundle_size",
+        "release_approval_reference", "state", "state_updated_at"
+      ]
+    },
+    {
+      "name": "createEnrollmentToken",
+      "method": "POST",
+      "path": "/api/admin/enrollment-tokens",
+      "example_path": "/api/admin/enrollment-tokens",
+      "success_status": "201",
+      "request_properties": ["expires_in_hours", "note"],
+      "response_properties": [
+        "id", "code", "expires_at", "release_id", "version",
+        "release_sequence", "bundle_sha256", "bundle_size",
+        "release_approval_reference", "release_candidate_sha256",
+        "source_commit", "fresh_install_authorization", "artifact_url"
+      ]
+    },
+    {
+      "name": "getEnrollmentTokens",
+      "method": "GET",
+      "path": "/api/admin/enrollment-tokens",
+      "example_path": "/api/admin/enrollment-tokens?include_history=true",
+      "success_status": "200",
+      "response_item_properties": [
+        "id", "code_preview", "expires_at", "used_at", "revoked_at",
+        "used_by_client_id", "is_used", "is_expired", "is_revoked"
+      ]
+    },
+    {
+      "name": "revokeEnrollmentToken",
+      "method": "POST",
+      "path": "/api/admin/enrollment-tokens/{token_id}/revoke",
+      "example_path": "/api/admin/enrollment-tokens/7/revoke",
+      "success_status": "200",
+      "response_properties": [
+        "id", "code_preview", "expires_at", "used_at", "revoked_at",
+        "used_by_client_id", "is_used", "is_expired", "is_revoked"
+      ]
+    }
+  ]
+}
