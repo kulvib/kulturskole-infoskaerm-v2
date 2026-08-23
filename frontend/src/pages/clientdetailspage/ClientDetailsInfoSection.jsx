@@ -2689,7 +2689,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
 
   const criticalServiceRows = [
     { label: "Backend sync", value: client?.service_clientflow_status, service: true, unit: "clientflow-status-agent.service" },
-    { label: "Kalender", value: client?.service_calendar_status, service: true, unit: "clientflow_calendar.service" },
+    { label: "Kalender", value: client?.service_calendar_status, service: true, unit: "clientflow-calendar.service" },
     { label: "Browser Guard", value: client?.service_browser_guard_status, service: true, unit: "clientflow_browser_guard.service" },
     { label: "Terminal", value: client?.service_remote_terminal_status, service: true, unit: "client_terminal_agent.service" },
     { label: "Administrator terminal", value: client?.service_admin_terminal_status, service: true, unit: "client_admin_terminal_agent.service" },
@@ -2809,7 +2809,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
       columns: 2,
       rows: [
         { label: "Backend sync", value: client?.service_clientflow_status, service: true, unit: "clientflow-status-agent.service" },
-        { label: "Kalender", value: client?.service_calendar_status, service: true, unit: "clientflow_calendar.service" },
+        { label: "Kalender", value: client?.service_calendar_status, service: true, unit: "clientflow-calendar.service" },
         { label: "Browser Guard", value: client?.service_browser_guard_status, service: true, unit: "clientflow_browser_guard.service" },
         { label: "Fjernskrivebord", value: client?.service_remote_desktop_status, service: true, unit: "client_remote_desktop_agent.service" },
         { label: "Livestream", value: client?.livestream_status || "idle", status: true, helper: `Service: ${statusText(client?.service_livestream_status, "ukendt")}` },

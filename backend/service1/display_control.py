@@ -317,6 +317,22 @@ def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
         chrome_step = "display_wake_complete" if power_state == "on" else "display_sleep_complete"
         step_updated = power_updated
 
+    calendar_raw = status_payload.get("calendar") if isinstance(status_payload, dict) else None
+    calendar = calendar_raw if isinstance(calendar_raw, dict) else {}
+    calendar_state = str(calendar.get("state") or "").strip().lower()
+    calendar_updated = _epoch_datetime(calendar.get("updated_at"))
+    calendar_service_status: str | None
+    if not calendar:
+        calendar_service_status = None
+    elif calendar_updated is None or (utcnow() - calendar_updated).total_seconds() > 120:
+        calendar_service_status = "stale"
+    elif calendar_state == "running":
+        calendar_service_status = "running"
+    elif calendar_state == "degraded":
+        calendar_service_status = "failed"
+    else:
+        calendar_service_status = "unknown"
+
     active = active_display_control_command(session, client_id)
     pending = display_command_legacy_action(active)
     return {
@@ -331,4 +347,6 @@ def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
         "pending_chrome_action_source": "display_command" if pending != "none" else None,
         "display_agent_version": status.agent_version if status else None,
         "display_power": power_state,
+        "service_calendar_status": calendar_service_status,
+        "calendar": calendar or None,
     }

@@ -990,6 +990,7 @@ def _apply_display_projection_for_read(session, client: Client) -> None:
     _set_runtime_read_attr(client, "chrome_last_updated", projection["chrome_last_updated"])
     _set_runtime_read_attr(client, "chrome_running", projection["chrome_running"])
     _set_runtime_read_attr(client, "chrome_step", projection["chrome_step"])
+    _set_runtime_read_attr(client, "service_calendar_status", projection["service_calendar_status"])
 
     display_pending = str(projection["pending_chrome_action"] or "none")
     if display_pending != "none":
@@ -1874,7 +1875,7 @@ async def create_client(
     return _prepare_full_client_read(session, client)
 
 
-LEGACY_DISPLAY_STATUS_WRITE_FIELDS = {"chrome_status", "chrome_color", "chrome_step", "chrome_last_updated"}
+LEGACY_DISPLAY_STATUS_WRITE_FIELDS = {"chrome_status", "chrome_color", "chrome_step", "chrome_last_updated", "service_calendar_status"}
 
 
 def _reject_legacy_display_write_fields(fields: set[str]) -> None:
