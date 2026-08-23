@@ -1805,11 +1805,20 @@ def get_chrome_command(id: int, session=Depends(get_session), user=Depends(get_c
         return {"action": display_command_legacy_action(active), "source": "display_command"}
 
     # Preserve non-Display legacy actions until their owning domains are audited.
-    legacy_action = _normalize_chrome_action_name(getattr(client, "pending_chrome_action", None)) or "none"
-    if legacy_action in _LEGACY_DISPLAY_PENDING_ACTIONS or legacy_action == "clientflow_update":
-        legacy_action = "none"
-    source = None if legacy_action == "none" else getattr(client, "pending_chrome_action_source", None)
-    return {"action": legacy_action, "source": source}
+    action = _normalize_chrome_action_name(getattr(client, "pending_chrome_action", None)) or "none"
+    if action == "clientflow_update":
+        client.pending_chrome_action = ChromeAction.NONE
+        client.pending_chrome_action_source = None
+        if str(getattr(client, "state", "") or "").strip().lower() == "updating" and not bool(getattr(client, "pending_os_update", False)):
+            client.state = "normal"
+        session.add(client)
+        session.commit()
+        action = "none"
+    elif action in _LEGACY_DISPLAY_PENDING_ACTIONS:
+        # Display actions are no longer authoritative through Client.* fields.
+        action = "none"
+    source = None if action == "none" else getattr(client, "pending_chrome_action_source", None)
+    return {"action": action, "source": source}
 
 
 def _os_update_is_stale(client: Client) -> bool:

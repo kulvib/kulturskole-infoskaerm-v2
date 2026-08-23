@@ -28,6 +28,9 @@ def test_53a_is_new_reviewed_head_with_durable_display_authority():
     assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260823_53a_display_authority"' in runner
     assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260823_53a_display_authority"' in runner
     assert 'REVIEWED_DISPLAY_AUTHORITY_REVISION = "20260823_53a_display_authority"' in runner
+    assert 'display_authority_revision = script.get_revision(REVIEWED_DISPLAY_AUTHORITY_REVISION)' in runner
+    assert 'display_authority_revision.down_revision != REVIEWED_CLIENT_LIVENESS_REVISION' in runner
+    assert 'head != REVIEWED_DISPLAY_AUTHORITY_REVISION' in runner
 
 
 def test_client_aggregate_no_longer_has_display_config_storage_fields():

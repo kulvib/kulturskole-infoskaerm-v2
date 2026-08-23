@@ -916,6 +916,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
             clientflow_deployment_revision = script.get_revision(REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION)
             clientflow_update_auth_revision = script.get_revision(REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION)
             client_liveness_revision = script.get_revision(REVIEWED_CLIENT_LIVENESS_REVISION)
+            display_authority_revision = script.get_revision(REVIEWED_DISPLAY_AUTHORITY_REVISION)
             head_revision = script.get_revision(head)
             if any(
                 item is None
@@ -924,7 +925,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                     terminal_v2_revision, terminal_policy_revision, terminal_storage_revision,
                     terminal_client_revision, remote_desktop_revision, client_activity_revision, lifecycle_revision,
                     database_contract_revision, canonical_foundations_revision, clientflow_deployment_revision,
-                    clientflow_update_auth_revision, client_liveness_revision, head_revision,
+                    clientflow_update_auth_revision, client_liveness_revision, display_authority_revision, head_revision,
                 )
             ):
                 raise RuntimeError("Legacy-revision reconciliation mangler kendte Alembic-noder")
@@ -943,10 +944,11 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                 or clientflow_deployment_revision.down_revision != REVIEWED_CANONICAL_FOUNDATIONS_REVISION
                 or clientflow_update_auth_revision.down_revision != REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION
                 or client_liveness_revision.down_revision != REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION
-                or head != REVIEWED_CLIENT_LIVENESS_REVISION
+                or display_authority_revision.down_revision != REVIEWED_CLIENT_LIVENESS_REVISION
+                or head != REVIEWED_DISPLAY_AUTHORITY_REVISION
             ):
                 raise RuntimeError(
-                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B -> 52A-kæde"
+                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B -> 52A -> 53A-kæde"
                 )
             legacy_columns, legacy_constraints, legacy_indexes = (
                 _pre_livestream_control_schema_contract()
