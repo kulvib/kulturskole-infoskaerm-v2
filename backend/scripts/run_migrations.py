@@ -73,7 +73,7 @@ ADVISORY_LOCK_KEY = -614927384150371204
 # Baseline adoption is deliberately reviewed only for this exact graph. If a
 # later migration changes the head, the adoption path fails closed until the
 # baseline delta is reviewed again.
-REVIEWED_BASELINE_ADOPTION_HEAD = "20260822_52a_client_liveness"
+REVIEWED_BASELINE_ADOPTION_HEAD = "20260823_53a_display_authority"
 REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 
 # Production was observed at this Alembic label before Step 40A was deployed,
@@ -82,7 +82,7 @@ REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 # 39A schema; otherwise deployment fails closed without stamping or DDL.
 RECOVERABLE_LEGACY_REVISION = "20260730_41a"
 RECOVERABLE_LEGACY_TARGET = "20260717_39a_livestream_leases"
-REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260822_52a_client_liveness"
+REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260823_53a_display_authority"
 REVIEWED_LIVESTREAM_V2_PREDECESSOR = "20260814_40a_livestream_control"
 REVIEWED_LIVESTREAM_V2_REVISION = "20260814_41a_livestream_v2"
 REVIEWED_TERMINAL_V2_REVISION = "20260816_42a_terminal_v2"
@@ -97,6 +97,7 @@ REVIEWED_CANONICAL_FOUNDATIONS_REVISION = "20260819_50a_canonical"
 REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION = "20260819_51a_update_control"
 REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION = "20260820_51b_update_auth"
 REVIEWED_CLIENT_LIVENESS_REVISION = "20260822_52a_client_liveness"
+REVIEWED_DISPLAY_AUTHORITY_REVISION = "20260823_53a_display_authority"
 LIVESTREAM_V2_TABLES = frozenset({
     "livestream_v2_agent_status",
     "livestream_v2_command",

@@ -28,5 +28,15 @@
       "sha256": "98b9b9088ca8dca67bf538fad84b14f69196a534f21d6a363ad1f4f1f50b0243",
       "size": 122647
     }
+  ],
+  "platform_artifacts": [
+    {
+      "file": "google-chrome-stable_151.0.7922.173-1_amd64.deb",
+      "package": "google-chrome-stable",
+      "version": "151.0.7922.173-1",
+      "architecture": "amd64",
+      "size": 140077524,
+      "sha256": "878e5ab495b8a694980fca61bc09b37e651ccedce2291c73434d16e48a2646fd"
+    }
   ]
 }

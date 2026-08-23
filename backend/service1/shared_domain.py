@@ -18,6 +18,7 @@ from sqlmodel import Session, select
 
 from .auth import SECRET_KEY, verify_password
 from .client_domain_models import ClientCommand, ClientDomainCredential, ClientDomainStatus
+from .display_control import display_agent_supports_commands
 from .models import Client
 
 SHARED_DOMAINS = frozenset({"status", "display", "system"})
@@ -287,6 +288,15 @@ def claim_shared_command(
 ) -> dict[str, Any]:
     domain = _validate_domain(credential.domain, commands=True)
     lease_seconds = min(max(int(lease_seconds), 10), 300)
+    if domain == "display":
+        status = session.exec(
+            select(ClientDomainStatus).where(
+                ClientDomainStatus.client_id == credential.client_id,
+                ClientDomainStatus.domain == "display",
+            )
+        ).first()
+        if status is None or not display_agent_supports_commands(status.agent_version):
+            return {"claimed": None}
     now = utcnow()
     _reconcile_command_state(session, client_id=credential.client_id, domain=domain, now=now)
 

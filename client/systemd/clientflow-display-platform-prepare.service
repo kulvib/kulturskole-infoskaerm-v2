@@ -1,0 +1,11 @@
+[Unit]
+Description=ClientFlow Display Google Chrome and kiosk platform preparation
+After=local-fs.target
+Before=clientflow-display-runtime.service
+
+[Service]
+Type=oneshot
+Environment=CLIENTFLOW_KIOSK_USER=@CLIENTFLOW_KIOSK_USER@
+ExecStart=/opt/clientflow/active/runtime/bin/clientflow-display-platform-prepare
+RemainAfterExit=yes
+UMask=0022

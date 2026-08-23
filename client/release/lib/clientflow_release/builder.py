@@ -132,7 +132,39 @@ def _create_payload(
         required = [prefix.format(version=version).replace("-", "_").lower() for prefix in REQUIRED_WHEELS]
         normalized = [name.replace("-", "_").lower() for name in wheel_names]
         wheels_complete = all(any(name.startswith(prefix) for name in normalized) for prefix in required)
-        complete = python_tar.is_file() and wheels_complete
+
+        platform_lock_path = repo / "client/release/runtime-platform-inputs.lock.json"
+        platform_lock = json.loads(platform_lock_path.read_text(encoding="utf-8"))
+        if platform_lock.get("schema_version") != 1:
+            raise ValueError("runtime-platform-input lock har ukendt schema")
+        locked_platform = platform_lock.get("platform_artifacts")
+        if not isinstance(locked_platform, list) or not locked_platform:
+            raise ValueError("runtime-platform-input lock mangler platform_artifacts")
+        platform_dir = runtime_inputs / "platform"
+        declared_names: set[str] = set()
+        platform_complete = platform_dir.is_dir()
+        for raw in locked_platform:
+            if not isinstance(raw, dict):
+                raise ValueError("runtime-platform-input lock har ugyldig platform artifact")
+            name = str(raw.get("file") or "")
+            if not name or Path(name).name != name or name in declared_names:
+                raise ValueError("runtime-platform-input lock har ugyldigt platform-filnavn")
+            declared_names.add(name)
+            path = platform_dir / name
+            if not path.is_file() or path.is_symlink():
+                platform_complete = False
+                continue
+            size, digest = sha256_file(path)
+            if size != int(raw.get("size", -1)) or digest != str(raw.get("sha256") or ""):
+                raise ValueError(f"Platform input matcher ikke repo-lock: {name}")
+            sources.append((path, PurePosixPath(root) / "runtime-inputs/platform" / name))
+        if platform_dir.is_dir():
+            actual_platform = {item.name for item in platform_dir.iterdir() if item.is_file() and not item.is_symlink()}
+            if actual_platform != declared_names:
+                raise ValueError("Materialiserede platform inputs matcher ikke repo-lock")
+        sources.append((platform_lock_path, PurePosixPath(root) / "runtime-inputs/platform/runtime-platform-inputs.lock.json"))
+
+        complete = python_tar.is_file() and wheels_complete and platform_complete
         if python_tar.is_file():
             sources.append((python_tar, PurePosixPath(root) / "runtime-inputs/python-runtime-amd64.tar"))
             size, digest = sha256_file(python_tar)
