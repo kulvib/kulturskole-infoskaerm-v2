@@ -151,7 +151,8 @@ After the SHA check, continue with `CLIENTFLOW_RELEASE_PROCEDURE.md` section 4:
 5. run the existing installer with the exact bundle, backend URL and one-time
    enrollment code;
 6. stop at `pending_manual_activation`;
-7. activate separately with the exact release approval reference.
+7. approve that exact pending client through the existing canonical backend approval flow;
+8. activate separately with the exact release approval reference; first activation re-proves backend approval with the provisioned Status credential before local mutation.
 
 51N does not add a loose installer, GitHub release selector, `latest` URL,
 external autoinstall service or automatic activation.

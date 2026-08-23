@@ -23,6 +23,7 @@ from .enrollment import (
     complete,
     generate_system_key,
     persist_enrollment,
+    prove_client_approval,
     validate_backend_url,
     validate_fresh_install_binding,
 )
@@ -193,7 +194,7 @@ def _all_credentials_present(layout: Layout) -> bool:
         identity = _secure_json(etc / "identity.json")
         client_id = int(identity["client_id"])
         terminal_credential_id = str(uuid.UUID(str(identity["terminal_credential_id"])))
-        _validate_kiosk_user(str(identity["kiosk_user"]), layout)
+        kiosk_user = _validate_kiosk_user(str(identity["kiosk_user"]), layout)
         credential_ids: set[str] = set()
         for domain in DOMAIN_NAMES:
             row = _secure_json(etc / "credentials" / f"{domain}.json")
@@ -235,21 +236,48 @@ def _all_credentials_present(layout: Layout) -> bool:
         if update_credential.get("tls_ca_file") and b"BEGIN CERTIFICATE" not in update_tls_ca:
             raise RuntimeError("Update-auth custom CA credential er ugyldig")
         _secure_json(etc / "livestream.json")
-        _secure_json(etc / "remote-desktop.json")
+        remote_desktop = _secure_json(etc / "remote-desktop.json")
+        if remote_desktop != {
+            "schema_version": 1,
+            "capture_backend": "mutter-pipewire",
+            "kiosk_user": kiosk_user,
+        }:
+            raise RuntimeError("Remote Desktop fresh-install konfiguration er ugyldig")
     except (KeyError, TypeError, ValueError, RuntimeError):
         return False
     return True
 
 
-def _copy_install_configuration(layout: Layout, release_id: str, *, ca_file: Path | None) -> str | None:
+def _copy_install_configuration(
+    layout: Layout,
+    release_id: str,
+    *,
+    ca_file: Path | None,
+    kiosk_user: str,
+) -> str | None:
     etc = layout.path("/etc/clientflow")
     release_root = layout.releases / release_id
-    for name in ("livestream.json", "remote-desktop.json"):
-        destination = etc / name
-        if not destination.exists():
-            source = release_root / "client-runtime/config-examples" / name
-            _secure_regular_file(source, secret=False)
-            atomic_write_bytes(destination, source.read_bytes(), mode=0o600)
+    livestream_destination = etc / "livestream.json"
+    if not livestream_destination.exists():
+        livestream_source = release_root / "client-runtime/config-examples/livestream.json"
+        _secure_regular_file(livestream_source, secret=False)
+        atomic_write_bytes(livestream_destination, livestream_source.read_bytes(), mode=0o600)
+
+    remote_source = release_root / "client-runtime/config-examples/remote-desktop.json"
+    remote_template = _secure_json(remote_source, secret=False)
+    expected_remote = {
+        "schema_version": 1,
+        "capture_backend": "mutter-pipewire",
+        "kiosk_user": kiosk_user,
+    }
+    if remote_template != {"schema_version": 1, "capture_backend": "mutter-pipewire"}:
+        raise RuntimeError("Releasepayloadens Remote Desktop template er ikke generic Wayland/Mutter")
+    remote_destination = etc / "remote-desktop.json"
+    if remote_destination.exists() or remote_destination.is_symlink():
+        if _secure_json(remote_destination) != expected_remote:
+            raise RuntimeError("Resume kræver samme materialiserede Remote Desktop-konfiguration")
+    else:
+        atomic_write_json(remote_destination, expected_remote, mode=0o600)
     target = etc / "tls/ca.pem"
     if ca_file is None:
         if not target.exists() and not target.is_symlink():
@@ -317,6 +345,29 @@ def _validate_stable_updater_install(layout: Layout, release_id: str) -> None:
         )
         if enabled.returncode != 0 or active.returncode != 0:
             raise RuntimeError("Stable updater-timer er ikke enabled og aktiv")
+
+
+def _prove_backend_client_approved(layout: Layout) -> None:
+    credential = _secure_json(layout.path("/etc/clientflow/credentials/status.json"))
+    if credential.get("schema_version") != 1 or credential.get("domain") != "status":
+        raise RuntimeError("Status credential kan ikke bruges som backend approval-proof")
+    ca_file = None
+    stored_ca = str(credential.get("tls_ca_file") or "").strip()
+    if stored_ca:
+        if not stored_ca.startswith("/"):
+            raise RuntimeError("Status credential har ugyldig CA-path")
+        ca_file = layout.path(stored_ca)
+        raw = _secure_regular_file(ca_file, max_bytes=1024 * 1024, secret=False)
+        if b"BEGIN CERTIFICATE" not in raw:
+            raise RuntimeError("Status credential CA er ugyldig")
+    prove_client_approval(
+        backend_url=str(credential.get("backend_url") or ""),
+        client_id=int(credential.get("client_id") or 0),
+        credential_id=str(credential.get("credential_id") or ""),
+        client_secret=str(credential.get("client_secret") or ""),
+        token_issuer=str(credential.get("token_issuer") or ""),
+        ca_file=ca_file,
+    )
 
 
 def _validate_inactive_install(layout: Layout, release_id: str) -> None:
@@ -517,7 +568,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
             layout=layout,
         )
         install_staged_definitions(release_id, layout=layout, kiosk_user=kiosk_user)
-        stored_ca_path = _copy_install_configuration(layout, release_id, ca_file=None)
+        stored_ca_path = _copy_install_configuration(layout, release_id, ca_file=None, kiosk_user=kiosk_user)
         request_ca_file = layout.path(stored_ca_path) if stored_ca_path else None
         _persist_updater_tls_ca(layout, stored_ca_path)
         install_state["status"] = "staged_inactive"
@@ -539,7 +590,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
         # A resumed transaction with already-persisted credentials must already
         # have its exact release staged and definitions materialized. Validation
         # below fails closed if that durable post-claim state is incomplete.
-        stored_ca_path = _copy_install_configuration(layout, release_id, ca_file=None)
+        stored_ca_path = _copy_install_configuration(layout, release_id, ca_file=None, kiosk_user=kiosk_user)
         request_ca_file = layout.path(stored_ca_path) if stored_ca_path else None
         _persist_updater_tls_ca(layout, stored_ca_path)
 
@@ -633,6 +684,7 @@ def main(argv: list[str] | None = None) -> int:
             args.release_id,
             expected_release_approval_reference=args.expected_release_approval_reference,
             layout=_layout(args.root),
+            first_activation_authorizer=_prove_backend_client_approved,
         )
     elif args.operation == "rollback":
         result = rollback_release(

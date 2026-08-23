@@ -141,6 +141,39 @@ def _post_json(url: str, payload: dict[str, Any], *, ca_file: Path | None, timeo
     return value
 
 
+def prove_client_approval(
+    *,
+    backend_url: str,
+    client_id: int,
+    credential_id: str,
+    client_secret: str,
+    token_issuer: str,
+    ca_file: Path | None,
+) -> dict[str, Any]:
+    backend = validate_backend_url(backend_url)
+    issuer = str(token_issuer or "").strip()
+    if not issuer or len(issuer) > 200:
+        raise EnrollmentError("Status credential mangler token issuer")
+    payload = {
+        "client_id": int(client_id),
+        "credential_id": str(uuid.UUID(str(credential_id))),
+        "domain": "status",
+        "client_secret": str(client_secret),
+    }
+    response = _post_json(f"{backend}/api/client-auth/token", payload, ca_file=ca_file)
+    if (
+        not str(response.get("access_token") or "").strip()
+        or str(response.get("token_type") or "").lower() != "bearer"
+        or int(response.get("client_id") or 0) != payload["client_id"]
+        or str(response.get("credential_id") or "") != payload["credential_id"]
+        or response.get("domain") != "status"
+        or response.get("audience") != "clientflow-domain:status"
+        or response.get("issuer") != issuer
+    ):
+        raise EnrollmentError("Backend approval-proof returnerede en ugyldig status-token-kontrakt")
+    return response
+
+
 def generate_system_key(private_key: Path) -> tuple[str, str]:
     ensure_real_directory(private_key.parent, mode=0o700)
     temporary = private_key.parent / f".{private_key.name}.{os.getpid()}.new"

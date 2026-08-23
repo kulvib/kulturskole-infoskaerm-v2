@@ -18,6 +18,7 @@ class RuntimePreparationError(RuntimeError):
 ACTIVE_RUNTIME_PYTHON = "/opt/clientflow/active/runtime/bin/python"
 CLIENTFLOW_ENTRYPOINTS = (
     "clientflow-status-agent",
+    "clientflow-calendar",
     "clientflow-display-agent",
     "clientflow-display-runtime",
     "clientflow-display-power-broker",
@@ -72,6 +73,21 @@ def _ensure_runtime_python(runtime: Path) -> Path:
     if not python.is_file() or python.is_symlink():
         raise RuntimePreparationError("Runtime bin/python kunne ikke materialiseres")
     return python
+
+
+def _validate_systemd_entrypoint_inventory(release_root: Path) -> None:
+    prefix = "/opt/clientflow/active/runtime/bin/"
+    required: set[str] = set()
+    systemd_root = release_root / "client-runtime/systemd"
+    for unit in systemd_root.glob("*.service"):
+        for line in unit.read_text(encoding="utf-8").splitlines():
+            if line.startswith("ExecStart=" + prefix):
+                required.add(line.split(prefix, 1)[1].split()[0])
+    missing = sorted(required.difference(CLIENTFLOW_ENTRYPOINTS))
+    if missing:
+        raise RuntimePreparationError(
+            "Systemd refererer runtime-entrypoints uden relocation-kontrakt: " + ", ".join(missing)
+        )
 
 
 def _rewrite_clientflow_entrypoints(runtime: Path) -> None:
@@ -181,6 +197,7 @@ def prepare_runtime(release_root: Path, manifest: dict) -> None:
     )
     if result.returncode != 0:
         raise RuntimePreparationError(result.stdout[-4000:])
+    _validate_systemd_entrypoint_inventory(release_root)
     _rewrite_clientflow_entrypoints(runtime_root)
     _run(
         [

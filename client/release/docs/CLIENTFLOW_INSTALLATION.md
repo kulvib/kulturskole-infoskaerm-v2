@@ -56,7 +56,9 @@ Der er **ingen automatisk reboot**, ingen automatisk aktivering, ingen åbning a
 
 ## Manuel aktivering
 
-Aktivering er et separat trin. Operatøren skal angive den **forventede immutable release-approval reference** fra den approved bundle; værdien er en kontrol mod artifactets provenance og er ikke fri audit-tekst:
+Aktivering er et separat trin. Efter claim står den nye klient fortsat som backend-`pending`; en superadmin skal først godkende præcis denne klient via den eksisterende backend approval-flow. First activation beviser derefter fail-closed backend-godkendelsen med installationens allerede provisionerede `status` credential, før active-symlink, systemd-definitioner eller services må ændres.
+
+Operatøren skal samtidig angive den **forventede immutable release-approval reference** fra den approved bundle; værdien er en kontrol mod artifactets provenance og er ikke fri audit-tekst:
 
 ```bash
 sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \
