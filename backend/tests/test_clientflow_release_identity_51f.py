@@ -32,9 +32,9 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     # Source/build identity may move ahead while a candidate is built, approved
     # and published. After the separate catalog-promotion gate, the selector is
     # allowed to align with source, but it must never lead source/build identity.
-    assert catalog["catalog_sequence"] == 1205
-    assert catalog["latest_stable"] == "1.3.4"
-    assert catalog["default_install_version"] == "1.3.4"
+    assert catalog["catalog_sequence"] == 1209
+    assert catalog["latest_stable"] == "1.3.8"
+    assert catalog["default_install_version"] == "1.3.8"
     assert catalog["catalog_sequence"] <= release_input["release_sequence"]
     assert len(catalog["releases"]) == 1
 
@@ -50,17 +50,17 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     assert selected_tuple <= source_tuple
     assert selected["release_sequence"] <= release_input["release_sequence"]
 
-    # 1.3.8/1209 is source/build identity only until candidate build, manual
-    # approval, immutable publication and explicit catalog promotion complete.
-    assert selected_tuple < source_tuple
-    assert selected["release_sequence"] < release_input["release_sequence"]
-    assert selected["release_id"] != source_release_id
+    # After explicit promotion, runtime selection may align exactly with the
+    # already-approved and immutably published source/build identity.
+    assert selected_tuple == source_tuple
+    assert selected["release_sequence"] == release_input["release_sequence"]
+    assert selected["release_id"] == source_release_id
 
 
-def test_51f_134_update_keeps_131_as_minimum_proven_bootstrap() -> None:
+def test_51f_138_update_keeps_131_as_minimum_proven_bootstrap() -> None:
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = catalog["releases"][0]
-    assert release["version"] == "1.3.4"
+    assert release["version"] == "1.3.8"
     assert release["min_current_version"] == "1.3.1"
     assert "fresh_install" in release["install_modes"]
     assert "in_place_update" in release["install_modes"]

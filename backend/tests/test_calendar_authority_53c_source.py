@@ -10,14 +10,15 @@ def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-def test_53c_release_identity_advances_without_catalog_promotion() -> None:
+def test_53c_promoted_release_identity_keeps_calendar_in_canonical_138_runtime() -> None:
     assert read("client/VERSION").strip() == "1.3.8"
     release_input = json.loads(read("client/release/release-input.json"))
     assert release_input["release_sequence"] == 1209
     catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
-    assert catalog["latest_stable"] == "1.3.4"
-    assert catalog["default_install_version"] == "1.3.4"
-    assert catalog["releases"][0]["revision"] == "clientflow-1.3.4-seq-1205"
+    assert catalog["catalog_sequence"] == 1209
+    assert catalog["latest_stable"] == "1.3.8"
+    assert catalog["default_install_version"] == "1.3.8"
+    assert catalog["releases"][0]["revision"] == "clientflow-1.3.8-seq-1209"
 
 
 def test_53c_calendar_delivery_is_display_domain_self_only_and_complete() -> None:
