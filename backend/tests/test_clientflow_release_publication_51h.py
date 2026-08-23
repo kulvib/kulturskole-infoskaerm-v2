@@ -27,13 +27,20 @@ from clientflow_release_format.constants import (  # noqa: E402
 )
 from clientflow_release import approval as approval_module  # noqa: E402
 from clientflow_release import bundle as release_bundle  # noqa: E402
-from clientflow_release.archive import read_bundle  # noqa: E402
 from scripts import publish_clientflow_release as publication  # noqa: E402
 
 
 VERSION = (ROOT / "client/VERSION").read_text(encoding="utf-8").strip()
 SEQUENCE = int(json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))["release_sequence"])
 RELEASE_ID = f"clientflow-{VERSION}-seq-{SEQUENCE}"
+
+
+def _read_bundle_for_test(path: Path) -> tuple[dict, bytes]:
+    with tarfile.open(path, "r:") as archive:
+        manifest_stream = archive.extractfile("manifest.json")
+        payload_stream = archive.extractfile("clientflow-payload.tar")
+        assert manifest_stream is not None and payload_stream is not None
+        return json.loads(manifest_stream.read().decode("utf-8")), payload_stream.read()
 
 
 def _approved_bundle(
@@ -275,7 +282,7 @@ def test_51h_approval_promotes_payload_from_same_open_candidate_identity(
     assert swapped is True
     assert result["release_approval"]["candidate_sha256"] == expected_candidate_sha
 
-    approved_manifest, approved_payload = read_bundle(approved)
+    approved_manifest, approved_payload = _read_bundle_for_test(approved)
     assert approved_manifest["release_approval"]["candidate_sha256"] == expected_candidate_sha
 
     with tarfile.open(fileobj=io.BytesIO(approved_payload), mode="r:") as archive:
@@ -332,5 +339,6 @@ def test_51h_publication_source_uses_pinned_bundle_and_directory_descriptors():
 
     approval_source = (ROOT / "client/release/lib/clientflow_release/approval.py").read_text(encoding="utf-8")
     assert "open_verified_bundle(" in approval_source
+    assert "read_bundle_artifact_regions_fd" in approval_source
     assert "read_bundle(candidate_bundle)" not in approval_source
     assert "sha256_file(candidate_bundle" not in approval_source

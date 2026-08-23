@@ -172,8 +172,8 @@ def test_53b_source_identity_advances_without_promoting_runtime_catalog() -> Non
     release_input = json.loads(read("client/release/release-input.json"))
     catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
 
-    assert version == "1.3.7"
-    assert release_input["release_sequence"] == 1208
+    assert version == "1.3.8"
+    assert release_input["release_sequence"] == 1209
     assert catalog["catalog_sequence"] == 1205
     assert catalog["latest_stable"] == "1.3.4"
     assert catalog["default_install_version"] == "1.3.4"

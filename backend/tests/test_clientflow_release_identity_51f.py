@@ -24,10 +24,10 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     release_input = json.loads(RELEASE_INPUT_PATH.read_text(encoding="utf-8"))
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    assert version == "1.3.7"
-    assert release_input["release_sequence"] == 1208
+    assert version == "1.3.8"
+    assert release_input["release_sequence"] == 1209
     source_release_id = f"clientflow-{version}-seq-{release_input['release_sequence']}"
-    assert source_release_id == "clientflow-1.3.7-seq-1208"
+    assert source_release_id == "clientflow-1.3.8-seq-1209"
 
     # Source/build identity may move ahead while a candidate is built, approved
     # and published. After the separate catalog-promotion gate, the selector is
@@ -50,7 +50,7 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     assert selected_tuple <= source_tuple
     assert selected["release_sequence"] <= release_input["release_sequence"]
 
-    # 1.3.7/1208 is source/build identity only until candidate build, manual
+    # 1.3.8/1209 is source/build identity only until candidate build, manual
     # approval, immutable publication and explicit catalog promotion complete.
     assert selected_tuple < source_tuple
     assert selected["release_sequence"] < release_input["release_sequence"]

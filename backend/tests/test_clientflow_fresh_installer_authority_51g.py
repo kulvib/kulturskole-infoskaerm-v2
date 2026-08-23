@@ -15,7 +15,6 @@ for entry in (ROOT / "backend", ROOT / "client/release/lib"):
 
 from clientflow_release import approval as approval_module  # noqa: E402
 from clientflow_release import builder as builder_module  # noqa: E402
-from clientflow_release.archive import read_bundle  # noqa: E402
 from clientflow_release.approval import ApprovalError  # noqa: E402
 from clientflow_release.crypto import sha256_file  # noqa: E402
 from clientflow_release_format.constants import MANIFEST_SCHEMA  # noqa: E402
@@ -25,6 +24,13 @@ from clientflow_release_format.manifest import ManifestError, validate_manifest 
 CURRENT_VERSION = (ROOT / "client/VERSION").read_text(encoding="utf-8").strip()
 CURRENT_SEQUENCE = int(json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))["release_sequence"])
 CURRENT_RELEASE_ID = f"clientflow-{CURRENT_VERSION}-seq-{CURRENT_SEQUENCE}"
+
+
+def _manifest_from_bundle(path: Path) -> dict:
+    with tarfile.open(path, "r:") as archive:
+        stream = archive.extractfile("manifest.json")
+        assert stream is not None
+        return json.loads(stream.read().decode("utf-8"))
 
 
 def _candidate_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
@@ -107,7 +113,7 @@ def test_51g_approved_bundle_preserves_installer_authority(tmp_path, monkeypatch
     monkeypatch.setattr(approval_module, "validate_runtime_artifacts", lambda payload, manifest: None)
     monkeypatch.setattr(approval_module, "extract_verified_payload", lambda payload, target, *, expected_root: target)
     monkeypatch.setattr(approval_module, "prepare_runtime", lambda release_root, manifest: None)
-    monkeypatch.setattr(approval_module, "verify_bundle", lambda bundle, require_deployable=True: read_bundle(bundle))
+    monkeypatch.setattr(approval_module, "verify_bundle", lambda *args, **kwargs: ({}, 0, "0" * 64))
 
     approved = tmp_path / f"{CURRENT_RELEASE_ID}-approved.tar"
     approval_module.approve_bundle(
@@ -118,7 +124,7 @@ def test_51g_approved_bundle_preserves_installer_authority(tmp_path, monkeypatch
         expected_installer_sha256=installer_sha,
         expected_source_commit="a" * 40,
     )
-    approved_manifest, _payload = read_bundle(approved)
+    approved_manifest = _manifest_from_bundle(approved)
     assert approved_manifest["deployable"] is True
     assert approved_manifest["release_approval"]["candidate_sha256"] == candidate_sha
     assert approved_manifest["fresh_installer"] == result["manifest"]["fresh_installer"]
@@ -139,6 +145,6 @@ def test_51g_candidate_and_fresh_installer_are_byte_reproducible(tmp_path, monke
 def test_51g_release_procedure_requires_explicit_installer_hash_approval():
     approval_source = (ROOT / "client/release/lib/clientflow_release/approval.py").read_text(encoding="utf-8")
     assert "--expected-installer-sha256" in approval_source
-    assert "read_bundle_artifacts_fd" in approval_source
+    assert "read_bundle_artifact_regions_fd" in approval_source
     assert 'manifest.get("fresh_installer")' in approval_source
 

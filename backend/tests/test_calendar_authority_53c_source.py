@@ -11,9 +11,9 @@ def read(relative: str) -> str:
 
 
 def test_53c_release_identity_advances_without_catalog_promotion() -> None:
-    assert read("client/VERSION").strip() == "1.3.7"
+    assert read("client/VERSION").strip() == "1.3.8"
     release_input = json.loads(read("client/release/release-input.json"))
-    assert release_input["release_sequence"] == 1208
+    assert release_input["release_sequence"] == 1209
     catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
     assert catalog["latest_stable"] == "1.3.4"
     assert catalog["default_install_version"] == "1.3.4"

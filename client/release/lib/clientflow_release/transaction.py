@@ -440,11 +440,9 @@ def stage_bundle(
             bundle_sha256=actual_bundle_sha256,
         )
 
-        # Payload and provenance come from the same pinned file identity. No
-        # later pathname reopen participates in the staging trust boundary.
-        bundle_handle.close()
-        bundle_handle = None
-
+        # Keep the verified bundle inode pinned for the complete extraction.
+        # The payload is a bounded view into this exact handle, so no pathname
+        # reopen or payload-sized memory copy participates in staging.
         with TransactionLock(layout):
             state = load_state(layout)
             sequence = int(manifest["release_sequence"])
@@ -504,6 +502,7 @@ def stage_bundle(
                         recovery_parent / "payload",
                         expected_root=manifest["payload"]["root"],
                     )
+                    payload.assert_unchanged()
                     if _source_tree_digest(source_root) != _source_tree_digest(final_root):
                         raise TransactionError("Orphan releasekatalogets source tree matcher ikke den verificerede bundle")
                 finally:
@@ -536,6 +535,7 @@ def stage_bundle(
                     temp_parent / "payload",
                     expected_root=manifest["payload"]["root"],
                 )
+                payload.assert_unchanged()
                 staged_root = temp_parent / release_id
                 os.replace(extracted_root, staged_root)
                 remove_tree_no_symlink(temp_parent / "payload")

@@ -42,8 +42,12 @@ def _stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Layout:
     bundle = tmp_path / "approved.tar"
     bundle.write_bytes(b"approved-bundle-A")
     manifest = _manifest()
-    payload = b"verified payload"
 
+    class FakePayload:
+        def assert_unchanged(self):
+            return None
+
+    payload = FakePayload()
     calls = []
 
     def fake_open_verified_bundle(path, *, require_deployable, required_install_mode):

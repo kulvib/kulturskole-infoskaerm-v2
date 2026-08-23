@@ -126,4 +126,4 @@ def test_51i_canonical_handoff_uses_pinned_bundle_and_private_root_bootstrap():
     assert first_hash < extraction < execution
 
     assert 'parser.add_argument("--installer"' not in approval
-    assert "read_bundle_artifacts_fd" in approval
+    assert "read_bundle_artifact_regions_fd" in approval
