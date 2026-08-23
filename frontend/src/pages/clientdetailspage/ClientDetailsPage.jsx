@@ -269,6 +269,8 @@ const UPDATE_LIVE_FIELDS = [
   "client_version_patch",
   "client_version_updated_at",
   "ubuntu_version",
+  "pending_reboot",
+  "pending_shutdown",
   "pending_os_update",
   "ubuntu_updates_available",
   "service_ubuntu_update_status",
@@ -1164,8 +1166,12 @@ export default function ClientDetailsPage({
 
     const startTime    = Date.now();
     const startTimeISO = new Date(startTime).toISOString();
+    const normalizedAction = action === "restart" ? "reboot" : action;
+    const systemPowerAction = normalizedAction === "reboot" || normalizedAction === "shutdown";
 
-    // Hent handlings-specifikke terminal steps — eller fallback
+    // Display actions retain step-based confirmation. Reboot/shutdown are
+    // canonical System commands and are confirmed from their dedicated
+    // response-only projections, never pending_chrome_action.
     const terminalSteps = TERMINAL_STEPS_BY_ACTION[action] ?? DEFAULT_TERMINAL_STEPS;
 
     async function pollForConfirmation() {
@@ -1175,25 +1181,40 @@ export default function ClientDetailsPage({
         await new Promise((res) => setTimeout(res, ACTION_POLL_MS));
         if (actionPollStopRef.current || !mountedRef.current) break;
 
-        let pcaClear = false;
+        let actionClear = false;
         try {
           const data = await getClient(client.id);
           if (!mountedRef.current) break;
 
-          const pca = String(data?.pending_chrome_action ?? "").toLowerCase();
-          setLocalPendingAction(pca || "none");
           if (data?.state) setLocalClientState(data.state);
 
-          pcaClear = !pca || pca === "none";
+          if (systemPowerAction) {
+            const pending = normalizedAction === "shutdown"
+              ? data?.pending_shutdown === true
+              : data?.pending_reboot === true;
+            setLocalPendingAction("none");
+            actionClear = !pending;
+          } else {
+            const pca = String(data?.pending_chrome_action ?? "").toLowerCase();
+            setLocalPendingAction(pca || "none");
+            actionClear = !pca || pca === "none";
+          }
         } catch {
-          // Fortsæt polling ved fejl
+          // Fortsæt polling ved fejl. Reboot kan kort afbryde HTTP mens
+          // maskinen går ned og Status-domain endnu ikke har meldt ny boot.
         }
 
-        if (!pcaClear) continue;
+        if (!actionClear) continue;
 
         const elapsed = Date.now() - startTime;
-
         if (elapsed < ACTION_MIN_LOCK_MS) continue;
+
+        if (systemPowerAction) {
+          // Backend holder pending_reboot=true efter systemctl-success indtil
+          // canonical Status boot_id beviser en ny boot. Shutdown bliver
+          // terminal når System command completion er registreret.
+          break;
+        }
 
         const stepTimestamp = liveStepTimestampRef.current;
         const stepIsStale   = !stepTimestamp || stepTimestamp < startTimeISO;
@@ -1202,18 +1223,9 @@ export default function ClientDetailsPage({
           ? ""
           : String(liveStepRef.current ?? "").toLowerCase();
 
-        // VIGTIGT: Terminal tjekkes FØR busy.
-        // Reboot/shutdown har system_rebooting/system_shutting_down i både
-        // BUSY_CHROME_STEPS (for banner) og i deres terminal-sæt.
-        // Uden denne rækkefølge ville BUSY altid vinde og polling aldrig
-        // terminere for reboot/shutdown — de ville vente 60s timeout.
         if (terminalSteps.has(currentStep)) break;
-
         if (BUSY_CHROME_STEPS.has(currentStep)) continue;
-
-        // Hverken terminal eller busy — step er ukendt/null
         if (elapsed < ACTION_NULL_STEP_MS) continue;
-
         break;
       }
 
@@ -1238,7 +1250,13 @@ export default function ClientDetailsPage({
     async (action) => {
       if (!client?.id) return;
       await clientAction(client.id, action);
-      setLocalPendingAction(action);
+      const normalizedAction = action === "restart" ? "reboot" : action;
+      if (normalizedAction === "reboot" || normalizedAction === "shutdown") {
+        setLocalPendingAction("none");
+        setLocalClientState(normalizedAction === "shutdown" ? "shutdown" : "rebooting");
+      } else {
+        setLocalPendingAction(action);
+      }
       startActionConfirmationPolling(action);
     },
     [client?.id, startActionConfirmationPolling]
@@ -1369,6 +1387,8 @@ export default function ClientDetailsPage({
       ...liveDisplayResolution,
       ...liveNetworkStatus,
       ...liveUpdateFields,
+      pending_reboot: liveUpdateFields.pending_reboot ?? client?.pending_reboot ?? false,
+      pending_shutdown: liveUpdateFields.pending_shutdown ?? client?.pending_shutdown ?? false,
       pending_os_update: localOsUpdateBusy ? true : (liveUpdateFields.pending_os_update ?? client?.pending_os_update ?? false),
       livestream_status: liveLivestreamStatus ?? client?.livestream_status ?? null,
       livestream_process_status: liveLivestreamProcessStatus ?? client?.livestream_process_status ?? null,

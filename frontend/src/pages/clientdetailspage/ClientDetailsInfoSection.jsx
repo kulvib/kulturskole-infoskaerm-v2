@@ -91,15 +91,6 @@ const UBUNTU_FINISHED_FEEDBACK_MS = UPDATE_DETAIL_FINISHED_FEEDBACK_MS;
 const UBUNTU_POLL_MS = 5_000;
 const UBUNTU_REQUEST_WAIT_TIMEOUT_MS = 120_000;
 
-function normalizeServiceStatus(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function serviceLooksReady(value) {
-  const st = normalizeServiceStatus(value);
-  return st === "klar" || st === "ready" || st === "inactive" || st === "stoppet" || st === "stop";
-}
-
 function normalizeClientflowDeploymentState(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -466,8 +457,6 @@ function getUbuntuStep(client) {
   return String(
     client?.ubuntu_update_step ||
     client?.os_update_step ||
-    client?.chrome_step ||
-    client?.last_chrome_step ||
     ""
   ).trim().toLowerCase();
 }
@@ -483,8 +472,6 @@ function getUbuntuHumanMessage(client, localStatus = {}) {
   const candidates = [
     client?.os_update_message,
     client?.ubuntu_update_message,
-    client?.chrome_status,
-    client?.last_chrome_status,
   ];
 
   for (const value of candidates) {
@@ -500,14 +487,9 @@ function getUbuntuHumanMessage(client, localStatus = {}) {
 
 function getUbuntuSearchText(client) {
   return [
-    client?.chrome_step,
     client?.os_update_status,
     client?.ubuntu_update_status,
     client?.last_os_update_status,
-    client?.chrome_status,
-    client?.last_chrome_status,
-    client?.status,
-    client?.client_status,
   ]
     .map((value) => String(value ?? "").trim())
     .filter(Boolean)
@@ -523,16 +505,14 @@ function normalizeUbuntuPhase(client, localStatus = {}) {
   const step = getUbuntuStep(client);
   const stepPhase = UBUNTU_STEP_PHASE_MAP[step] || null;
   const text = getUbuntuSearchText(client);
-  const serviceReady = serviceLooksReady(client?.service_ubuntu_update_status);
   const pendingOsUpdate = client?.pending_os_update === true;
   const pendingReboot = client?.pending_reboot === true;
   const count = getUbuntuUpdateCount(client);
 
-  // Backend/klient kan efter en færdig update stadig have et gammelt step liggende
-  // såsom os_rebooting. Hvis service er Klar, der ikke længere er pending_os_update,
-  // og klienten ikke melder pending_reboot, er flowet terminalt og må ikke blive
-  // hængende på trin 6 "Genstarter".
-  const completedWithoutPending = serviceReady && !pendingOsUpdate && !pendingReboot;
+  // Canonical System command projection owns completion. Service-unit telemetry
+  // remains diagnostics only and must never decide whether the action is busy.
+  const completedWithoutPending = !pendingOsUpdate && !pendingReboot &&
+    ["success", "up_to_date", "error", "ready"].includes(reportedStatus);
   if (completedWithoutPending && (stepPhase === "rebooting" || UBUNTU_UPDATE_BUSY_STEPS.has(stepPhase))) {
     if (text.includes("fejl") || text.includes("failed") || text.includes("error")) return "error";
     if (text.includes("ingen opdateringer") || text.includes("up to date") || text.includes("allerede opdateret")) return "up_to_date";

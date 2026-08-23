@@ -22,4 +22,12 @@ fi
   -y dist-upgrade
 
 # Reboot udføres aldrig implicit. Backendens separate reboot-kommando skal bruges.
+# Emit one machine-readable marker inside the broker-captured command result so
+# Control Room can report whether Ubuntu requests a reboot without inventing
+# progress or introducing another status authority.
+if [[ -e /var/run/reboot-required ]]; then
+  echo "CLIENTFLOW_REBOOT_REQUIRED=1"
+else
+  echo "CLIENTFLOW_REBOOT_REQUIRED=0"
+fi
 echo "OS-opdatering gennemført; ingen automatisk genstart udført"

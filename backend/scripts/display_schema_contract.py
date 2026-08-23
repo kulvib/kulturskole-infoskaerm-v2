@@ -1026,3 +1026,14 @@ EXPECTED_CONSTRAINTS.update(DISPLAY_AUTHORITY_CONSTRAINTS)
 EXPECTED_INDEXES.update(DISPLAY_AUTHORITY_INDEXES)
 # Replaced below after deterministic contract fingerprint calculation.
 EXPECTED_FINGERPRINT = "8b9e97bd26e43e242d0f948cb1927accb472a475a0d214baa6c9b6168bcc802e"
+# Step 53B: canonical System command authority; plaintext local password storage is retired.
+from system_authority_schema_contract import SYSTEM_AUTHORITY_RETIRED_CLIENT_COLUMNS
+EXPECTED_HEAD_REVISION = "20260823_53b_system_authority"
+_client_columns = dict(EXPECTED_COLUMNS["client"])
+for _retired_column in SYSTEM_AUTHORITY_RETIRED_CLIENT_COLUMNS:
+    if _retired_column not in _client_columns:
+        raise RuntimeError(f"Step 53B expected legacy client column {_retired_column!r} before retirement")
+    _client_columns.pop(_retired_column)
+EXPECTED_COLUMNS["client"] = _client_columns
+# Replaced below after deterministic contract fingerprint calculation.
+EXPECTED_FINGERPRINT = "965720d95f0937ba2bc060ecb5e9f5b95b9db90c7bdc19f48454f360811fd3c1"

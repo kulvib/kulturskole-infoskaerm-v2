@@ -12,11 +12,9 @@ import { createApiError, formatApiError, normalizeApiError } from "./apiError";
     — signaturen er nu tydelig dokumenteret med JSDoc
     — bruges korrekt i ClientCalendarDialog og ClientDetailsPageWrapper
 
-  FIX: clientAction mapper "start"/"stop"/"reboot"/"shutdown" korrekt
-    — "reboot" → pending_reboot: true
-    — "shutdown" → pending_shutdown: true
-    — "start" → pending_chrome_action: "start"
-    — "stop" → pending_chrome_action: "stop"
+  Canonical control actions:
+    — reboot/shutdown → dedicated System command endpoint
+    — start/stop/reset/sleep/wakeup → dedicated Display command endpoint
 */
 
 // Worklog/Flow-princip: tom VITE_API_URL betyder same-origin.
@@ -695,9 +693,9 @@ export async function pushKioskUrl(id, url) {
  * Gyldige actions:
  *   "start"            → pending_chrome_action: "start"
  *   "stop"             → pending_chrome_action: "stop"
- *   "restart"          → pending_reboot: true  (genstart maskine)
- *   "reboot"           → pending_reboot: true
- *   "shutdown"         → pending_shutdown: true
+ *   "restart"          → canonical System command: reboot
+ *   "reboot"           → canonical System command: reboot
+ *   "shutdown"         → canonical System command: shutdown
  *   "sleep"            → action: "sleep"
  *   "wakeup"           → action: "wakeup"
  *   "reset_browser"    → pending_chrome_action: "reset_browser"
@@ -715,19 +713,15 @@ export async function clientAction(id, action, source = "actionbutton") {
   };
 
   if (action === "restart" || action === "reboot" || action === "shutdown") {
-    const payload =
-      action === "shutdown"
-        ? { pending_shutdown: true }
-        : { pending_reboot: true };
-
-    const res = await apiFetch(`${apiUrl}/api/clients/${id}/update`, {
-      method: "PUT",
+    const systemAction = action === "restart" ? "reboot" : action;
+    const res = await apiFetch(`${apiUrl}/api/clients/${id}/system-command`, {
+      method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ action: systemAction, source }),
     });
     if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
-    if (!res.ok) throw new Error(await extractError(res, "Kunne ikke udføre handling"));
+    if (!res.ok) throw new Error(await extractError(res, "Kunne ikke udføre System-handling"));
     return readJsonResponse(res);
   }
 
@@ -1143,19 +1137,6 @@ export async function requestOsUpdate(clientId) {
     throw new Error(await extractError(res, "Kunne ikke anmode om OS opdatering"));
   return readJsonResponse(res);
 }
-
-export async function resetOsUpdate(clientId) {
-  const res = await apiFetch(`${apiUrl}/api/clients/${encodeURIComponent(clientId)}/os-update/reset`, {
-    method: "POST",
-    headers: authHeaders(),
-    credentials: "include",
-  });
-  if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
-  if (!res.ok)
-    throw new Error(await extractError(res, "Kunne ikke nulstille OS-opdatering"));
-  return readJsonResponse(res);
-}
-
 
 // ---------------------------------------------------------------------------
 // ClientFlow selfupdate

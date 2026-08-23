@@ -10,7 +10,7 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_53a_is_new_reviewed_head_with_durable_display_authority():
+def test_53a_remains_reviewed_predecessor_under_53b_system_authority():
     migration = read("backend/migrations/versions/20260823_53a_display_authority.py")
     contract = read("backend/scripts/display_schema_contract.py")
     runner = read("backend/scripts/run_migrations.py")
@@ -24,13 +24,16 @@ def test_53a_is_new_reviewed_head_with_durable_display_authority():
     assert 'op.drop_column("client", "kiosk_url")' in migration
     assert 'op.drop_column("client", "browser_refresh_interval_sec")' in migration
     assert 'class DisplayDesiredConfiguration(SQLModel, table=True):' in model
-    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20260823_53a_display_authority"'
-    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260823_53a_display_authority"' in runner
-    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260823_53a_display_authority"' in runner
+    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20260823_53b_system_authority"'
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260823_53b_system_authority"' in runner
+    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260823_53b_system_authority"' in runner
     assert 'REVIEWED_DISPLAY_AUTHORITY_REVISION = "20260823_53a_display_authority"' in runner
     assert 'display_authority_revision = script.get_revision(REVIEWED_DISPLAY_AUTHORITY_REVISION)' in runner
     assert 'display_authority_revision.down_revision != REVIEWED_CLIENT_LIVENESS_REVISION' in runner
-    assert 'head != REVIEWED_DISPLAY_AUTHORITY_REVISION' in runner
+    assert 'REVIEWED_SYSTEM_AUTHORITY_REVISION = "20260823_53b_system_authority"' in runner
+    assert 'system_authority_revision = script.get_revision(REVIEWED_SYSTEM_AUTHORITY_REVISION)' in runner
+    assert 'system_authority_revision.down_revision != REVIEWED_DISPLAY_AUTHORITY_REVISION' in runner
+    assert 'head != REVIEWED_SYSTEM_AUTHORITY_REVISION' in runner
 
 
 def test_client_aggregate_no_longer_has_display_config_storage_fields():
@@ -119,10 +122,10 @@ def test_frontend_has_single_transaction_kiosk_write_and_no_fake_auto_refresh():
     assert "apiUpdateKioskUrl" not in frontend
 
 
-def test_release_identity_and_chrome_lock_are_exact_1206_inputs():
-    assert read("client/VERSION").strip() == "1.3.5"
+def test_release_identity_and_chrome_lock_are_exact_1207_inputs():
+    assert read("client/VERSION").strip() == "1.3.6"
     release_input = json.loads(read("client/release/release-input.json"))
-    assert release_input["release_sequence"] == 1206
+    assert release_input["release_sequence"] == 1207
     lock = json.loads(read("client/release/runtime-platform-inputs.lock.json"))
     assert lock["schema_version"] == 1
     assert lock["platform_artifacts"] == [{
@@ -154,17 +157,20 @@ def test_display_read_projection_cannot_autoflush_into_legacy_client_columns():
     assert '_set_runtime_read_attr(client, "pending_chrome_action"' in projection
 
 
-def test_legacy_display_writes_are_unroutable_but_system_compat_steps_survive():
+def test_legacy_display_writes_remain_unroutable_after_system_authority_cutover():
     clients = read("backend/service1/routers/clients.py")
 
     assert 'LEGACY_DISPLAY_STATUS_WRITE_FIELDS = {"chrome_status", "chrome_color", "chrome_step", "chrome_last_updated"}' in clients
     assert "_reject_legacy_display_write_fields(create_fields)" in clients
     assert 'pending_display_action in _LEGACY_DISPLAY_PENDING_ACTIONS' in clients
     assert 'Legacy pending Chrome/Display-action er fjernet' in clients
-    assert "is_system_compat_report = principal_is_client(user)" in clients
-    assert 'legacy_step in SYSTEM_TERMINAL_STEPS or legacy_step.startswith("os_")' in clients
+    assert 'legacy_step in SYSTEM_TERMINAL_STEPS or legacy_step.startswith("os_")' not in clients
+    projection = clients[clients.index("def _apply_display_projection_for_read"):clients.index("def _apply_system_projection_for_read")]
+    assert '_set_runtime_read_attr(client, "chrome_step", projection["chrome_step"])' in projection
+    assert "System/OS steps remain temporarily visible" not in projection
 
     chrome_put = clients[clients.index('@router.put("/clients/{id}/chrome-status")'):clients.index('@router.put("/clients/{id}/state")')]
-    assert 'display_status_fields = {"chrome_status", "chrome_color", "chrome_step", "chrome_last_updated"} & set(data)' in chrome_put
-    assert 'if display_status_fields and not is_system_step:' in chrome_put
-    assert "ClientDomainStatus(domain='display')" in chrome_put
+    assert 'legacy_status_fields = {"chrome_status", "chrome_color", "chrome_step", "chrome_last_updated", "chrome_step_timestamp"} & set(data)' in chrome_put
+    assert 'if legacy_status_fields:' in chrome_put
+    assert "Display og System observed/completion state" in chrome_put
+    assert "canonical domain-kontrakter" in chrome_put

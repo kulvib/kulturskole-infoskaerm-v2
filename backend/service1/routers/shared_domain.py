@@ -9,6 +9,7 @@ from sqlmodel import Session
 
 from ..db import engine
 from ..display_control import reconcile_display_configuration
+from ..system_control import apply_system_command_completion
 from ..shared_domain import (
     claim_shared_command,
     complete_shared_command,
@@ -116,6 +117,8 @@ def _complete(domain: str, client_id: int, command_id: str, body: CompleteBody, 
             claim_token=body.claim_token,
             result=body.result,
         )
+        if domain == "system":
+            apply_system_command_completion(session, client_id=client_id, command_id=command_id)
         session.commit()
         return payload
 

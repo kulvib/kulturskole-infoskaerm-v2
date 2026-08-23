@@ -120,12 +120,9 @@ const OS_UPDATE_TERMINAL_STATUSES = new Set([
   "error",
 ]);
 
-function getUbuntuUpdateLabel(step, pendingAction, clientState) {
+function getUbuntuUpdateLabel(step, clientState) {
   const s = String(step || "").trim().toLowerCase();
   if (s && OS_UPDATE_STEP_LABELS[s]) return OS_UPDATE_STEP_LABELS[s];
-
-  const action = String(pendingAction || "").trim().toLowerCase();
-  if (action === "os_update") return "Ubuntu-opdatering afventer klient";
 
   const state = String(clientState || "").trim().toLowerCase();
   if (state === "updating") return "Ubuntu-opdatering kører";
@@ -170,14 +167,6 @@ const WAKE_IN_PROGRESS_STEPS = new Set([
 const WAKE_COMPLETE_STEPS = new Set([
   "system_wake_complete",
   "display_wake_complete",
-]);
-
-const SYSTEM_PENDING_ACTIONS = new Set([
-  "reboot",
-  "restart",
-  "pending_reboot",
-  "shutdown",
-  "pending_shutdown",
 ]);
 
 const SLEEP_PENDING_ACTIONS = new Set([
@@ -254,21 +243,6 @@ const CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES = new Set([
   "authorized", "downloading", "verified", "staged", "activating", "health_check", "rolling_back",
 ]);
 
-const SERVICE_BUSY_VALUES = new Set([
-  "opdaterer",
-  "starter",
-  "kører",
-  "koerer",
-  "running",
-  "active",
-  "activating",
-]);
-
-function serviceLooksBusy(value) {
-  const st = String(value || "").trim().toLowerCase();
-  return SERVICE_BUSY_VALUES.has(st);
-}
-
 function isUbuntuTerminalStep(step, status) {
   const s = String(step || "").trim().toLowerCase();
   const st = String(status || "").trim().toLowerCase();
@@ -284,7 +258,7 @@ function getUbuntuUpdateStepMeta(step, pendingAction, clientState, serviceStatus
     ? "Ubuntu er allerede opdateret"
     : st === "error"
     ? "Ubuntu-opdatering fejlede"
-    : getUbuntuUpdateLabel(step, pendingAction, clientState);
+    : getUbuntuUpdateLabel(step, clientState);
 
   if (st === "success") {
     return { label, description: "Ubuntu-opdateringen er gennemført." };
@@ -505,10 +479,8 @@ export default function ClientDetailsActionsSection({
   const effectiveUbuntuStepNorm = String(ubuntuUpdateStep || liveStep || "").trim().toLowerCase();
   const ubuntuUpdateInProgress =
     pendingOsUpdate === true ||
-    normalizedPendingAction === "os_update" ||
     OS_UPDATE_BUSY_STATUSES.has(normalizedUbuntuUpdateStatus) ||
-    OS_UPDATE_BUSY_STEPS.has(effectiveUbuntuStepNorm) ||
-    serviceLooksBusy(serviceUbuntuUpdateStatus);
+    OS_UPDATE_BUSY_STEPS.has(effectiveUbuntuStepNorm);
   const ubuntuUpdateFinished = isUbuntuTerminalStep(
     effectiveUbuntuStepNorm,
     normalizedUbuntuUpdateStatus
@@ -535,7 +507,6 @@ export default function ClientDetailsActionsSection({
   const ubuntuUpdateBusyTooltip =
     "Ubuntu opdateres — vent til opdateringen er færdig";
 
-  const systemActionPending = SYSTEM_PENDING_ACTIONS.has(normalizedPendingAction);
   const sleepActionPending = SLEEP_PENDING_ACTIONS.has(normalizedPendingAction);
   const wakeActionPending = WAKE_PENDING_ACTIONS.has(normalizedPendingAction);
 
@@ -544,7 +515,6 @@ export default function ClientDetailsActionsSection({
   // reboot/sluk ikke er en chrome-command og derfor ofte når UI'et før liveStep.
   const isSystemLocked =
     SYSTEM_LOCK_STEPS.has(liveStepNorm) ||
-    systemActionPending ||
     normalizedClientState.startsWith("reboot") ||
     normalizedClientState.startsWith("shut");
 

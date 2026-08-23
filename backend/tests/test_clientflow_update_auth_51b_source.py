@@ -12,8 +12,8 @@ def test_step51b_migration_and_current_head_chain_are_explicit():
     assert 'revision = "20260820_51b_update_auth"' in migration
     assert 'down_revision = "20260819_51a_update_control"' in migration
     assert 'REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION = "20260820_51b_update_auth"' in runner
-    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260823_53a_display_authority"' in runner
-    assert display.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20260823_53a_display_authority"'
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260823_53b_system_authority"' in runner
+    assert display.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20260823_53b_system_authority"'
     assert "clientflow_update_replay" in contract
     assert "clientflow_update_provisioning_token" in contract
 
