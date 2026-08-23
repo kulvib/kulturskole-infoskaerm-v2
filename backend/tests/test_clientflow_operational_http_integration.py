@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
+import json
 from types import SimpleNamespace
+from typing import Any
 import uuid
 
 import pytest
@@ -10,7 +13,6 @@ sqlmodel = pytest.importorskip("sqlmodel")
 pytest.importorskip("passlib")
 
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
 
@@ -28,6 +30,110 @@ from service1.terminal_v2_models import TerminalClient, TerminalCredential
 from service1.routers import client_auth_compat
 from service1.routers import clients
 from service1.routers import shared_domain as shared_domain_router
+
+
+class _ASGIResponse:
+    def __init__(self, status_code: int, body: bytes):
+        self.status_code = status_code
+        self._body = body
+
+    @property
+    def text(self) -> str:
+        return self._body.decode("utf-8", errors="replace")
+
+    def json(self) -> Any:
+        return json.loads(self._body.decode("utf-8"))
+
+
+class _ASGITestClient:
+    """Minimal in-process ASGI client using only the runtime's existing stack."""
+
+    def __init__(self, app: FastAPI):
+        self.app = app
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        headers: dict[str, str] | None = None,
+        json_body: Any | None = None,
+    ) -> _ASGIResponse:
+        body = b"" if json_body is None else json.dumps(json_body).encode("utf-8")
+        header_items = [(b"host", b"testserver")]
+        if json_body is not None:
+            header_items.extend(
+                [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ]
+            )
+        if headers:
+            header_items.extend(
+                (name.lower().encode("latin-1"), value.encode("latin-1"))
+                for name, value in headers.items()
+            )
+
+        async def invoke() -> _ASGIResponse:
+            messages: list[dict[str, Any]] = []
+            request_sent = False
+
+            async def receive() -> dict[str, Any]:
+                nonlocal request_sent
+                if not request_sent:
+                    request_sent = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                return {"type": "http.disconnect"}
+
+            async def send(message: dict[str, Any]) -> None:
+                messages.append(message)
+
+            scope = {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.3"},
+                "http_version": "1.1",
+                "method": method.upper(),
+                "scheme": "http",
+                "path": path,
+                "raw_path": path.encode("ascii"),
+                "query_string": b"",
+                "root_path": "",
+                "headers": header_items,
+                "client": ("127.0.0.1", 50000),
+                "server": ("testserver", 80),
+            }
+            await self.app(scope, receive, send)
+            starts = [message for message in messages if message["type"] == "http.response.start"]
+            assert len(starts) == 1, messages
+            response_body = b"".join(
+                message.get("body", b"")
+                for message in messages
+                if message["type"] == "http.response.body"
+            )
+            return _ASGIResponse(int(starts[0]["status"]), response_body)
+
+        return asyncio.run(invoke())
+
+    def get(self, path: str, *, headers: dict[str, str] | None = None) -> _ASGIResponse:
+        return self.request("GET", path, headers=headers)
+
+    def post(
+        self,
+        path: str,
+        *,
+        headers: dict[str, str] | None = None,
+        json: Any | None = None,
+    ) -> _ASGIResponse:
+        return self.request("POST", path, headers=headers, json_body=json)
+
+    def put(
+        self,
+        path: str,
+        *,
+        headers: dict[str, str] | None = None,
+        json: Any | None = None,
+    ) -> _ASGIResponse:
+        return self.request("PUT", path, headers=headers, json_body=json)
 
 
 CLIENT_ID = 4242
@@ -141,11 +247,10 @@ def operational_http(monkeypatch):
         )
         session.commit()
 
-    with TestClient(app) as http:
-        yield http, engine
+    yield _ASGITestClient(app), engine
 
 
-def _token(http: TestClient, domain: str):
+def _token(http: _ASGITestClient, domain: str):
     return http.post(
         "/api/client-auth/token",
         json={
@@ -157,7 +262,7 @@ def _token(http: TestClient, domain: str):
     )
 
 
-def _put_status(http: TestClient, domain: str, token: str, *, boot_id: str):
+def _put_status(http: _ASGITestClient, domain: str, token: str, *, boot_id: str):
     return http.put(
         f"/api/{domain}-agent/clients/{CLIENT_ID}/status",
         headers={"Authorization": f"Bearer {token}"},
