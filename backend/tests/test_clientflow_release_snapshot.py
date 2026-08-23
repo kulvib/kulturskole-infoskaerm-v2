@@ -179,7 +179,7 @@ def test_bundle_hash_and_manifest_stay_bound_to_same_open_file_when_path_is_repl
         return result
 
     monkeypatch.setattr(bundle_module, "sha256_fd", swap_path_after_first_hash)
-    manifest, _payload, _size, _digest = bundle_module.verify_bundle_structure(
+    manifest, _size, _digest = bundle_module.verify_bundle_structure(
         bundle,
         require_deployable=True,
         required_install_mode=INSTALL_MODE_UPDATE,

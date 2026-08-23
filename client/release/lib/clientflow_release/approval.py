@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import re
 import tempfile
 from pathlib import Path
 
-from clientflow_release_format.archive import read_bundle_artifacts_fd
+from clientflow_release_format.archive import read_bundle_artifact_regions_fd
 
 from .bundle import extract_verified_payload, open_verified_bundle, verify_bundle
 from .builder import _create_bundle
@@ -65,15 +64,14 @@ def approve_bundle(
         if str(installer_contract.get("sha256") or "") != expected_installer_sha256:
             raise ApprovalError("Fresh installerens SHA-256 matcher ikke den eksplicit godkendte hash")
         try:
-            _embedded_manifest, _embedded_payload, installer_bytes = read_bundle_artifacts_fd(
+            _embedded_manifest, _embedded_payload, installer_region = read_bundle_artifact_regions_fd(
                 candidate_handle.fileno()
             )
         except (OSError, ValueError, RuntimeError) as exc:
             raise ApprovalError(f"Fresh installer-medlemmet er ugyldigt: {exc}") from exc
         if (
-            len(installer_bytes) != int(installer_contract.get("size") or 0)
-            or hashlib.sha256(installer_bytes).hexdigest()
-            != str(installer_contract.get("sha256") or "")
+            installer_region.size != int(installer_contract.get("size") or 0)
+            or installer_region.sha256() != str(installer_contract.get("sha256") or "")
         ):
             raise ApprovalError("Fresh installer-medlemmet matcher ikke release candidate-manifestet")
 
@@ -110,25 +108,19 @@ def approve_bundle(
         }
         validate_manifest(approved, require_deployable=True)
 
-        with tempfile.NamedTemporaryFile(prefix="clientflow-payload-", suffix=".tar", delete=False) as temporary:
-            temporary.write(payload)
-            temporary.flush()
-            payload_path = Path(temporary.name)
-        with tempfile.NamedTemporaryFile(prefix="clientflow-installer-", suffix=".pyz", delete=False) as temporary:
-            temporary.write(installer_bytes)
-            temporary.flush()
-            installer_path = Path(temporary.name)
         try:
+            payload.assert_unchanged()
             _create_bundle(
                 output_bundle,
                 approved,
-                payload_path,
-                installer_path,
+                payload,
+                installer_region,
                 epoch=int(approved["source_date_epoch"]),
             )
-        finally:
-            payload_path.unlink(missing_ok=True)
-            installer_path.unlink(missing_ok=True)
+            payload.assert_unchanged()
+        except Exception:
+            output_bundle.unlink(missing_ok=True)
+            raise
 
         verify_bundle(output_bundle, require_deployable=True)
         return approved

@@ -10,6 +10,8 @@ import subprocess
 import tarfile
 import zipfile
 
+from clientflow_release_format.archive import FileRegion
+
 from .constants import (
     ARTIFACT_TYPE_RUNTIME_RELEASE,
     CHANNEL,
@@ -196,19 +198,73 @@ def _create_payload(
                 info.mtime = epoch
                 archive.addfile(info)
             for source, target in sorted(sources, key=lambda item: item[1].as_posix()):
-                _tar_add_bytes(archive, target.as_posix(), source.read_bytes(), mode=_source_mode(source), epoch=epoch)
+                _tar_add_file_source(
+                    archive,
+                    target.as_posix(),
+                    source,
+                    expected_size=source.stat().st_size,
+                    mode=_source_mode(source),
+                    epoch=epoch,
+                )
     return complete, sorted(runtime_files, key=lambda item: item["file"])
 
 
-def _create_bundle(output: Path, manifest: dict, payload: Path, installer: Path, *, epoch: int) -> None:
+def _tar_add_file_source(
+    archive: tarfile.TarFile,
+    name: str,
+    source: Path | FileRegion,
+    *,
+    expected_size: int,
+    mode: int,
+    epoch: int,
+) -> None:
+    actual_size = source.size if isinstance(source, FileRegion) else source.stat().st_size
+    if actual_size != expected_size:
+        raise ValueError(f"Bundle-medlemmet {name} matcher ikke manifestets størrelse")
+    info = tarfile.TarInfo(name=name)
+    info.size = expected_size
+    info.mode = mode
+    info.uid = 0
+    info.gid = 0
+    info.uname = "root"
+    info.gname = "root"
+    info.mtime = epoch
+    if isinstance(source, FileRegion):
+        with source.open() as stream:
+            archive.addfile(info, stream)
+    else:
+        with source.open("rb") as stream:
+            archive.addfile(info, stream)
+
+
+def _create_bundle(
+    output: Path,
+    manifest: dict,
+    payload: Path | FileRegion,
+    installer: Path | FileRegion,
+    *,
+    epoch: int,
+) -> None:
     manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    payload_bytes = payload.read_bytes()
-    installer_bytes = installer.read_bytes()
     with output.open("wb") as raw:
         with tarfile.open(fileobj=raw, mode="w", format=tarfile.PAX_FORMAT) as archive:
             _tar_add_bytes(archive, "manifest.json", manifest_bytes, mode=0o644, epoch=epoch)
-            _tar_add_bytes(archive, "clientflow-payload.tar", payload_bytes, mode=0o644, epoch=epoch)
-            _tar_add_bytes(archive, str(manifest["fresh_installer"]["file"]), installer_bytes, mode=0o555, epoch=epoch)
+            _tar_add_file_source(
+                archive,
+                "clientflow-payload.tar",
+                payload,
+                expected_size=int(manifest["payload"]["size"]),
+                mode=0o644,
+                epoch=epoch,
+            )
+            _tar_add_file_source(
+                archive,
+                str(manifest["fresh_installer"]["file"]),
+                installer,
+                expected_size=int(manifest["fresh_installer"]["size"]),
+                mode=0o555,
+                epoch=epoch,
+            )
 
 
 def _write_zipapp(output: Path, entries: list[tuple[str, bytes, int]], *, epoch: int) -> None:

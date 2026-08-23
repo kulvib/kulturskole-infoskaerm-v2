@@ -96,7 +96,7 @@ class StableUpdaterClient:
 
     def _verify_bundle_contract(self, artifact: Path, snapshot: DeploymentSnapshot) -> None:
         try:
-            manifest, _payload, bundle_size, bundle_sha256 = verify_bundle_structure(
+            manifest, bundle_size, bundle_sha256 = verify_bundle_structure(
                 artifact,
                 require_deployable=True,
                 required_install_mode=INSTALL_MODE_UPDATE,

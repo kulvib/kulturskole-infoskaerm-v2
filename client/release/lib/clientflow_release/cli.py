@@ -350,7 +350,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
     bundle_size, approved_bundle_sha256 = _verify_expected_bundle_identity(
         args.bundle, args.expected_bundle_sha256
     )
-    manifest, _payload = verify_bundle(
+    manifest, _bundle_size, _bundle_sha256 = verify_bundle(
         args.bundle, require_deployable=True, required_install_mode=INSTALL_MODE_FRESH
     )
     binding = _fresh_install_binding(
@@ -537,7 +537,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.operation == "verify":
         bundle_sha256 = _verify_expected_bundle_hash(args.bundle, args.expected_bundle_sha256)
-        manifest, _ = verify_bundle(
+        manifest, _bundle_size, _bundle_sha256 = verify_bundle(
             args.bundle, require_deployable=True, required_install_mode=INSTALL_MODE_FRESH
         )
         result = {
