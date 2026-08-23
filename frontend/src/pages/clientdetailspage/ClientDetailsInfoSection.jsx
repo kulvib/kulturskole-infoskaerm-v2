@@ -1115,13 +1115,18 @@ function formatUptime(value) {
   return `${mins} min. ${secs} sek.`;
 }
 
-function formatBrowserRefreshInterval(value) {
-  const seconds = Number.parseInt(String(value ?? "900"), 10);
-  if (!Number.isFinite(seconds) || seconds < 0) return "15 min.";
-  if (seconds === 0) return "Slået fra";
-  if (seconds % 3600 === 0) return `${seconds / 3600} t.`;
-  if (seconds % 60 === 0) return `${seconds / 60} min.`;
-  return `${seconds} sek.`;
+function isCanonicalKioskUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return true;
+  if (raw.length > 2048) return false;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.username || parsed.password || !parsed.hostname) return false;
+    if (parsed.protocol === "https:") return true;
+    return parsed.protocol === "http:" && ["localhost", "127.0.0.1"].includes(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 
@@ -1823,7 +1828,6 @@ function getConfigFormFromClient(client) {
     name: client?.name || "",
     locality: client?.locality || "",
     kiosk_url: client?.kiosk_url || "",
-    browser_refresh_interval_sec: String(client?.browser_refresh_interval_sec ?? 900),
     desktop_lockdown_enabled: client?.desktop_lockdown_enabled ? "true" : "false",
     organization_id: getOrganizationId(client) ? String(getOrganizationId(client)) : "",
   };
@@ -1892,7 +1896,6 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     form.name !== initialForm.name ||
     form.locality !== initialForm.locality ||
     form.kiosk_url !== initialForm.kiosk_url ||
-    String(form.browser_refresh_interval_sec || "") !== String(initialForm.browser_refresh_interval_sec || "") ||
     String(form.desktop_lockdown_enabled || "false") !== String(initialForm.desktop_lockdown_enabled || "false") ||
     String(form.organization_id || "") !== String(initialForm.organization_id || "")
   ), [form, initialForm]);
@@ -1926,20 +1929,13 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     if (canEditKioskUrlAndLocality) {
       if (nextLocality !== initialForm.locality) payload.locality = nextLocality;
       if (nextKioskUrl !== initialForm.kiosk_url) {
-        if (nextKioskUrl && !/^https?:\/\//i.test(nextKioskUrl)) {
-          throw new Error("Kiosk URL skal starte med http:// eller https://");
+        if (!isCanonicalKioskUrl(nextKioskUrl)) {
+          throw new Error("Kiosk URL skal bruge HTTPS. HTTP er kun tilladt til localhost eller 127.0.0.1.");
         }
         payload.kiosk_url = nextKioskUrl;
       }
     }
 
-    if (canEditBrowserMaintenance && String(form.browser_refresh_interval_sec || "") !== String(initialForm.browser_refresh_interval_sec || "")) {
-      const refreshSeconds = Number.parseInt(String(form.browser_refresh_interval_sec || "900"), 10);
-      if (!Number.isFinite(refreshSeconds) || refreshSeconds < 0 || (refreshSeconds > 0 && refreshSeconds < 60)) {
-        throw new Error("Browser refresh-interval skal være 0 eller mindst 60 sekunder");
-      }
-      payload.browser_refresh_interval_sec = refreshSeconds;
-    }
 
     if (canChangeOrganization && String(form.organization_id || "") !== String(initialForm.organization_id || "")) {
       const nextOrganizationId = form.organization_id || null;
@@ -1953,7 +1949,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     }
 
     return payload;
-  }, [form, initialForm, canEditClientName, canEditKioskUrlAndLocality, canEditBrowserMaintenance, canChangeOrganization, isSuperadmin]);
+  }, [form, initialForm, canEditClientName, canEditKioskUrlAndLocality, canChangeOrganization, isSuperadmin]);
 
   const hasChanges = React.useMemo(() => {
     try {
@@ -2217,27 +2213,8 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                     value={form.kiosk_url}
                     onChange={setField("kiosk_url")}
                     disabled={saving || !canEditKioskUrlAndLocality}
-                    helperText={canEditKioskUrlAndLocality ? "Skal starte med http:// eller https://" : "Du har kun læseadgang til kiosk URL"}
+                    helperText={canEditKioskUrlAndLocality ? "HTTPS kræves. HTTP er kun tilladt til localhost eller 127.0.0.1." : "Du har kun læseadgang til kiosk URL"}
                     sx={textFieldSx}
-                  />
-                </Grid>
-                <Grid
-                  size={{
-                    xs: 12,
-                    md: 6
-                  }}>
-                  <TextField
-                    fullWidth
-                    label="Browser auto-refresh"
-                    type="number"
-                    value={form.browser_refresh_interval_sec}
-                    onChange={setField("browser_refresh_interval_sec")}
-                    helperText={canEditBrowserMaintenance ? `Aktuelt: ${formatBrowserRefreshInterval(form.browser_refresh_interval_sec)} · 0 = slå fra · minimum 60 sek.` : "Du har kun læseadgang til intervallet"}
-                    disabled={saving || !canEditBrowserMaintenance}
-                    sx={textFieldSx}
-                    slotProps={{
-                      htmlInput: { min: 0, step: 60 }
-                    }}
                   />
                 </Grid>
                 <Grid
@@ -2946,7 +2923,6 @@ function DiagnosticsPanel({ client, onRefresh }) {
         { label: "Chrome step", value: client?.chrome_step, copy: true },
         { label: "Chrome farve", value: client?.chrome_color, status: true },
         { label: "Chrome opdateret", value: formatDiagnosticDate(client?.chrome_last_updated) },
-        { label: "Auto-refresh", value: formatBrowserRefreshInterval(client?.browser_refresh_interval_sec ?? 900) },
         { label: "Pending action", value: hasPendingChromeAction ? client?.pending_chrome_action : "Ingen", level: hasPendingChromeAction ? "info" : "ok" },
         { label: "Pending source", value: client?.pending_chrome_action_source, fallback: "Ingen" },
         { label: "Pending reboot", value: formatDiagnosticBoolean(client?.pending_reboot), boolean: client?.pending_reboot },

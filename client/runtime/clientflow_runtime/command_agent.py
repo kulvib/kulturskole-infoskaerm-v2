@@ -77,12 +77,14 @@ class QueueAgent:
         poll_seconds: float = 2.0,
         lease_seconds: int = 60,
         status_payload: Callable[[], dict[str, Any]] | None = None,
+        report_status_after_command: bool = False,
     ) -> None:
         self.transport = transport
         self.handler = handler
         self.poll_seconds = max(0.2, poll_seconds)
         self.lease_seconds = min(max(lease_seconds, 10), 300)
         self.status_payload = status_payload or (lambda: {})
+        self.report_status_after_command = bool(report_status_after_command)
         self.logger = configure_logging(f"clientflow.{transport.credential.domain.value}")
         self._last_status = 0.0
 
@@ -171,6 +173,8 @@ class QueueAgent:
                     with LeaseKeeper(self.transport, context, lease_seconds=self.lease_seconds):
                         result = self.handler(context)
                     self._complete(context, result)
+                    if self.report_status_after_command:
+                        self._report_status_if_due(force=True)
                     self.logger.info("command_completed", extra={"command_id": context.command_id})
                 except Exception as exc:
                     self.logger.exception("command_failed", extra={"command_id": context.command_id})

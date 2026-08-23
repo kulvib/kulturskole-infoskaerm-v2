@@ -1,17 +1,18 @@
 [Unit]
-Description=ClientFlow display kiosk runtime
-After=graphical.target
+Description=ClientFlow Google Chrome kiosk runtime
+After=graphical.target clientflow-display-platform-prepare.service
 Wants=graphical.target
+Requires=clientflow-display-platform-prepare.service
 
 [Service]
 Type=simple
-User=clientflow-display
+User=@CLIENTFLOW_KIOSK_USER@
 Group=clientflow-display-control
 SupplementaryGroups=video render audio
 ExecStart=/opt/clientflow/active/runtime/bin/clientflow-display-runtime
 Restart=on-failure
 RestartSec=5s
-StateDirectory=clientflow/display
+StateDirectory=clientflow/display-runtime
 StateDirectoryMode=0750
 RuntimeDirectory=clientflow/display
 RuntimeDirectoryMode=0750

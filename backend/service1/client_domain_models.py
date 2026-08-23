@@ -74,6 +74,33 @@ class ClientDomainStatus(SQLModel, table=True):
     reported_at: datetime
 
 
+class DisplayDesiredConfiguration(SQLModel, table=True):
+    """Durable Display-owned desired state.
+
+    ``Client.kiosk_url`` is intentionally not an authority.  The row is the
+    persistence authority that is reconciled to the Display agent.
+    """
+
+    __tablename__ = "display_desired_configuration"
+    __table_args__ = (
+        CheckConstraint("schema_version = 1", name="ck_display_desired_configuration_schema_version"),
+        CheckConstraint("revision >= 1", name="ck_display_desired_configuration_revision"),
+        Index("ix_display_desired_configuration_updated_at", "updated_at"),
+    )
+
+    client_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("client.id", ondelete="CASCADE"), primary_key=True)
+    )
+    schema_version: int = Field(default=1, sa_column=Column(Integer, nullable=False, server_default=text("1")))
+    revision: int = Field(default=1, sa_column=Column(Integer, nullable=False, server_default=text("1")))
+    kiosk_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    updated_at: datetime
+    updated_by_user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("user.id", ondelete="SET NULL"), nullable=True),
+    )
+
+
 class ClientCommand(SQLModel, table=True):
     """Shared command queue owned only by Display/System agents.
 

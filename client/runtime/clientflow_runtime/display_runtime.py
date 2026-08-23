@@ -1,41 +1,33 @@
-"""Unprivileged display runtime. It controls only the kiosk browser process."""
+"""Unprivileged Display runtime for the canonical Google Chrome kiosk process."""
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
+import pwd
 import selectors
+import shutil
 import signal
 import socket
+import stat
 import subprocess
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 from .atomic import atomic_write_json
 from .logging_utils import configure_logging
 from .unix_rpc import RpcError, encode_message, read_message
 
-STATE_DIR = Path(os.getenv("CLIENTFLOW_DISPLAY_STATE_DIR", "/var/lib/clientflow/display"))
+STATE_DIR = Path(os.getenv("CLIENTFLOW_DISPLAY_STATE_DIR", "/var/lib/clientflow/display-runtime"))
 RUNTIME_DIR = Path(os.getenv("CLIENTFLOW_DISPLAY_RUNTIME_DIR", "/run/clientflow/display"))
 CONFIG_PATH = STATE_DIR / "configuration.json"
 SOCKET_PATH = RUNTIME_DIR / "runtime.sock"
 STATUS_PATH = STATE_DIR / "runtime-status.json"
 PID_PATH = RUNTIME_DIR / "browser.pid"
-
-_BROWSER_BINARIES = {
-    "chromium": Path("/usr/bin/chromium"),
-    "chromium-browser": Path("/usr/bin/chromium-browser"),
-    "google-chrome-stable": Path("/usr/bin/google-chrome-stable"),
-}
-_ALLOWED_BROWSER_BINARIES = frozenset(_BROWSER_BINARIES)
-
-_ALLOWED_CONFIGURATION_KEYS = {
-    "kiosk_url",
-    "browser_refresh_interval_sec",
-    "browser_binary",
-    "browser_arguments",
-    "display_environment",
-}
+PROFILE_DIR = STATE_DIR / "browser-profile"
+CHROME_BINARY = Path("/usr/bin/google-chrome-stable")
+_ALLOWED_CONFIGURATION_KEYS = {"schema_version", "revision", "kiosk_url"}
 
 
 class DisplayRuntime:
@@ -43,6 +35,8 @@ class DisplayRuntime:
         self.logger = configure_logging("clientflow.display.runtime")
         self.browser: subprocess.Popen[bytes] | None = None
         self.configuration: dict[str, Any] = self._load_configuration()
+        self.browser_requested = bool(self.configuration.get("kiosk_url"))
+        self.next_start_attempt = 0.0
 
     def _load_configuration(self) -> dict[str, Any]:
         try:
@@ -53,11 +47,12 @@ class DisplayRuntime:
             raise RuntimeError("Displaykonfiguration er ugyldig") from exc
         if not isinstance(data, dict):
             raise RuntimeError("Displaykonfiguration skal være et objekt")
-        return data
+        return self._validate_configuration(data)
 
     def _status(self, state: str, **details: Any) -> None:
         payload = {
             "schema_version": 1,
+            "configuration_revision": self.configuration.get("revision") if self.configuration else None,
             "state": state,
             "browser_pid": self.browser.pid if self.browser and self.browser.poll() is None else None,
             "updated_at": time.time(),
@@ -65,99 +60,263 @@ class DisplayRuntime:
         }
         atomic_write_json(STATUS_PATH, payload, mode=0o640)
 
+    @staticmethod
+    def _normalize_kiosk_url(value: Any) -> str | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        if len(raw) > 2048:
+            raise ValueError("kiosk_url er for lang")
+        try:
+            parsed = urlsplit(raw)
+            _ = parsed.port
+        except ValueError as exc:
+            raise ValueError("kiosk_url er ugyldig") from exc
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("kiosk_url må ikke indeholde login-oplysninger")
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme.lower() == "https" and host and parsed.netloc:
+            return raw
+        if parsed.scheme.lower() == "http" and host in {"localhost", "127.0.0.1"}:
+            return raw
+        raise ValueError("kiosk_url kræver HTTPS; HTTP er kun tilladt til localhost eller 127.0.0.1")
+
     def _validate_configuration(self, payload: dict[str, Any]) -> dict[str, Any]:
         unknown = set(payload) - _ALLOWED_CONFIGURATION_KEYS
         if unknown:
             raise ValueError(f"Ukendte displayfelter: {', '.join(sorted(unknown))}")
-        kiosk_url = str(payload.get("kiosk_url") or "").strip()
-        if not kiosk_url.startswith(("https://", "http://localhost", "http://127.0.0.1")):
-            raise ValueError("kiosk_url skal bruge HTTPS")
-        interval = int(payload.get("browser_refresh_interval_sec", 900))
-        if not 30 <= interval <= 86400:
-            raise ValueError("browser_refresh_interval_sec er uden for interval")
-        browser_arguments = payload.get("browser_arguments", [])
-        if not isinstance(browser_arguments, list) or any(not isinstance(item, str) for item in browser_arguments):
-            raise ValueError("browser_arguments skal være en liste af strenge")
-        forbidden = {"--remote-debugging-address", "--remote-debugging-port", "--user-data-dir"}
-        if any(any(argument == item or argument.startswith(item + "=") for item in forbidden) for argument in browser_arguments):
-            raise ValueError("browser_arguments indeholder en forbudt kontrolparameter")
-        environment = payload.get("display_environment", {})
-        if not isinstance(environment, dict):
-            raise ValueError("display_environment skal være et objekt")
-        allowed_env = {"DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"}
-        if set(environment) - allowed_env or any(not isinstance(value, str) for value in environment.values()):
-            raise ValueError("display_environment indeholder ugyldige værdier")
-        browser_binary = str(payload.get("browser_binary") or "chromium").strip()
-        if browser_binary not in _ALLOWED_BROWSER_BINARIES:
-            raise ValueError("browser_binary er ikke tilladt")
+        try:
+            schema_version = int(payload.get("schema_version"))
+            revision = int(payload.get("revision"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Displaykonfiguration mangler schema_version/revision") from exc
+        if schema_version != 1 or revision < 1:
+            raise ValueError("Displaykonfigurationens schema_version/revision er ugyldig")
         return {
-            "kiosk_url": kiosk_url,
-            "browser_refresh_interval_sec": interval,
-            "browser_binary": browser_binary,
-            "browser_arguments": browser_arguments,
-            "display_environment": environment,
+            "schema_version": 1,
+            "revision": revision,
+            "kiosk_url": self._normalize_kiosk_url(payload.get("kiosk_url")),
         }
 
     def apply_configuration(self, payload: dict[str, Any]) -> dict[str, Any]:
         configuration = self._validate_configuration(payload)
+        current_revision = int(self.configuration.get("revision") or 0) if self.configuration else 0
+        if configuration["revision"] < current_revision:
+            raise ValueError("Displaykonfigurationens revision er ældre end den aktive revision")
+        if configuration["revision"] == current_revision and self.configuration and configuration != self.configuration:
+            raise ValueError("Displaykonfigurationens revision matcher ikke det allerede anvendte indhold")
+        changed = configuration != self.configuration
         atomic_write_json(CONFIG_PATH, configuration, mode=0o640)
         self.configuration = configuration
-        self.restart_browser()
-        return {"applied": True}
+        if changed:
+            if configuration["kiosk_url"]:
+                self.browser_requested = True
+                self.restart_browser()
+            else:
+                self.browser_requested = False
+                self.stop_browser()
+        else:
+            self._status("running" if self.browser and self.browser.poll() is None else "stopped")
+        return {"applied": True, "revision": configuration["revision"]}
 
-    def _browser_command(self) -> tuple[list[str], dict[str, str]]:
-        if not self.configuration:
-            raise RuntimeError("Displaykonfiguration mangler")
-        requested = str(self.configuration.get("browser_binary") or "chromium")
-        if requested not in _ALLOWED_BROWSER_BINARIES:
-            raise RuntimeError("Browserbinary er ikke tilladt")
-        binary_path = _BROWSER_BINARIES[requested]
-        if binary_path.is_symlink() or not binary_path.is_file() or not os.access(binary_path, os.X_OK):
-            raise RuntimeError(f"Browserbinary blev ikke fundet som fast fil: {requested}")
-        binary = str(binary_path)
-        data_dir = STATE_DIR / "browser-profile"
-        data_dir.mkdir(parents=True, exist_ok=True)
-        command = [
-            binary,
-            "--kiosk",
-            "--no-first-run",
-            "--disable-component-update",
-            "--disable-features=TranslateUI",
-            f"--user-data-dir={data_dir}",
-            *list(self.configuration.get("browser_arguments") or []),
-            str(self.configuration["kiosk_url"]),
-        ]
-        environment = {
-            "HOME": str(STATE_DIR),
+    @staticmethod
+    def _run_text(command: list[str]) -> str:
+        result = subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=10,
+            env={"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Kommando fejlede ({result.returncode}): {' '.join(command)}: {result.stderr.strip()}")
+        return result.stdout.strip()
+
+    @classmethod
+    def _loginctl_value(cls, kind: str, ident: str, prop: str) -> str:
+        return cls._run_text(["/usr/bin/loginctl", f"show-{kind}", ident, "-p", prop, "--value"]).strip()
+
+    def _graphical_environment(self) -> dict[str, str]:
+        uid = os.getuid()
+        if uid == 0:
+            raise RuntimeError("Display-runtime må ikke køre som root")
+        account = pwd.getpwuid(uid)
+        session_id = self._loginctl_value("seat", "seat0", "ActiveSession")
+        if not session_id:
+            raise RuntimeError("Ingen aktiv seat0-session")
+        props = {
+            key: self._loginctl_value("session", session_id, key)
+            for key in ("Name", "User", "Seat", "Remote", "Class", "Type", "Active", "State", "LockedHint")
+        }
+        if props["Name"] != account.pw_name or props["User"] != str(uid):
+            raise RuntimeError("Aktiv grafisk session tilhører ikke den konfigurerede kiosk-bruger")
+        if props["Seat"] != "seat0" or props["Remote"] != "no" or props["Class"] != "user":
+            raise RuntimeError("Aktiv session er ikke en lokal seat0-brugersession")
+        if props["Type"] != "wayland" or props["Active"] != "yes" or props["State"] != "active":
+            raise RuntimeError("Aktiv kiosk-session er ikke en aktiv Wayland-session")
+        if props["LockedHint"] == "yes":
+            raise RuntimeError("Aktiv kiosk-session er låst")
+
+        runtime = Path(f"/run/user/{uid}")
+        bus = runtime / "bus"
+        try:
+            bus_stat = bus.stat()
+        except OSError as exc:
+            raise RuntimeError("Kiosk-brugerens D-Bus session mangler") from exc
+        if bus_stat.st_uid != uid or not stat.S_ISSOCK(bus_stat.st_mode):
+            raise RuntimeError("Kiosk-brugerens D-Bus session er ugyldig")
+
+        wayland_candidates: list[Path] = []
+        for candidate in runtime.glob("wayland-*"):
+            try:
+                metadata = candidate.stat()
+            except OSError:
+                continue
+            if metadata.st_uid == uid and stat.S_ISSOCK(metadata.st_mode):
+                wayland_candidates.append(candidate)
+        if not wayland_candidates:
+            raise RuntimeError("Kiosk-brugerens Wayland-socket mangler")
+        wayland_candidates.sort(key=lambda item: (item.name != "wayland-0", item.name))
+        wayland = wayland_candidates[0]
+        return {
+            "HOME": account.pw_dir,
+            "USER": account.pw_name,
+            "LOGNAME": account.pw_name,
             "PATH": "/usr/local/bin:/usr/bin:/bin",
             "LANG": os.getenv("LANG", "C.UTF-8"),
+            "XDG_RUNTIME_DIR": str(runtime),
+            "WAYLAND_DISPLAY": wayland.name,
+            "DBUS_SESSION_BUS_ADDRESS": f"unix:path={bus}",
+            "XDG_SESSION_TYPE": "wayland",
+            "XDG_CURRENT_DESKTOP": "ubuntu:GNOME",
+            "DESKTOP_SESSION": "ubuntu",
+            "GDK_BACKEND": "wayland",
         }
-        environment.update(dict(self.configuration.get("display_environment") or {}))
+
+    @staticmethod
+    def _load_json_object(path: Path) -> dict[str, Any]:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    def _prepare_profile(self, kiosk_url: str) -> None:
+        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        default_dir = PROFILE_DIR / "Default"
+        default_dir.mkdir(parents=True, exist_ok=True)
+        for name in ("Current Session", "Current Tabs", "Last Session", "Last Tabs", "Preferences.tmp"):
+            (default_dir / name).unlink(missing_ok=True)
+        (PROFILE_DIR / "Local State.tmp").unlink(missing_ok=True)
+
+        local_state_path = PROFILE_DIR / "Local State"
+        local_state = self._load_json_object(local_state_path)
+        local_state.setdefault("browser", {})["has_seen_welcome_page"] = True
+        local_state.setdefault("browser", {})["enabled_labs_experiments"] = []
+        local_state.setdefault("profile", {})["last_used"] = "Default"
+        local_state.setdefault("profile", {})["last_active_profiles"] = ["Default"]
+        atomic_write_json(local_state_path, local_state, mode=0o600)
+
+        prefs_path = default_dir / "Preferences"
+        prefs = self._load_json_object(prefs_path)
+        profile = prefs.setdefault("profile", {})
+        profile["exit_type"] = "Normal"
+        profile["exited_cleanly"] = True
+        profile["password_manager_enabled"] = False
+        profile.setdefault("default_content_setting_values", {}).update(
+            {"notifications": 2, "popups": 2, "geolocation": 2, "media_stream_mic": 2, "media_stream_camera": 2}
+        )
+        prefs["credentials_enable_service"] = False
+        prefs["credentials_enable_autosignin"] = False
+        prefs.setdefault("browser", {}).update(
+            {"check_default_browser": False, "has_seen_welcome_page": True, "show_home_button": False}
+        )
+        prefs.setdefault("signin", {})["allowed"] = False
+        prefs.setdefault("translate", {})["enabled"] = False
+        prefs.setdefault("autofill", {}).update({"profile_enabled": False, "credit_card_enabled": False})
+        prefs.setdefault("payments", {})["can_make_payment_enabled"] = False
+        prefs.setdefault("session", {}).update(
+            {"restore_on_startup": 4, "startup_urls": [kiosk_url], "restore_on_startup_migrated": True}
+        )
+        prefs.setdefault("extensions", {})["alerts_initialized"] = True
+        atomic_write_json(prefs_path, prefs, mode=0o600)
+
+    def _browser_command(self) -> tuple[list[str], dict[str, str]]:
+        kiosk_url = self.configuration.get("kiosk_url") if self.configuration else None
+        if not kiosk_url:
+            raise RuntimeError("Displaykonfiguration mangler kiosk_url")
+        if not CHROME_BINARY.exists() or not os.access(CHROME_BINARY, os.X_OK):
+            raise RuntimeError("Canonical Google Chrome Stable executable mangler")
+        environment = self._graphical_environment()
+        self._prepare_profile(str(kiosk_url))
+        command = [
+            str(CHROME_BINARY),
+            "--ozone-platform=wayland",
+            "--kiosk",
+            f"--user-data-dir={PROFILE_DIR}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--noerrdialogs",
+            "--disable-session-crashed-bubble",
+            "--disable-infobars",
+            "--disable-sync",
+            "--password-store=basic",
+            "--disable-notifications",
+            "--deny-permission-prompts",
+            "--disable-prompt-on-repost",
+            "--disable-save-password-bubble",
+            "--disable-component-update",
+            "--disable-domain-reliability",
+            "--disable-background-networking",
+            "--disable-client-side-phishing-detection",
+            "--disable-search-engine-choice-screen",
+            "--block-new-web-contents",
+            "--disable-pinch",
+            "--overscroll-history-navigation=0",
+            "--autoplay-policy=no-user-gesture-required",
+            "--disable-features=Translate,TranslateUI,ChromeWhatsNewUI,PrivacySandboxSettings4,AutofillServerCommunication,PasswordManagerOnboarding,OptimizationHints,MediaRouter",
+            str(kiosk_url),
+        ]
         return command, environment
 
-    def start_browser(self) -> None:
+    def start_browser(self) -> dict[str, Any]:
+        self.browser_requested = True
         if self.browser and self.browser.poll() is None:
-            return
-        command, environment = self._browser_command()
-        self.browser = subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.STDOUT,
-            env=environment,
-            start_new_session=True,
-            close_fds=True,
-        )
+            self._status("running")
+            return {"started": False, "already_running": True, "pid": self.browser.pid}
+        try:
+            command, environment = self._browser_command()
+            self.browser = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+                env=environment,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except (OSError, RuntimeError) as exc:
+            self.browser = None
+            self.next_start_attempt = time.monotonic() + 5.0
+            self._status("waiting_session", error=str(exc)[:240])
+            raise
         PID_PATH.write_text(f"{self.browser.pid}\n", encoding="ascii")
+        self.next_start_attempt = 0.0
         self._status("running")
+        return {"started": True, "pid": self.browser.pid}
 
-    def stop_browser(self) -> None:
+    def stop_browser(self, *, preserve_request: bool = False) -> dict[str, Any]:
+        if not preserve_request:
+            self.browser_requested = False
+        self.next_start_attempt = 0.0
         process = self.browser
         self.browser = None
         PID_PATH.unlink(missing_ok=True)
         if process is None or process.poll() is not None:
             self._status("stopped")
-            return
+            return {"stopped": True, "was_running": False}
         try:
             os.killpg(process.pid, signal.SIGTERM)
             process.wait(timeout=10)
@@ -168,15 +327,24 @@ class DisplayRuntime:
                 pass
             process.wait(timeout=5)
         self._status("stopped")
+        return {"stopped": True, "was_running": True}
 
-    def restart_browser(self) -> None:
-        self.stop_browser()
-        self.start_browser()
+    def restart_browser(self) -> dict[str, Any]:
+        self.browser_requested = True
+        self.stop_browser(preserve_request=True)
+        result = self.start_browser()
+        return {"restarted": True, **result}
 
-    def reload_browser(self) -> None:
-        # The runtime intentionally exposes no browser debugging socket. A controlled
-        # process restart is the deterministic reload primitive.
-        self.restart_browser()
+    def reset_browser(self) -> dict[str, Any]:
+        self.browser_requested = True
+        self.stop_browser(preserve_request=True)
+        profile = PROFILE_DIR.resolve(strict=False)
+        state = STATE_DIR.resolve(strict=False)
+        if profile.parent != state or profile.name != "browser-profile":
+            raise RuntimeError("Display-browserprofilens sti er ugyldig")
+        shutil.rmtree(profile, ignore_errors=False) if profile.exists() else None
+        result = self.start_browser()
+        return {"reset": True, **result}
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         action = str(request.get("action") or "")
@@ -185,16 +353,17 @@ class DisplayRuntime:
             if not isinstance(payload, dict):
                 raise ValueError("payload skal være et objekt")
             return self.apply_configuration(payload)
-        if action == "reload_browser":
-            self.reload_browser()
-            return {"reloaded": True}
-        if action == "restart_browser":
-            self.restart_browser()
-            return {"restarted": True}
+        if action == "start_browser":
+            return self.start_browser()
+        if action == "stop_browser":
+            return self.stop_browser()
+        if action == "reset_browser":
+            return self.reset_browser()
         if action == "status":
             return {
                 "state": "running" if self.browser and self.browser.poll() is None else "stopped",
                 "pid": self.browser.pid if self.browser and self.browser.poll() is None else None,
+                "configuration_revision": self.configuration.get("revision") if self.configuration else None,
             }
         raise ValueError("Ukendt displayruntimehandling")
 
@@ -208,19 +377,31 @@ class DisplayRuntime:
         server.setblocking(False)
         selector = selectors.DefaultSelector()
         selector.register(server, selectors.EVENT_READ)
-        if self.configuration:
+        if self.configuration.get("kiosk_url"):
             try:
                 self.start_browser()
             except Exception:
-                self.logger.exception("browser_start_failed")
-                self._status("failed", error="browser_start_failed")
+                self.logger.exception("browser_start_waiting_for_session")
+        else:
+            self._status("stopped")
         try:
             while True:
                 if self.browser and self.browser.poll() is not None:
                     code = self.browser.returncode
                     self.browser = None
                     PID_PATH.unlink(missing_ok=True)
-                    self._status("failed", exit_code=code)
+                    self.next_start_attempt = time.monotonic() + 5.0
+                    self._status("failed", exit_code=code, error="browser_exited")
+                if (
+                    self.browser_requested
+                    and self.configuration.get("kiosk_url")
+                    and self.browser is None
+                    and time.monotonic() >= self.next_start_attempt
+                ):
+                    try:
+                        self.start_browser()
+                    except Exception:
+                        self.logger.info("browser_start_retry_waiting")
                 for key, _ in selector.select(timeout=1):
                     connection, _ = key.fileobj.accept()
                     with connection:
@@ -233,7 +414,7 @@ class DisplayRuntime:
         except KeyboardInterrupt:
             return 0
         finally:
-            self.stop_browser()
+            self.stop_browser(preserve_request=True)
             server.close()
             SOCKET_PATH.unlink(missing_ok=True)
 

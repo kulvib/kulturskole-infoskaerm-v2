@@ -936,7 +936,6 @@ def claim_enrollment_token(
         machine_id=data.machine_id,
         status="pending",
         sort_order=None,
-        kiosk_url=None,
         ubuntu_version=data.ubuntu_version,
         uptime=data.uptime,
         chrome_status="unknown",

@@ -1004,3 +1004,25 @@ for _retired_column in CLIENT_LIVENESS_RETIRED_CLIENT_COLUMNS:
 EXPECTED_COLUMNS["client"] = _client_columns
 # Replaced below after deterministic contract fingerprint calculation.
 EXPECTED_FINGERPRINT = "259e2623c532f66facb7a1083401355832f5f7d5e5e716c83337cf9daebcda03"
+
+# Step 53A: canonical durable Display desired-state authority.
+from display_authority_schema_contract import (
+    DISPLAY_AUTHORITY_COLUMNS,
+    DISPLAY_AUTHORITY_CONSTRAINTS,
+    DISPLAY_AUTHORITY_INDEXES,
+    DISPLAY_AUTHORITY_RETIRED_CLIENT_COLUMNS,
+    DISPLAY_AUTHORITY_TABLES,
+)
+EXPECTED_HEAD_REVISION = "20260823_53a_display_authority"
+EXPECTED_TABLES |= DISPLAY_AUTHORITY_TABLES
+EXPECTED_COLUMNS.update(DISPLAY_AUTHORITY_COLUMNS)
+_client_columns = dict(EXPECTED_COLUMNS["client"])
+for _retired_column in DISPLAY_AUTHORITY_RETIRED_CLIENT_COLUMNS:
+    if _retired_column not in _client_columns:
+        raise RuntimeError(f"Step 53A expected legacy client column {_retired_column!r} before retirement")
+    _client_columns.pop(_retired_column)
+EXPECTED_COLUMNS["client"] = _client_columns
+EXPECTED_CONSTRAINTS.update(DISPLAY_AUTHORITY_CONSTRAINTS)
+EXPECTED_INDEXES.update(DISPLAY_AUTHORITY_INDEXES)
+# Replaced below after deterministic contract fingerprint calculation.
+EXPECTED_FINGERPRINT = "8b9e97bd26e43e242d0f948cb1927accb472a475a0d214baa6c9b6168bcc802e"

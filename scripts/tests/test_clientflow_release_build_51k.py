@@ -80,6 +80,17 @@ def test_current_platform_lock_is_source_independent_and_matches_physically_veri
         "websockets-12.0-cp313-cp313-linux_x86_64.whl": (122647, "98b9b9088ca8dca67bf538fad84b14f69196a534f21d6a363ad1f4f1f50b0243"),
     }
     assert not any(name.startswith("clientflow_runtime-") for name in actual)
+    platform = {item["file"]: item for item in data["platform_artifacts"]}
+    assert platform == {
+        "google-chrome-stable_151.0.7922.173-1_amd64.deb": {
+            "file": "google-chrome-stable_151.0.7922.173-1_amd64.deb",
+            "package": "google-chrome-stable",
+            "version": "151.0.7922.173-1",
+            "architecture": "amd64",
+            "size": 140077524,
+            "sha256": "878e5ab495b8a694980fca61bc09b37e651ccedce2291c73434d16e48a2646fd",
+        }
+    }
 
 
 def test_runtime_input_materializer_accepts_only_hash_locked_regular_members(tmp_path: Path):
@@ -155,3 +166,65 @@ def test_release_build_workflow_is_manual_ci_gated_reproducible_and_non_publishi
     assert "publish_clientflow_release.py" not in source
     assert "secrets." not in source
     assert source.count("persist-credentials: false") == 3
+
+
+def test_runtime_input_transport_roundtrips_locked_platform_artifact(tmp_path: Path):
+    build_module = _load_module("build_transport_53a", ROOT / "scripts/build_clientflow_runtime_input_transport.py")
+    materialize_module = _load_module("materialize_53a", ROOT / "scripts/materialize_clientflow_runtime_inputs.py")
+
+    runtime_bytes = b"python-runtime"
+    wheel_bytes = b"pip-wheel"
+    chrome_bytes = b"exact-google-chrome-deb"
+    chrome_name = "google-chrome-stable_test_amd64.deb"
+    lock = {
+        "schema_version": 1,
+        "runtime_python": "3.13.14",
+        "architecture": "amd64",
+        "artifacts": [
+            {
+                "file": "python-runtime-amd64.tar",
+                "size": len(runtime_bytes),
+                "sha256": hashlib.sha256(runtime_bytes).hexdigest(),
+            },
+            {
+                "file": "pip.whl",
+                "size": len(wheel_bytes),
+                "sha256": hashlib.sha256(wheel_bytes).hexdigest(),
+            },
+        ],
+        "platform_artifacts": [
+            {
+                "file": chrome_name,
+                "package": "google-chrome-stable",
+                "version": "151.0.7922.173-1",
+                "architecture": "amd64",
+                "size": len(chrome_bytes),
+                "sha256": hashlib.sha256(chrome_bytes).hexdigest(),
+            }
+        ],
+    }
+    lock_path = tmp_path / "lock.json"
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    source = tmp_path / "source"
+    (source / "wheelhouse").mkdir(parents=True)
+    (source / "platform").mkdir()
+    (source / "python-runtime-amd64.tar").write_bytes(runtime_bytes)
+    (source / "wheelhouse/pip.whl").write_bytes(wheel_bytes)
+    (source / "platform" / chrome_name).write_bytes(chrome_bytes)
+
+    archive = tmp_path / "runtime-inputs.tar"
+    build_module.build_transport(source, archive, lock_path)
+    with tarfile.open(archive, mode="r:") as tf:
+        names = {member.name for member in tf.getmembers() if member.isfile()}
+    assert f"platform/{chrome_name}" in names
+
+    output = tmp_path / "materialized"
+    result = materialize_module.materialize(archive, output, lock_path)
+    assert result["platform_artifacts"] == [
+        {
+            "file": chrome_name,
+            "size": len(chrome_bytes),
+            "sha256": hashlib.sha256(chrome_bytes).hexdigest(),
+        }
+    ]
+    assert (output / "platform" / chrome_name).read_bytes() == chrome_bytes

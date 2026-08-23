@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Body, Request, Response
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import select
+from sqlalchemy.orm.attributes import set_committed_value
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 from ..db import get_session
@@ -14,6 +15,17 @@ from ..observability import log_safe_exception
 from ..lifecycle import ClientPurgeBlocked, prepare_client_for_permanent_delete
 from ..clientflow_deployments import active_deployment
 from ..client_presence import ClientPresence, load_client_presence, load_client_presences
+from ..display_control import (
+    active_display_control_command,
+    display_agent_supports_commands,
+    display_command_legacy_action,
+    display_read_projection,
+    get_display_desired_configuration,
+    latest_display_status,
+    lock_display_client,
+    queue_display_command,
+    set_display_desired_kiosk_url,
+)
 from ..terminal_v2_models import TerminalClient, TerminalCredential
 from ..remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
 from ..season_service import (
@@ -35,9 +47,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VALID_CLIENT_STATES = {"normal", "sleeping", "wakeup", "shutdown", "error", "updating", "rebooting"}
-BROWSER_REFRESH_DEFAULT_SECONDS = int(os.getenv("CLIENTFLOW_BROWSER_REFRESH_DEFAULT_SECONDS", "900"))
-BROWSER_REFRESH_MIN_SECONDS = int(os.getenv("CLIENTFLOW_BROWSER_REFRESH_MIN_SECONDS", "60"))
-BROWSER_REFRESH_MAX_SECONDS = int(os.getenv("CLIENTFLOW_BROWSER_REFRESH_MAX_SECONDS", "86400"))
 
 OS_UPDATE_STALE_SECONDS = int(os.getenv("CLIENTFLOW_OS_UPDATE_STALE_SECONDS", "3600"))
 UBUNTU_UPDATE_STATUSES = {
@@ -352,10 +361,6 @@ CLIENT_SELF_UPDATE_FIELDS = {
     "wifi_mac_address",
     "lan_ip_address",
     "lan_mac_address",
-    "chrome_status",
-    "chrome_last_updated",
-    "chrome_color",
-    "chrome_step",
     "pending_reboot",
     "pending_shutdown",
     "pending_chrome_action",
@@ -563,24 +568,6 @@ def _field_value(client, client_update, fields, name, default=None):
     return getattr(client, name, default)
 
 
-def _normalize_browser_refresh_interval(value):
-    """0 deaktiverer auto-refresh; ellers tillades kun 60s..86400s."""
-    if value in (None, ""):
-        return BROWSER_REFRESH_DEFAULT_SECONDS
-    try:
-        seconds = int(value)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Browser refresh-interval skal være et heltal i sekunder")
-    if seconds == 0:
-        return 0
-    if seconds < BROWSER_REFRESH_MIN_SECONDS or seconds > BROWSER_REFRESH_MAX_SECONDS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Browser refresh-interval skal være 0 eller mellem {BROWSER_REFRESH_MIN_SECONDS} og {BROWSER_REFRESH_MAX_SECONDS} sekunder",
-        )
-    return seconds
-
-
 def _normalize_client_name(value) -> str:
     name = str(value or "").strip()
     if not name:
@@ -684,20 +671,6 @@ def _queue_local_management_request(
     client.local_management_started_at = None
     client.local_management_finished_at = None
     client.local_management_error = None
-
-
-def _normalize_kiosk_url(value):
-    if value is None:
-        return None
-    url = str(value).strip()
-    if not url:
-        return None
-    lower = url.lower()
-    if not (lower.startswith("http://") or lower.startswith("https://")):
-        raise HTTPException(status_code=400, detail="Kiosk URL skal starte med http:// eller https://")
-    if len(url) > 2048:
-        raise HTTPException(status_code=400, detail="Kiosk URL er for lang")
-    return url
 
 
 def _validate_display_resolution_update(client: Client, client_update: ClientUpdate, fields: set[str]) -> None:
@@ -815,7 +788,7 @@ OPERATOR_USER_ROLES = {"bruger"}
 USER_CHROME_COMMANDS = {"start", "stop", "reset_browser", "sleep", "wakeup"}
 ADMIN_CHROME_COMMANDS = USER_CHROME_COMMANDS | {"reboot"}
 ADMIN_UPDATE_FIELDS = {
-    "locality", "kiosk_url", "browser_refresh_interval_sec",
+    "locality", "kiosk_url",
     "pending_reboot",
     "display_resolution_mode", "display_resolution_width", "display_resolution_height",
     "display_resolution_refresh_rate", "display_resolution_output", "display_resolution_action",
@@ -1015,16 +988,22 @@ def _derive_network_status(client: Client) -> Dict[str, Any]:
 
 
 def _set_runtime_read_attr(obj, key: str, value) -> None:
-    """Attach response-only fields to a SQLModel instance."""
+    """Attach response-only values without creating a persistence write-path.
+
+    SQLAlchemy-mapped attributes must never be assigned with ordinary
+    ``setattr`` here: doing so marks the ORM instance dirty and a later query
+    may autoflush a read projection back into legacy Client columns.  Treat
+    mapped values as already-committed in-memory response state instead.
+    Non-mapped response-only fields stay in ``__dict__``.
+    """
+    mapper = getattr(type(obj), "__mapper__", None)
+    if mapper is not None and key in mapper.attrs:
+        set_committed_value(obj, key, value)
+        return
     try:
-        setattr(obj, key, value)
-    except ValueError as exc:
-        if "has no field" not in str(exc):
-            raise
-        try:
-            obj.__dict__[key] = value
-        except Exception:
-            object.__setattr__(obj, key, value)
+        obj.__dict__[key] = value
+    except Exception:
+        object.__setattr__(obj, key, value)
 
 
 def _apply_network_status_for_read(client: Client) -> None:
@@ -1060,12 +1039,47 @@ def _prepare_client_read(client: Client, presence: ClientPresence) -> Client:
     return client
 
 
+_LEGACY_DISPLAY_PENDING_ACTIONS = {"start", "stop", "restart", "sleep", "wakeup", "reset_browser"}
+
+
+def _apply_display_projection_for_read(session, client: Client) -> None:
+    """Project canonical Display state onto legacy response field names only.
+
+    System/OS steps remain temporarily visible through ``chrome_step`` because
+    the current frontend still consumes that legacy multiplexed field.  Browser
+    status/color/running and kiosk URL always come from canonical Display state.
+    """
+    if client.id is None:
+        return
+    projection = display_read_projection(session, int(client.id))
+    legacy_step = str(getattr(client, "chrome_step", None) or "").strip().lower()
+    legacy_pending = _normalize_chrome_action_name(getattr(client, "pending_chrome_action", None)) or "none"
+
+    _set_runtime_read_attr(client, "kiosk_url", projection["kiosk_url"])
+    _set_runtime_read_attr(client, "chrome_status", projection["chrome_status"])
+    _set_runtime_read_attr(client, "chrome_color", projection["chrome_color"])
+    _set_runtime_read_attr(client, "chrome_last_updated", projection["chrome_last_updated"])
+    _set_runtime_read_attr(client, "chrome_running", projection["chrome_running"])
+
+    if not (legacy_step in SYSTEM_TERMINAL_STEPS or legacy_step.startswith("os_")):
+        _set_runtime_read_attr(client, "chrome_step", projection["chrome_step"])
+
+    display_pending = str(projection["pending_chrome_action"] or "none")
+    if display_pending != "none":
+        _set_runtime_read_attr(client, "pending_chrome_action", display_pending)
+        _set_runtime_read_attr(client, "pending_chrome_action_source", projection["pending_chrome_action_source"])
+    elif legacy_pending in _LEGACY_DISPLAY_PENDING_ACTIONS:
+        _set_runtime_read_attr(client, "pending_chrome_action", "none")
+        _set_runtime_read_attr(client, "pending_chrome_action_source", None)
+
+
 def _prepare_clients_read(session, clients: List[Client]) -> List[Client]:
     presences = load_client_presences(session, clients)
     for client in clients:
         presence = presences.get(int(client.id)) if client.id is not None else None
         if presence is None:
             presence = load_client_presence(session, client)
+        _apply_display_projection_for_read(session, client)
         _prepare_client_read(client, presence)
     return clients
 
@@ -1317,6 +1331,7 @@ def get_client(id: int, include_deleted: bool = False, session=Depends(get_sessi
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client, include_deleted=include_deleted)
     presence = load_client_presence(session, client)
+    _apply_display_projection_for_read(session, client)
     return _prepare_client_read(client, presence)
 
 
@@ -1457,6 +1472,7 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
     presence = load_client_presence(session, client)
     _apply_status_runtime_snapshot(client, presence)
     _normalize_runtime_state(client, online=presence.is_online)
+    _apply_display_projection_for_read(session, client)
     stale_boot_status = _looks_like_boot_recovered_stale_step(client, online=presence.is_online)
 
     # FIX: Læser chrome_step fra database, men filtrerer gamle system-steps fra
@@ -1485,7 +1501,7 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "chrome_last_updated": client.chrome_last_updated,
         "chrome_color": chrome_color_value,
         "chrome_step": chrome_step_value,
-        "chrome_running": _infer_chrome_running_from_status(chrome_status_value, chrome_step_value),
+        "chrome_running": getattr(client, "chrome_running", None),
         **_derive_network_status(client),
         "step": step_obj,
         "uptime": client.uptime,
@@ -1515,7 +1531,6 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "service_selfupdate_status": getattr(client, "service_selfupdate_status", None),
         "service_ubuntu_update_status": getattr(client, "service_ubuntu_update_status", None),
         "ubuntu_updates_available": getattr(client, "ubuntu_updates_available", 0) or 0,
-        "browser_refresh_interval_sec": _normalize_browser_refresh_interval(getattr(client, "browser_refresh_interval_sec", None)),
         "diagnostics_updated_at": client.diagnostics_updated_at,
         "system_timezone": client.system_timezone,
         "ntp_enabled": client.ntp_enabled,
@@ -1575,6 +1590,17 @@ def update_chrome_status(
     _require_client_status_write_access(user, client)
     step_name = str(data.get("chrome_step") or "").strip().lower()
     step_time = _parse_iso_datetime(data.get("chrome_step_timestamp"))
+    is_system_step = step_name in SYSTEM_TERMINAL_STEPS or step_name.startswith("os_")
+    display_status_fields = {"chrome_status", "chrome_color", "chrome_step", "chrome_last_updated"} & set(data)
+    if display_status_fields and not is_system_step:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Legacy browserstatus-write er fjernet. Display observed state rapporteres via "
+                "ClientDomainStatus(domain='display')."
+            ),
+        )
+
     stale_step_from_previous_boot = (
         step_name in SYSTEM_TERMINAL_STEPS
         and step_time is not None
@@ -1671,16 +1697,32 @@ def set_chrome_command(
 
     action = _normalize_chrome_action_name(data.get("action"))
     source = data.get("source")
-
     if action == "clientflow_update":
         raise HTTPException(
             status_code=410,
             detail="Legacy clientflow_update er fjernet. Brug canonical ClientFlow deployment-endpointet.",
         )
-
     _require_client_operator_access(user, client, action)
-    if action not in (None, "none"):
-        _require_no_active_clientflow_deployment(session, id)
+    if action not in USER_CHROME_COMMANDS:
+        raise HTTPException(
+            status_code=400,
+            detail="Browser/display-handlingen er ikke en canonical Display-kommando",
+        )
+
+    _require_no_active_clientflow_deployment(session, id)
+    _require_client_online(session, client)
+    lock_display_client(session, id)
+
+    status = latest_display_status(session, id)
+    if status is None or not display_agent_supports_commands(status.agent_version):
+        raise HTTPException(
+            status_code=409,
+            detail="Display-agenten understøtter endnu ikke canonical Display-kommandoer (kræver ClientFlow 1.3.5+)",
+        )
+
+    desired = get_display_desired_configuration(session, id)
+    if action in {"start", "reset_browser"} and (desired is None or not desired.kiosk_url):
+        raise HTTPException(status_code=409, detail="Kiosk URL mangler i canonical Display-konfiguration")
 
     normalized_source = None
     if source is not None:
@@ -1694,84 +1736,60 @@ def set_chrome_command(
             )
         normalized_source = src_lower
 
-    current_pca = _normalize_chrome_action_name(
-        getattr(client.pending_chrome_action, "value", None) or str(client.pending_chrome_action or "none")
-    ) or "none"
-
-    _require_client_online(session, client)
-
-    state_guard_result = _validate_chrome_command_state(client, action, current_pca)
-    if state_guard_result is not None:
-        principal_type, principal_id, principal_role = _principal_log_context(user)
-        logger.info(
-            "client_action_guard client_id=%s action=%s current=%s state=%s principal_type=%s principal_id=%s role=%s",
-            id,
-            action,
-            current_pca,
-            _client_state_value(client),
-            principal_type,
-            principal_id,
-            principal_role,
-        )
-        return state_guard_result
-
-    if (
-        action in BLOCKING_ACTIONS
-        and current_pca in BLOCKING_ACTIONS
-        and current_pca != action
-    ):
+    active = active_display_control_command(session, id)
+    active_action = display_command_legacy_action(active)
+    if active is not None:
+        if active_action == action:
+            return {
+                "ok": True,
+                "already_requested": True,
+                "pending_chrome_action": active_action,
+                "pending_chrome_action_source": "display_command",
+            }
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"Handling '{current_pca}' er allerede igang — "
-                f"vent til klienten har fuldført den, før du sender '{action}'"
-            ),
+            detail=f"Display-handling '{active_action}' er allerede i gang",
         )
 
-    if action in BLOCKING_ACTIONS and current_pca == action:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Handling '{action}' er allerede igang på klienten",
-        )
-
-    try:
-        chrome_action = ChromeAction(action)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Ugyldig action '{action}'")
-
-    old_pca = _chrome_action_value(client.pending_chrome_action) or "none"
-    old_source = getattr(client, "pending_chrome_action_source", None)
-
-    client.pending_chrome_action = chrome_action
-
-    if chrome_action == ChromeAction.NONE:
-        client.pending_chrome_action_source = None
-    elif normalized_source is None:
-        # Undgå at en gammel source="actionbutton" hænger ved, hvis en anden
-        # kilde sætter en ny action uden source.
-        client.pending_chrome_action_source = None
+    command_type: str
+    payload: dict[str, Any]
+    if action == "start":
+        command_type, payload = "start_browser", {}
+    elif action == "stop":
+        command_type, payload = "stop_browser", {}
+    elif action == "reset_browser":
+        command_type, payload = "reset_browser", {}
+    elif action == "sleep":
+        command_type, payload = "set_display_power", {"state": "off"}
     else:
-        client.pending_chrome_action_source = normalized_source
+        command_type, payload = "set_display_power", {"state": "on"}
 
+    command = queue_display_command(
+        session,
+        client_id=id,
+        command_type=command_type,
+        payload=payload,
+        requested_by_user_id=getattr(user, "id", None),
+        ttl_seconds=300,
+        idempotency_prefix=f"control-room-{action}",
+    )
     principal_type, principal_id, principal_role = _principal_log_context(user)
     logger.info(
-        "client_action_updated client_id=%s old_action=%s old_source=%s new_action=%s new_source=%s principal_type=%s principal_id=%s role=%s",
+        "display_command_queued client_id=%s command_id=%s action=%s source=%s principal_type=%s principal_id=%s role=%s",
         id,
-        old_pca,
-        old_source,
-        client.pending_chrome_action.value if client.pending_chrome_action else None,
-        getattr(client, "pending_chrome_action_source", None),
+        command.id,
+        action,
+        normalized_source,
         principal_type,
         principal_id,
         principal_role,
     )
-    session.add(client)
     session.commit()
-    session.refresh(client)
     return {
         "ok": True,
-        "pending_chrome_action": client.pending_chrome_action.value,
-        "pending_chrome_action_source": getattr(client, "pending_chrome_action_source", None),
+        "pending_chrome_action": action,
+        "pending_chrome_action_source": normalized_source or "display_command",
+        "command_id": command.id,
     }
 
 
@@ -1781,7 +1799,13 @@ def get_chrome_command(id: int, session=Depends(get_session), user=Depends(get_c
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client)
-    action = client.pending_chrome_action.value if client.pending_chrome_action else None
+
+    active = active_display_control_command(session, id)
+    if active is not None:
+        return {"action": display_command_legacy_action(active), "source": "display_command"}
+
+    # Preserve non-Display legacy actions until their owning domains are audited.
+    action = _normalize_chrome_action_name(getattr(client, "pending_chrome_action", None)) or "none"
     if action == "clientflow_update":
         client.pending_chrome_action = ChromeAction.NONE
         client.pending_chrome_action_source = None
@@ -1790,11 +1814,11 @@ def get_chrome_command(id: int, session=Depends(get_session), user=Depends(get_c
         session.add(client)
         session.commit()
         action = "none"
-    source = None if action in (None, "none") else getattr(client, "pending_chrome_action_source", None)
-    return {
-        "action": action,
-        "source": source,
-    }
+    elif action in _LEGACY_DISPLAY_PENDING_ACTIONS:
+        # Display actions are no longer authoritative through Client.* fields.
+        action = "none"
+    source = None if action == "none" else getattr(client, "pending_chrome_action_source", None)
+    return {"action": action, "source": source}
 
 
 def _os_update_is_stale(client: Client) -> bool:
@@ -1966,7 +1990,14 @@ async def create_client(
     user=Depends(get_current_admin_user),
 ):
     create_fields = set(client_in.model_fields_set)
-    if create_fields & LEGACY_CLIENTFLOW_UPDATE_FIELDS or _normalize_chrome_action_name(getattr(client_in, "pending_chrome_action", None)) == "clientflow_update":
+    _reject_legacy_display_write_fields(create_fields)
+    create_pending_action = _normalize_chrome_action_name(getattr(client_in, "pending_chrome_action", None))
+    if create_pending_action in _LEGACY_DISPLAY_PENDING_ACTIONS:
+        raise HTTPException(
+            status_code=410,
+            detail="Legacy pending Chrome/Display-action må ikke oprettes. Brug canonical Display-command efter enrollment.",
+        )
+    if create_fields & LEGACY_CLIENTFLOW_UPDATE_FIELDS or create_pending_action == "clientflow_update":
         raise HTTPException(
             status_code=410,
             detail="Legacy ClientFlow update-state må ikke oprettes. Brug canonical ClientFlow deployment-endpointet.",
@@ -1992,8 +2023,6 @@ async def create_client(
         restored_at=None,
         restored_by_user_id=None,
         sort_order=client_in.sort_order,
-        kiosk_url=getattr(client_in, "kiosk_url", None),
-        browser_refresh_interval_sec=_normalize_browser_refresh_interval(getattr(client_in, "browser_refresh_interval_sec", None)),
         ubuntu_version=getattr(client_in, "ubuntu_version", None),
         uptime=getattr(client_in, "uptime", None),
         chrome_status=getattr(client_in, "chrome_status", "unknown"),
@@ -2067,6 +2096,13 @@ async def create_client(
     )
     session.add(client)
     session.flush()
+    if "kiosk_url" in create_fields and getattr(client_in, "kiosk_url", None) not in (None, ""):
+        set_display_desired_kiosk_url(
+            session,
+            client_id=int(client.id),
+            kiosk_url=client_in.kiosk_url,
+            updated_by_user_id=getattr(user, "id", None),
+        )
     add_audit_log(
         session,
         action="client_created",
@@ -2080,11 +2116,41 @@ async def create_client(
     )
     session.commit()
     session.refresh(client)
+    _apply_display_projection_for_read(session, client)
     return _prepare_client_read(client, load_client_presence(session, client))
+
+
+LEGACY_DISPLAY_STATUS_WRITE_FIELDS = {"chrome_status", "chrome_color", "chrome_step", "chrome_last_updated"}
+
+
+def _reject_legacy_display_write_fields(fields: set[str]) -> None:
+    forbidden = sorted(fields & LEGACY_DISPLAY_STATUS_WRITE_FIELDS)
+    if forbidden:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Legacy Chrome/Display-statusfelter er read-only projektion fra canonical Display-domain. "
+                "Rapportér Display observed state via ClientDomainStatus(domain='display')."
+            ),
+        )
 
 
 def _authorize_client_update_fields(user, client: Client, client_update: ClientUpdate, fields: set[str]) -> None:
     """Validate exactly which patch fields the authenticated principal may send."""
+    legacy_status_fields = fields & LEGACY_DISPLAY_STATUS_WRITE_FIELDS
+    if legacy_status_fields:
+        legacy_step = str(getattr(client_update, "chrome_step", None) or "").strip().lower()
+        is_system_compat_report = principal_is_client(user) and (
+            legacy_step in SYSTEM_TERMINAL_STEPS or legacy_step.startswith("os_")
+        )
+        if not is_system_compat_report:
+            _reject_legacy_display_write_fields(fields)
+    pending_display_action = _normalize_chrome_action_name(getattr(client_update, "pending_chrome_action", None))
+    if "pending_chrome_action" in fields and pending_display_action in _LEGACY_DISPLAY_PENDING_ACTIONS:
+        raise HTTPException(
+            status_code=410,
+            detail="Legacy pending Chrome/Display-action er fjernet. Brug canonical /chrome-command Display-endpointet.",
+        )
     legacy_fields = sorted(fields & LEGACY_CLIENTFLOW_UPDATE_FIELDS)
     if legacy_fields:
         raise HTTPException(
@@ -2174,9 +2240,13 @@ async def update_client(
     if "machine_id" in fields: client.machine_id = client_update.machine_id
     if "locality" in fields: client.locality = client_update.locality
     if "sort_order" in fields: client.sort_order = client_update.sort_order
-    if "kiosk_url" in fields: client.kiosk_url = _normalize_kiosk_url(client_update.kiosk_url)
-    if "browser_refresh_interval_sec" in fields:
-        client.browser_refresh_interval_sec = _normalize_browser_refresh_interval(client_update.browser_refresh_interval_sec)
+    if "kiosk_url" in fields:
+        set_display_desired_kiosk_url(
+            session,
+            client_id=id,
+            kiosk_url=client_update.kiosk_url,
+            updated_by_user_id=getattr(user, "id", None),
+        )
     if "ubuntu_version" in fields: client.ubuntu_version = client_update.ubuntu_version
     if "uptime" in fields: client.uptime = client_update.uptime
     if "wifi_ip_address" in fields: client.wifi_ip_address = client_update.wifi_ip_address
@@ -2346,6 +2416,7 @@ async def update_client(
     session.add(client)
     session.commit()
     session.refresh(client)
+    _apply_display_projection_for_read(session, client)
     return _prepare_client_read(client, load_client_presence(session, client))
 
 
@@ -2371,10 +2442,15 @@ async def update_kiosk_url(
     if "kiosk_url" not in data:
         raise HTTPException(status_code=400, detail="Missing kiosk_url")
 
-    client.kiosk_url = _normalize_kiosk_url(data.get("kiosk_url"))
-    session.add(client)
+    set_display_desired_kiosk_url(
+        session,
+        client_id=id,
+        kiosk_url=data.get("kiosk_url"),
+        updated_by_user_id=getattr(user, "id", None),
+    )
     session.commit()
     session.refresh(client)
+    _apply_display_projection_for_read(session, client)
     return _prepare_client_read(client, load_client_presence(session, client))
 
 
@@ -2529,6 +2605,7 @@ async def change_client_organization(
     )
     session.commit()
     session.refresh(client)
+    _apply_display_projection_for_read(session, client)
     _prepare_client_read(client, load_client_presence(session, client))
 
     return {
@@ -2642,6 +2719,7 @@ async def approve_client(
     )
     session.commit()
     session.refresh(client)
+    _apply_display_projection_for_read(session, client)
     return _prepare_client_read(client, load_client_presence(session, client))
 
 
@@ -2841,6 +2919,7 @@ async def restore_client(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     if not _client_is_deleted(client):
+        _apply_display_projection_for_read(session, client)
         return _prepare_client_read(client, load_client_presence(session, client))
 
     restored_status = client.deleted_previous_status or "approved"
@@ -2869,6 +2948,7 @@ async def restore_client(
     )
     session.commit()
     session.refresh(client)
+    _apply_display_projection_for_read(session, client)
     return _prepare_client_read(client, load_client_presence(session, client))
 
 

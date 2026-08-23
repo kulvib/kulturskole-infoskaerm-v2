@@ -21,6 +21,7 @@ CLIENTFLOW_ENTRYPOINTS = (
     "clientflow-display-agent",
     "clientflow-display-runtime",
     "clientflow-display-power-broker",
+    "clientflow-display-platform-prepare",
     "clientflow-livestream-agent",
     "clientflow-livestream-broker",
     "clientflow-livestream-producer",

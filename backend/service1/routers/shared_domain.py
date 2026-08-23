@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from ..db import engine
+from ..display_control import reconcile_display_configuration
 from ..shared_domain import (
     claim_shared_command,
     complete_shared_command,
@@ -66,6 +67,13 @@ def _status(domain: str, client_id: int, body: StatusBody, authorization: str | 
             agent_version=body.agent_version,
             boot_id=body.boot_id,
         )
+        if domain == "display":
+            reconcile_display_configuration(
+                session,
+                client_id=client_id,
+                agent_version=body.agent_version,
+                status_payload=body.status_payload,
+            )
         session.commit()
         return {
             "ok": True,
