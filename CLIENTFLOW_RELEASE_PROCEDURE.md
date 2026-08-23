@@ -262,11 +262,13 @@ Before the first claim request, the installer may persist only the minimum crash
 
 If the install command is interrupted after local install-state exists, rerun against the **same** bundle, backend and kiosk user. If the original one-time code/authorization are no longer available, those two options may be omitted only for recovery: the backend will resume without them **only if** the first claim had already committed a receipt whose resume-proof commitment matches the same install ID and exact release binding, while the original system/update keys still match. If consumption never committed, the retry is rejected instead of silently authorizing a different release.
 
-The fresh installer provisions the canonical domain/update credentials, immutable release files and rendered systemd definitions. It stops at `pending_manual_activation`.
+The fresh installer provisions the canonical domain/update credentials, immutable release files and rendered systemd definitions. It stops at `pending_manual_activation`. At this point the newly claimed client is still backend-pending. A superadmin must approve that exact client through the existing canonical backend approval flow before local activation is attempted.
 
 ## 7. Manual activation
 
-Activation is explicit and uses the release identity recovered from the same pinned approved bundle in section 5:
+Activation is explicit and uses the release identity recovered from the same pinned approved bundle in section 5. Before any local runtime mutation, first activation proves that the already-provisioned `status` credential is active by requesting its canonical backend token. Pending, rejected, malformed or unavailable approval proof fails closed before `/opt/clientflow/active`, managed systemd definitions or runtime services are changed. This is a client-lifecycle approval gate, not a new release authority.
+
+After the exact client has been approved in the backend, run:
 
 ```bash
 sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \

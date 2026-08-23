@@ -13,7 +13,7 @@ import stat
 import subprocess
 import tempfile
 import time
-from typing import Any
+from typing import Any, Callable
 
 from .bundle import extract_verified_payload, open_verified_bundle
 from .constants import INSTALL_MODE_UPDATE
@@ -829,6 +829,7 @@ def activate_release(
     *,
     expected_release_approval_reference: str,
     layout: Layout = Layout(),
+    first_activation_authorizer: Callable[[Layout], None] | None = None,
 ) -> dict[str, Any]:
     release_id = _validate_release_id(release_id)
     with TransactionLock(layout):
@@ -839,6 +840,17 @@ def activate_release(
             release_id,
             expected_approval_reference=expected_release_approval_reference,
         )
+        if _read_active_release_id(layout) is None:
+            if first_activation_authorizer is None:
+                raise TransactionError(
+                    "Fresh first activation kræver et backend-approved client proof før lokal mutation"
+                )
+            try:
+                first_activation_authorizer(layout)
+            except Exception as exc:
+                raise TransactionError(
+                    "Fresh first activation kræver et backend-approved client proof før lokal mutation"
+                ) from exc
         return _activate_release(layout, state, release_id, canonical_reference)
 
 

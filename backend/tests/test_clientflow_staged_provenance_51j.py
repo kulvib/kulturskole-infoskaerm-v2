@@ -122,6 +122,7 @@ def test_51j_activation_rejects_free_text_approval_and_uses_artifact_approval(tm
         RELEASE_ID,
         expected_release_approval_reference=APPROVAL,
         layout=layout,
+        first_activation_authorizer=lambda _layout: None,
     )
     assert result["status"] == "active"
     assert seen == [(RELEASE_ID, APPROVAL)]

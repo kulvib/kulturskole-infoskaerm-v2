@@ -74,3 +74,15 @@ def test_fresh_install_procedure_documents_fail_closed_preclaim_state_boundary()
     assert "HTTP 4xx rejection" in install
     assert "restores the original clean ClientFlow filesystem state" in install
     assert "HTTP 5xx retain the minimum material" in install
+
+
+def test_manual_activation_requires_existing_backend_client_approval_before_local_mutation():
+    source = PROCEDURE.read_text(encoding="utf-8")
+    install = _section(source, 6)
+    activation = _section(source, 7)
+
+    assert "backend-pending" in install
+    assert "superadmin must approve that exact client" in install.lower()
+    assert "status` credential" in activation
+    assert "fails closed before `/opt/clientflow/active`" in activation
+    assert "not a new release authority" in activation

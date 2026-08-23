@@ -1,8 +1,4 @@
 {
   "schema_version": 1,
-  "capture_backend": "ffmpeg-x11",
-  "display": ":0",
-  "xauthority": "/run/user/1000/gdm/Xauthority",
-  "xdg_runtime_dir": "/run/user/1000",
-  "dbus_session_bus_address": "unix:path=/run/user/1000/bus"
+  "capture_backend": "mutter-pipewire"
 }
