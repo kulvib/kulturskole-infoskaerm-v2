@@ -24,18 +24,20 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     release_input = json.loads(RELEASE_INPUT_PATH.read_text(encoding="utf-8"))
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    assert version == "1.3.8"
-    assert release_input["release_sequence"] == 1209
+    # Source/build identity advances before publication. The runtime catalog
+    # must continue selecting the last physically approved/published release.
+    assert version == "1.3.9"
+    assert release_input["release_sequence"] == 1210
     source_release_id = f"clientflow-{version}-seq-{release_input['release_sequence']}"
-    assert source_release_id == "clientflow-1.3.8-seq-1209"
+    assert source_release_id == "clientflow-1.3.9-seq-1210"
 
-    # Source/build identity may move ahead while a candidate is built, approved
-    # and published. After the separate catalog-promotion gate, the selector is
-    # allowed to align with source, but it must never lead source/build identity.
+    # Catalog promotion remains a separate gate and therefore stays at the
+    # physically published 1.3.8/1209 authority until 1.3.9/1210 is approved
+    # and materialized in the immutable artifact store.
     assert catalog["catalog_sequence"] == 1209
     assert catalog["latest_stable"] == "1.3.8"
     assert catalog["default_install_version"] == "1.3.8"
-    assert catalog["catalog_sequence"] <= release_input["release_sequence"]
+    assert catalog["catalog_sequence"] < release_input["release_sequence"]
     assert len(catalog["releases"]) == 1
 
     selected = catalog["releases"][0]
@@ -47,14 +49,8 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
 
     selected_tuple = tuple(int(part) for part in selected["version"].split("."))
     source_tuple = tuple(int(part) for part in version.split("."))
-    assert selected_tuple <= source_tuple
-    assert selected["release_sequence"] <= release_input["release_sequence"]
-
-    # After explicit promotion, runtime selection may align exactly with the
-    # already-approved and immutably published source/build identity.
-    assert selected_tuple == source_tuple
-    assert selected["release_sequence"] == release_input["release_sequence"]
-    assert selected["release_id"] == source_release_id
+    assert selected_tuple < source_tuple
+    assert selected["release_sequence"] < release_input["release_sequence"]
 
 
 def test_51f_138_update_keeps_131_as_minimum_proven_bootstrap() -> None:

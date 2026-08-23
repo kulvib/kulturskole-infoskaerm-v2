@@ -63,3 +63,14 @@ def test_fresh_install_consuming_command_carries_same_handoff_authorization():
     assert '--fresh-install-authorization "$FRESH_INSTALL_AUTHORIZATION"' in install
     assert "must not be written into ClientFlow install-state" in install
     assert "receipt" in install.lower()
+
+
+def test_fresh_install_procedure_documents_fail_closed_preclaim_state_boundary():
+    source = PROCEDURE.read_text(encoding="utf-8")
+    install = _section(source, 6)
+
+    assert "minimum crash-resume material" in install
+    assert "Release staging, managed systemd definitions, sysusers and tmpfiles are deferred until the claim succeeds" in install
+    assert "HTTP 4xx rejection" in install
+    assert "restores the original clean ClientFlow filesystem state" in install
+    assert "HTTP 5xx retain the minimum material" in install

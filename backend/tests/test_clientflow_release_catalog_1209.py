@@ -63,7 +63,7 @@ def test_catalog_1209_rejects_update_from_130_and_keeps_131_as_minimum_bootstrap
         )
 
 
-def test_catalog_1209_matches_source_only_after_explicit_promotion_without_duplicating_artifact_authority() -> None:
+def test_catalog_1209_remains_runtime_authority_while_source_advances_to_1210() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -72,18 +72,19 @@ def test_catalog_1209_matches_source_only_after_explicit_promotion_without_dupli
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
 
-    assert source_version == "1.3.8"
-    assert release_input["release_sequence"] == 1209
+    assert source_version == "1.3.9"
+    assert release_input["release_sequence"] == 1210
 
-    # Publication and independent 51M re-verification happen before this
-    # separate selector change. Catalog policy may now align with source/build,
-    # while exact approved byte identity remains authority of the 51M artifact.
+    # Source/build may advance while the selector remains pinned to the last
+    # approved and immutably published release. Exact approved byte identity
+    # remains authority of the 51M artifact, not the source tree or catalog.
     assert data["catalog_sequence"] == 1209
     assert data["latest_stable"] == "1.3.8"
     assert data["default_install_version"] == "1.3.8"
-    assert release["version"] == source_version
-    assert release["release_sequence"] == release_input["release_sequence"]
+    assert release["version"] == "1.3.8"
+    assert release["release_sequence"] == 1209
     assert release["release_id"] == "clientflow-1.3.8-seq-1209"
+    assert data["catalog_sequence"] < release_input["release_sequence"]
 
     for field in (
         "bundle_sha256",

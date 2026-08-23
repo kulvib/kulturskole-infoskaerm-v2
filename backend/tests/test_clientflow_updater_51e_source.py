@@ -40,7 +40,7 @@ def test_51e_installer_wires_updater_only_after_enrollment_and_keeps_target_inac
     cli = read("client/release/lib/clientflow_release/cli.py")
     transaction = read("client/release/lib/clientflow_release/transaction.py")
 
-    complete_index = cli.index("complete(backend_url=backend_url")
+    complete_index = cli.index("complete(\n")
     updater_index = cli.index("install_stable_updater_host(release_id, layout=layout)", complete_index)
     final_index = cli.index('"status": "pending_manual_activation"', updater_index)
     assert complete_index < updater_index < final_index

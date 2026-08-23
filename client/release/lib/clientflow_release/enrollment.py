@@ -24,6 +24,13 @@ class EnrollmentError(RuntimeError):
     pass
 
 
+class EnrollmentHTTPError(EnrollmentError):
+    def __init__(self, status_code: int, detail: str) -> None:
+        self.status_code = int(status_code)
+        self.detail = str(detail)
+        super().__init__(f"Enrollment blev afvist med HTTP {self.status_code}: {self.detail}")
+
+
 _RELEASE_ID_RE = re.compile(r"^clientflow-(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-seq-([1-9]\d*)$")
 _VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -122,7 +129,7 @@ def _post_json(url: str, payload: dict[str, Any], *, ca_file: Path | None, timeo
                 raise EnrollmentError("Enrollment-responsen er for stor")
     except urllib.error.HTTPError as exc:
         detail = exc.read(4096).decode("utf-8", errors="replace")
-        raise EnrollmentError(f"Enrollment blev afvist med HTTP {exc.code}: {detail}") from exc
+        raise EnrollmentHTTPError(exc.code, detail) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise EnrollmentError(f"Enrollment-transport fejlede: {exc}") from exc
     try:
