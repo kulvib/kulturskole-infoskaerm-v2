@@ -268,7 +268,7 @@ def _put_status(http: _ASGITestClient, domain: str, token: str, *, boot_id: str)
         headers={"Authorization": f"Bearer {token}"},
         json={
             "schema_version": 1,
-            "observed_state": "ready",
+            "observed_state": "online",
             "status_payload": {"integration": True},
             "agent_version": "1.3.9",
             "boot_id": boot_id,
@@ -299,7 +299,7 @@ def test_pending_approval_runtime_protocol_presence_reconnect_and_command_roundt
     for domain in ("status", "display", "system"):
         response = _put_status(http, domain, tokens[domain], boot_id="boot-a")
         assert response.status_code == 200, response.text
-        assert response.json()["observed_state"] == "ready"
+        assert response.json()["observed_state"] == "online"
 
     presence = http.get(f"/api/clients/{CLIENT_ID}/presence")
     assert presence.status_code == 200, presence.text
@@ -372,7 +372,7 @@ def test_pending_approval_runtime_protocol_presence_reconnect_and_command_roundt
                     ClientDomainStatus.domain == domain,
                 )
             ).one()
-            assert status.observed_state == "ready"
+            assert status.observed_state == "online"
         commands = session.exec(
             select(ClientCommand).where(ClientCommand.client_id == CLIENT_ID)
         ).all()
