@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import select
 from sqlalchemy.orm.attributes import set_committed_value
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from ..db import get_session
 from ..audit import add_audit_log
 from ..models import Client, ClientRead, ClientPresenceRead, ClientCreate, ClientUpdate, CalendarMarking, ChromeAction, Organization
@@ -26,6 +26,16 @@ from ..display_control import (
     queue_display_command,
     set_display_desired_kiosk_url,
 )
+from ..system_control import (
+    active_system_command,
+    build_encrypted_password_payload,
+    local_management_projection,
+    lock_system_client,
+    os_update_projection,
+    power_projection,
+    queue_system_command,
+    system_status_has_broker,
+)
 from ..terminal_v2_models import TerminalClient, TerminalCredential
 from ..remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
 from ..season_service import (
@@ -38,9 +48,9 @@ from ..season_service import (
     ensure_client_calendar,
     validate_supported_season,
 )
-import os
 import secrets
 import re
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -48,17 +58,6 @@ router = APIRouter()
 
 VALID_CLIENT_STATES = {"normal", "sleeping", "wakeup", "shutdown", "error", "updating", "rebooting"}
 
-OS_UPDATE_STALE_SECONDS = int(os.getenv("CLIENTFLOW_OS_UPDATE_STALE_SECONDS", "3600"))
-UBUNTU_UPDATE_STATUSES = {
-    "ready", "requested", "starting", "checking", "installing", "cleanup",
-    "rebooting", "success", "up_to_date", "error",
-}
-UBUNTU_UPDATE_FIELDS = {
-    "ubuntu_update_status", "ubuntu_update_step", "ubuntu_update_message",
-    "ubuntu_update_error", "ubuntu_update_started_at", "ubuntu_update_updated_at",
-    "ubuntu_update_finished_at", "ubuntu_update_progress",
-    "ubuntu_update_package_count", "ubuntu_update_reboot_required",
-}
 LEGACY_CLIENTFLOW_UPDATE_FIELDS = {
     "client_update_status",
     "client_update_message",
@@ -159,10 +158,23 @@ VALID_DISPLAY_RESOLUTION_MODES = {"auto", "fixed"}
 VALID_DISPLAY_ROTATIONS = {"normal", "left", "right", "inverted"}
 VALID_DISPLAY_STATUSES = {"unknown", "pending", "detected", "applying", "applied", "error"}
 
-LOCAL_MANAGEMENT_ACTIONS = {"cfadmin_password", "hostname"}
-VALID_LOCAL_MANAGEMENT_STATUSES = {"ready", "pending", "running", "success", "error"}
-LOCAL_MANAGEMENT_BUSY_STATUSES = {"pending", "running"}
-LOCAL_MANAGEMENT_TERMINAL_STATUSES = {"ready", "success", "error"}
+SYSTEM_OWNED_STATES = {"rebooting", "shutdown", "updating"}
+
+LEGACY_SYSTEM_COMMAND_FIELDS = {
+    "pending_reboot",
+    "pending_shutdown",
+    "pending_os_update",
+    "ubuntu_update_status",
+    "ubuntu_update_step",
+    "ubuntu_update_message",
+    "ubuntu_update_error",
+    "ubuntu_update_started_at",
+    "ubuntu_update_updated_at",
+    "ubuntu_update_finished_at",
+    "ubuntu_update_progress",
+    "ubuntu_update_package_count",
+    "ubuntu_update_reboot_required",
+}
 
 
 class LocalCfadminPasswordRequest(BaseModel):
@@ -324,33 +336,6 @@ def _apply_time_integrity_report(client: Client, fields: set[str]) -> None:
     client.time_sync_message = " · ".join(reasons) if reasons else "Tidszone, NTP og systemur er korrekte"
 
 
-def _principal_power_source(principal) -> str:
-    try:
-        if principal_is_client(principal):
-            return "client"
-    except Exception:
-        pass
-    role = str(getattr(principal, "role", "") or "").strip().lower()
-    return "backend" if role else "unknown"
-
-
-def _normalize_power_event_value(value) -> Optional[str]:
-    if value is None:
-        return None
-    raw = str(value).strip().lower().replace(" ", "_").replace("-", "_")
-    if not raw:
-        return None
-    aliases = {
-        "rebooting": "reboot_started",
-        "reboot": "reboot_started",
-        "shutdown": "shutdown_started",
-        "shutting_down": "shutdown_started",
-        "poweroff": "shutdown_started",
-        "power_off": "shutdown_started",
-        "boot": "boot_completed",
-    }
-    return aliases.get(raw, raw)[:80]
-
 # Felter som en klient med client-token selv må opdatere på /clients/{id}/update.
 # Admin/frontend kan fortsat opdatere alle de eksisterende ClientUpdate-felter.
 CLIENT_SELF_UPDATE_FIELDS = {
@@ -361,18 +346,9 @@ CLIENT_SELF_UPDATE_FIELDS = {
     "wifi_mac_address",
     "lan_ip_address",
     "lan_mac_address",
-    "pending_reboot",
-    "pending_shutdown",
     "pending_chrome_action",
     "pending_chrome_action_source",
     "state",
-    "last_boot_id",
-    "last_boot_at",
-    "last_power_event",
-    "last_power_event_at",
-    "last_power_event_source",
-    "last_reboot_started_at",
-    "last_shutdown_started_at",
     "livestream_status",
     "livestream_last_segment",
     "livestream_last_error",
@@ -408,17 +384,6 @@ CLIENT_SELF_UPDATE_FIELDS = {
     "display_detected_outputs",
     "display_detected_updated_at",
     "ubuntu_updates_available",
-    "pending_os_update",
-    "ubuntu_update_status",
-    "ubuntu_update_step",
-    "ubuntu_update_message",
-    "ubuntu_update_error",
-    "ubuntu_update_started_at",
-    "ubuntu_update_updated_at",
-    "ubuntu_update_finished_at",
-    "ubuntu_update_progress",
-    "ubuntu_update_package_count",
-    "ubuntu_update_reboot_required",
     "client_version",
     "client_version_patch",
     "client_version_updated_at",
@@ -626,53 +591,6 @@ def _validate_local_password(password: str) -> str:
     return value
 
 
-def _local_management_payload(client: Client, *, include_secret: bool = False) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
-        "action": getattr(client, "local_management_action", None),
-        "request_id": getattr(client, "local_management_request_id", None),
-        "desired_hostname": getattr(client, "local_management_desired_hostname", None),
-        "desired_client_name": getattr(client, "name", None) if getattr(client, "local_management_action", None) == "hostname" else None,
-        "status": getattr(client, "local_management_status", None) or "ready",
-        "message": getattr(client, "local_management_message", None),
-        "requested_at": getattr(client, "local_management_requested_at", None),
-        "started_at": getattr(client, "local_management_started_at", None),
-        "finished_at": getattr(client, "local_management_finished_at", None),
-        "error": getattr(client, "local_management_error", None),
-    }
-    if include_secret:
-        payload["secret"] = getattr(client, "local_management_secret", None)
-    return payload
-
-
-def _local_management_busy(client: Client) -> bool:
-    status = str(getattr(client, "local_management_status", "") or "").strip().lower()
-    return bool(getattr(client, "local_management_action", None)) and status in LOCAL_MANAGEMENT_BUSY_STATUSES
-
-
-def _queue_local_management_request(
-    client: Client,
-    *,
-    action: str,
-    message: str,
-    desired_hostname: Optional[str] = None,
-    secret: Optional[str] = None,
-) -> None:
-    if action not in LOCAL_MANAGEMENT_ACTIONS:
-        raise HTTPException(status_code=400, detail="Ugyldig lokal klienthandling")
-    if _local_management_busy(client):
-        raise HTTPException(status_code=409, detail="Der er allerede en lokal klienthandling i gang på klienten")
-    client.local_management_action = action
-    client.local_management_request_id = secrets.token_urlsafe(18)
-    client.local_management_desired_hostname = desired_hostname
-    client.local_management_secret = secret
-    client.local_management_status = "pending"
-    client.local_management_message = message
-    client.local_management_requested_at = utcnow()
-    client.local_management_started_at = None
-    client.local_management_finished_at = None
-    client.local_management_error = None
-
-
 def _validate_display_resolution_update(client: Client, client_update: ClientUpdate, fields: set[str]) -> None:
     desired_changed = bool(DISPLAY_RESOLUTION_DESIRED_FIELDS & set(fields))
     report_changed = bool(DISPLAY_RESOLUTION_CLIENT_REPORT_FIELDS & set(fields))
@@ -789,7 +707,6 @@ USER_CHROME_COMMANDS = {"start", "stop", "reset_browser", "sleep", "wakeup"}
 ADMIN_CHROME_COMMANDS = USER_CHROME_COMMANDS | {"reboot"}
 ADMIN_UPDATE_FIELDS = {
     "locality", "kiosk_url",
-    "pending_reboot",
     "display_resolution_mode", "display_resolution_width", "display_resolution_height",
     "display_resolution_refresh_rate", "display_resolution_output", "display_resolution_action",
 }
@@ -846,6 +763,19 @@ def _require_client_status_write_access(principal, client: Client) -> None:
         require_client_self_or_user(principal, client.id)
         return
     _require_admin_client_access(principal, client)
+
+
+def _require_system_action_access(user, client: Client, action: str) -> None:
+    if principal_is_client(user):
+        raise HTTPException(status_code=403, detail="Klient-token må ikke sende System-kommandoer")
+    normalized = str(action or "").strip().lower()
+    if getattr(user, "is_superadmin", False):
+        return
+    if getattr(user, "is_admin", False) and _same_organization(user, client) and normalized == "reboot":
+        return
+    if getattr(user, "role", None) == VIEWER_ROLE:
+        raise HTTPException(status_code=403, detail="Se adgang har kun læseadgang")
+    raise HTTPException(status_code=403, detail=f"System-handlingen '{normalized}' kræver superadmin")
 
 
 def _require_client_operator_access(user, client: Client, action: str) -> None:
@@ -1034,25 +964,24 @@ def _apply_presence_for_read(client: Client, presence: ClientPresence) -> None:
 
 def _prepare_client_read(client: Client, presence: ClientPresence) -> Client:
     _apply_presence_for_read(client, presence)
-    _normalize_runtime_state(client, online=presence.is_online)
     _apply_network_status_for_read(client)
     return client
 
 
 _LEGACY_DISPLAY_PENDING_ACTIONS = {"start", "stop", "restart", "sleep", "wakeup", "reset_browser"}
+_LEGACY_SYSTEM_PENDING_ACTIONS = {"shutdown", "os_update"}
 
 
 def _apply_display_projection_for_read(session, client: Client) -> None:
     """Project canonical Display state onto legacy response field names only.
 
-    System/OS steps remain temporarily visible through ``chrome_step`` because
-    the current frontend still consumes that legacy multiplexed field.  Browser
-    status/color/running and kiosk URL always come from canonical Display state.
+    Browser status/color/running/step and kiosk URL always come from canonical
+    Display state. System status is projected separately and never multiplexed
+    through Chrome/Display response fields.
     """
     if client.id is None:
         return
     projection = display_read_projection(session, int(client.id))
-    legacy_step = str(getattr(client, "chrome_step", None) or "").strip().lower()
     legacy_pending = _normalize_chrome_action_name(getattr(client, "pending_chrome_action", None)) or "none"
 
     _set_runtime_read_attr(client, "kiosk_url", projection["kiosk_url"])
@@ -1060,9 +989,7 @@ def _apply_display_projection_for_read(session, client: Client) -> None:
     _set_runtime_read_attr(client, "chrome_color", projection["chrome_color"])
     _set_runtime_read_attr(client, "chrome_last_updated", projection["chrome_last_updated"])
     _set_runtime_read_attr(client, "chrome_running", projection["chrome_running"])
-
-    if not (legacy_step in SYSTEM_TERMINAL_STEPS or legacy_step.startswith("os_")):
-        _set_runtime_read_attr(client, "chrome_step", projection["chrome_step"])
+    _set_runtime_read_attr(client, "chrome_step", projection["chrome_step"])
 
     display_pending = str(projection["pending_chrome_action"] or "none")
     if display_pending != "none":
@@ -1073,14 +1000,61 @@ def _apply_display_projection_for_read(session, client: Client) -> None:
         _set_runtime_read_attr(client, "pending_chrome_action_source", None)
 
 
+def _apply_system_projection_for_read(session, client: Client, presence: ClientPresence) -> None:
+    """Project canonical System commands onto legacy response field names only."""
+    if client.id is None:
+        return
+    client_id = int(client.id)
+    power = power_projection(
+        session,
+        client_id,
+        current_boot_id=presence.status.boot_id,
+        status_online=presence.status.is_online,
+    )
+    for key, value in power.items():
+        # None is authoritative for legacy lifecycle metadata, but state=None
+        # means "no current canonical power command" and must not erase the
+        # ordinary non-System client state compatibility field.
+        if key == "state" and value is None:
+            continue
+        _set_runtime_read_attr(client, key, value)
+    os_update = os_update_projection(session, client_id)
+    for key, value in os_update.items():
+        _set_runtime_read_attr(client, key, value)
+    local = local_management_projection(session, client_id)
+    local_field_map = {
+        "action": "local_management_action",
+        "request_id": "local_management_request_id",
+        "desired_hostname": "local_management_desired_hostname",
+        "status": "local_management_status",
+        "message": "local_management_message",
+        "requested_at": "local_management_requested_at",
+        "started_at": "local_management_started_at",
+        "finished_at": "local_management_finished_at",
+        "error": "local_management_error",
+    }
+    for source_key, target_key in local_field_map.items():
+        _set_runtime_read_attr(client, target_key, local.get(source_key))
+
+
+def _prepare_full_client_read(
+    session,
+    client: Client,
+    presence: Optional[ClientPresence] = None,
+) -> Client:
+    """Attach all canonical read-time projections to one Client response."""
+    evidence = presence or load_client_presence(session, client)
+    _apply_display_projection_for_read(session, client)
+    _prepare_client_read(client, evidence)
+    _apply_system_projection_for_read(session, client, evidence)
+    return client
+
+
 def _prepare_clients_read(session, clients: List[Client]) -> List[Client]:
     presences = load_client_presences(session, clients)
     for client in clients:
         presence = presences.get(int(client.id)) if client.id is not None else None
-        if presence is None:
-            presence = load_client_presence(session, client)
-        _apply_display_projection_for_read(session, client)
-        _prepare_client_read(client, presence)
+        _prepare_full_client_read(session, client, presence)
     return clients
 
 
@@ -1090,12 +1064,7 @@ def _require_client_online(
     *,
     presence: Optional[ClientPresence] = None,
 ) -> ClientPresence:
-    """Require fresh canonical Status-domain liveness for live-only legacy actions.
-
-    This deliberately does not infer readiness from Display/System presence: the
-    current legacy action endpoints are not producers for the shared ClientCommand
-    queue. Binding them to those domains would create an unverified contract.
-    """
+    """Require fresh canonical Status-domain liveness for live-only actions."""
     evidence = presence or load_client_presence(session, client)
     if not evidence.is_online:
         raise HTTPException(
@@ -1108,169 +1077,20 @@ def _require_client_online(
     return evidence
 
 
-BOOT_RECOVERED_CHROME_STATUS = "Klient online efter genstart — afventer aktuel browserstatus"
-BOOT_RECOVERED_CHROME_COLOR = "orange"
-# Hvis klienten er online igen og uptime er lav, men DB stadig viser et
-# reboot-/shutdown-step, er det næsten altid en stale status fra før boot.
-BOOT_RECOVERED_UPTIME_GRACE_SECONDS = int(os.getenv("CLIENTFLOW_BOOT_RECOVERED_UPTIME_GRACE_SECONDS", "900"))
-
-# Terminale OS-update steps, som ikke må holde state=updating/pending_os_update
-# fast efter en rigtig reboot. Fejl-steps holdes udenfor, så fejl ikke skjules.
-OS_UPDATE_BOOT_TERMINAL_STEPS = {
-    "os_update_none",
-    "os_update_complete",
-    "os_rebooting",
-}
-
-
-def _parse_iso_datetime(value):
-    if not value:
-        return None
-    try:
-        raw = str(value).strip()
-        if raw.endswith("Z"):
-            raw = raw[:-1] + "+00:00"
-        dt = datetime.fromisoformat(raw)
-        return _as_naive_utc(dt)
-    except Exception:
-        return None
-
-
-def _client_uptime_seconds(client: Client) -> Optional[int]:
-    try:
-        if client.uptime in (None, ""):
-            return None
-        return int(float(str(client.uptime)))
-    except Exception:
-        return None
-
-
-def _step_time_before_current_boot(client: Client, step_time) -> bool:
-    step_time = _as_naive_utc(step_time)
-    uptime_seconds = _client_uptime_seconds(client)
-    if step_time is None or uptime_seconds is None:
-        return False
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    current_boot_time = now - timedelta(seconds=uptime_seconds)
-    return step_time < (current_boot_time - timedelta(seconds=2))
-
-
-def is_step_from_previous_boot(client: Client) -> bool:
-    """
-    Efter reboot kan DB stadig indeholde chrome_step='system_rebooting'.
-    Hvis klienten igen sender uptime, kan vi beregne nuværende boot-tidspunkt.
-    Ligger chrome_last_updated før boot-tidspunktet, er step'et fra før reboot
-    og bør ikke bruges til banner/lås i frontend.
-    """
-    step = str(client.chrome_step or "").lower()
-    if step not in SYSTEM_TERMINAL_STEPS:
-        return False
-
-    if client.uptime in (None, "") or client.chrome_last_updated is None:
-        return False
-
-    try:
-        uptime_seconds = int(float(str(client.uptime)))
-    except Exception:
-        return False
-
-    # Undgå at små clock-skævheder rydder et helt nyt step.
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    current_boot_time = now - timedelta(seconds=uptime_seconds)
-    step_time = _as_naive_utc(client.chrome_last_updated)
-
-    return step_time is not None and step_time < (current_boot_time - timedelta(seconds=2))
-
-
-def _looks_like_boot_recovered_stale_step(client: Client, *, online: bool = False) -> bool:
-    step = str(getattr(client, "chrome_step", "") or "").strip().lower()
-    if step not in SYSTEM_TERMINAL_STEPS:
-        return False
-    if is_step_from_previous_boot(client):
-        return True
-    if not online:
-        return False
-    # Beskyt aktiv reboot/shutdown: hvis backend stadig har en eksplicit pending-flag,
-    # må UI gerne vise at handlingen er i gang.
-    if getattr(client, "pending_reboot", False) or getattr(client, "pending_shutdown", False):
-        return False
-    uptime_seconds = _client_uptime_seconds(client)
-    return uptime_seconds is not None and 0 <= uptime_seconds <= BOOT_RECOVERED_UPTIME_GRACE_SECONDS
-
-
-def _pending_action_name(client: Client) -> str:
-    return _normalize_chrome_action_name(
-        getattr(getattr(client, "pending_chrome_action", None), "value", None)
-        or getattr(client, "pending_chrome_action", None)
-    ) or "none"
-
-
-def _normalize_runtime_state(client: Client, *, online: bool = False) -> bool:
-    """Normalisér stale runtime-state på tværs af canonical reads og updates.
-
-    `state` bør primært være klientens varige runtime-tilstand. Transiente
-    handlinger som reboot/shutdown styres af pending_* og chrome_step. Efter en
-    rigtig boot må gamle terminale steps derfor ikke holde Controlroom låst.
-    Returnerer True hvis objektet blev ændret og bør committes af caller.
-    """
-    changed = False
-
-    state = str(getattr(client, "state", "") or "").strip().lower()
-    step = str(getattr(client, "chrome_step", "") or "").strip().lower()
-    pending_action = _pending_action_name(client)
-    pending_reboot = bool(getattr(client, "pending_reboot", False))
-    pending_shutdown = bool(getattr(client, "pending_shutdown", False))
-    active_terminal_step = step in SYSTEM_TERMINAL_STEPS and not is_step_from_previous_boot(client)
-
-    if _looks_like_boot_recovered_stale_step(client, online=online):
-        if getattr(client, "chrome_status", None) != BOOT_RECOVERED_CHROME_STATUS:
-            client.chrome_status = BOOT_RECOVERED_CHROME_STATUS
-            changed = True
-        if getattr(client, "chrome_color", None) != BOOT_RECOVERED_CHROME_COLOR:
-            client.chrome_color = BOOT_RECOVERED_CHROME_COLOR
-            changed = True
-        if getattr(client, "chrome_step", None) is not None:
-            client.chrome_step = None
-            changed = True
-        if state in {"rebooting", "shutdown"}:
-            client.state = "normal"
-            state = "normal"
-            changed = True
-
-    # Frontend bruger state=rebooting/shutdown til at låse UI. Den lås må kun
-    # være aktiv, mens der faktisk er pending flag eller et aktuelt terminal-step.
-    if (
-        online
-        and state in {"rebooting", "shutdown"}
-        and not pending_reboot
-        and not pending_shutdown
-        and not active_terminal_step
-    ):
-        client.state = "normal"
-        state = "normal"
-        changed = True
-
-    # Efter OS-update reboot kan DB stå med pending_os_update/state=updating, selv
-    # om klienten igen er online. Ryd kun terminale success/none steps fra før
-    # nuværende boot; error bevares.
-    if online and bool(getattr(client, "pending_os_update", False)):
-        step_before_boot = _step_time_before_current_boot(client, getattr(client, "chrome_last_updated", None))
-        if (
-            pending_action in {"", "none", "os_update"}
-            and step in OS_UPDATE_BOOT_TERMINAL_STEPS
-            and (step_before_boot or step in {"os_update_none", "os_update_complete"})
-        ):
-            client.pending_os_update = False
-            changed = True
-            if pending_action == "os_update":
-                client.pending_chrome_action = ChromeAction.NONE
-                client.pending_chrome_action_source = None
-            if str(getattr(client, "state", "") or "").strip().lower() == "updating":
-                client.state = "normal"
-            client.chrome_status = "Ubuntu-opdatering afsluttet — klient online"
-            client.chrome_color = "green"
-
-    return changed
+def _require_system_ready(session, client: Client, *, presence: Optional[ClientPresence] = None) -> ClientPresence:
+    """Require both global liveness and the canonical System command consumer."""
+    evidence = _require_client_online(session, client, presence=presence)
+    if not evidence.system.is_online:
+        raise HTTPException(
+            status_code=409,
+            detail=f"System-agenten er ikke online ({evidence.system.reason}). Handlingen er ikke sendt.",
+        )
+    if not system_status_has_broker(evidence.system):
+        raise HTTPException(
+            status_code=409,
+            detail="System-agenten er online, men den privilegerede System-broker er ikke klar.",
+        )
+    return evidence
 
 
 @router.get("/clients/me", response_model=List[ClientRead])
@@ -1330,9 +1150,7 @@ def get_client(id: int, include_deleted: bool = False, session=Depends(get_sessi
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client, include_deleted=include_deleted)
-    presence = load_client_presence(session, client)
-    _apply_display_projection_for_read(session, client)
-    return _prepare_client_read(client, presence)
+    return _prepare_full_client_read(session, client)
 
 
 @router.get("/clients/{id}/local-management")
@@ -1345,11 +1163,9 @@ def get_client_local_management(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client)
-    include_secret = False
     if principal_is_client(user):
         require_client_self_or_user(user, id)
-        include_secret = True
-    return _local_management_payload(client, include_secret=include_secret)
+    return local_management_projection(session, id)
 
 
 @router.post("/clients/{id}/local-management/cfadmin-password")
@@ -1365,18 +1181,38 @@ def request_cfadmin_password_change(
     if not getattr(user, "is_superadmin", False):
         raise HTTPException(status_code=403, detail="Kun superadmin kan ændre cfadmin-adgangskode")
     _require_admin_client_access(user, client)
-
+    _require_no_active_clientflow_deployment(session, id)
+    _require_system_ready(session, client)
     password = _validate_local_password(data.password)
-    _queue_local_management_request(
-        client,
-        action="cfadmin_password",
-        secret=password,
-        message="Afventer klient: cfadmin-adgangskode ændres lokalt",
+
+    lock_system_client(session, id)
+    _require_no_active_clientflow_deployment(session, id)
+    active = active_system_command(session, id, for_update=True)
+    if active is not None:
+        raise HTTPException(status_code=409, detail=f"System-handling '{active.command_type}' er allerede i gang")
+
+    command_id = str(uuid.uuid4())
+    payload, key_id = build_encrypted_password_payload(
+        session,
+        client_id=id,
+        command_id=command_id,
+        new_password=password,
+        target_user="cfadmin",
     )
-    session.add(client)
+    command = queue_system_command(
+        session,
+        client_id=id,
+        command_type="change_password",
+        payload=payload,
+        payload_encryption_key_id=key_id,
+        requested_by_user_id=getattr(user, "id", None),
+        ttl_seconds=600,
+        idempotency_prefix="control-room-cfadmin-password",
+        command_id=command_id,
+    )
+    logger.info("system_command_queued client_id=%s command_id=%s action=change_password", id, command.id)
     session.commit()
-    session.refresh(client)
-    return _local_management_payload(client, include_secret=False)
+    return local_management_projection(session, id)
 
 
 @router.post("/clients/{id}/local-management/hostname")
@@ -1389,23 +1225,34 @@ def request_local_hostname_change(
     client = session.get(Client, id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
-
+    _require_no_active_clientflow_deployment(session, id)
+    presence = _require_system_ready(session, client)
     display_name = _normalize_local_client_display_name(data.name)
     hostname = _derive_linux_hostname_from_client_name(display_name)
-    client.name = display_name
-    _queue_local_management_request(
-        client,
-        action="hostname",
-        desired_hostname=hostname,
-        message=f"Afventer klient: lokalt klientnavn ændres til {display_name} (hostname: {hostname})",
+
+    lock_system_client(session, id)
+    _require_no_active_clientflow_deployment(session, id)
+    active = active_system_command(session, id, for_update=True)
+    if active is not None:
+        raise HTTPException(status_code=409, detail=f"System-handling '{active.command_type}' er allerede i gang")
+
+    command = queue_system_command(
+        session,
+        client_id=id,
+        command_type="change_hostname",
+        payload={
+            "hostname": hostname,
+            "client_name": display_name,
+            "requested_boot_id": presence.status.boot_id,
+            "source": "control_room",
+        },
+        requested_by_user_id=getattr(user, "id", None),
+        ttl_seconds=600,
+        idempotency_prefix="control-room-hostname",
     )
-    # _queue_local_management_request nulstiller ikke client.name, men vi sætter igen
-    # efter kaldet, så _local_management_payload kan medtage display-navnet.
-    client.name = display_name
-    session.add(client)
+    logger.info("system_command_queued client_id=%s command_id=%s action=change_hostname", id, command.id)
     session.commit()
-    session.refresh(client)
-    return _local_management_payload(client, include_secret=False) | {"name": client.name}
+    return local_management_projection(session, id) | {"name": client.name}
 
 
 @router.put("/clients/{id}/local-management/status")
@@ -1415,36 +1262,10 @@ def update_client_local_management_status(
     session=Depends(get_session),
     user=Depends(get_current_user_or_client),
 ):
-    if not principal_is_client(user):
-        raise HTTPException(status_code=403, detail="Kun klient-token må opdatere lokal klientstyringsstatus")
-    require_client_self_or_user(user, id)
-    client = session.get(Client, id)
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-
-    request_id = str(data.request_id or "").strip()
-    if not request_id or request_id != str(getattr(client, "local_management_request_id", "") or ""):
-        raise HTTPException(status_code=409, detail="Lokal klientstyrings-request matcher ikke aktiv request")
-
-    status = str(data.status or "").strip().lower()
-    if status not in VALID_LOCAL_MANAGEMENT_STATUSES:
-        raise HTTPException(status_code=400, detail=f"Ugyldig lokal klientstyringsstatus '{data.status}'")
-
-    client.local_management_status = status
-    client.local_management_message = (data.message or "")[:500] or client.local_management_message
-    client.local_management_error = (data.error or "")[:800] or None
-    if status == "running":
-        client.local_management_started_at = client.local_management_started_at or utcnow()
-    if status in {"success", "error", "ready"}:
-        client.local_management_finished_at = utcnow()
-        # One-time secrets må ikke blive liggende i databasen, når klienten har kvitteret.
-        client.local_management_secret = None
-        client.local_management_action = None
-        client.local_management_desired_hostname = None
-    session.add(client)
-    session.commit()
-    session.refresh(client)
-    return _local_management_payload(client, include_secret=False)
+    raise HTTPException(
+        status_code=410,
+        detail="Legacy local-management status er fjernet; canonical System-command completion er authority.",
+    )
 
 
 @router.get("/clients/{id}/presence", response_model=ClientPresenceRead)
@@ -1471,17 +1292,13 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
 
     presence = load_client_presence(session, client)
     _apply_status_runtime_snapshot(client, presence)
-    _normalize_runtime_state(client, online=presence.is_online)
     _apply_display_projection_for_read(session, client)
-    stale_boot_status = _looks_like_boot_recovered_stale_step(client, online=presence.is_online)
+    _apply_system_projection_for_read(session, client, presence)
 
-    # FIX: Læser chrome_step fra database, men filtrerer gamle system-steps fra
-    # forrige boot. Ellers kan frontend blive ved med at vise
-    # "Klient genstarter..." efter klienten er kommet online igen.
     step_obj = None
-    chrome_step_value = None if stale_boot_status else client.chrome_step
-    chrome_status_value = BOOT_RECOVERED_CHROME_STATUS if stale_boot_status else (client.chrome_status or "unknown")
-    chrome_color_value = BOOT_RECOVERED_CHROME_COLOR if stale_boot_status else client.chrome_color
+    chrome_step_value = client.chrome_step
+    chrome_status_value = client.chrome_status or "unknown"
+    chrome_color_value = client.chrome_color
     state_value = client.state
 
     if chrome_step_value:
@@ -1588,51 +1405,24 @@ def update_chrome_status(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_status_write_access(user, client)
-    step_name = str(data.get("chrome_step") or "").strip().lower()
-    step_time = _parse_iso_datetime(data.get("chrome_step_timestamp"))
-    is_system_step = step_name in SYSTEM_TERMINAL_STEPS or step_name.startswith("os_")
-    display_status_fields = {"chrome_status", "chrome_color", "chrome_step", "chrome_last_updated"} & set(data)
-    if display_status_fields and not is_system_step:
+
+    legacy_status_fields = {"chrome_status", "chrome_color", "chrome_step", "chrome_last_updated", "chrome_step_timestamp"} & set(data)
+    if legacy_status_fields:
         raise HTTPException(
             status_code=410,
             detail=(
-                "Legacy browserstatus-write er fjernet. Display observed state rapporteres via "
-                "ClientDomainStatus(domain='display')."
+                "Legacy browser/System-status-write er fjernet. Display og System observed/completion state "
+                "rapporteres via deres canonical domain-kontrakter."
             ),
         )
 
-    stale_step_from_previous_boot = (
-        step_name in SYSTEM_TERMINAL_STEPS
-        and step_time is not None
-        and _step_time_before_current_boot(client, step_time)
-    )
-
-    if stale_step_from_previous_boot:
-        # Gamle klienter kunne gensende system_rebooting efter boot. Det må ikke
-        # overskrive den aktuelle Controlroom-status.
-        if str(getattr(client, "state", "") or "").strip().lower() in {"rebooting", "shutdown"}:
-            client.state = "normal"
-    else:
-        if data.get("chrome_status") is not None:
-            client.chrome_status = data.get("chrome_status")
-        if data.get("chrome_color") is not None:
-            client.chrome_color = data.get("chrome_color")
-        # FIX: gem chrome_step fra klient så /chrome-status GET kan returnere det
-        if data.get("chrome_step") is not None:
-            client.chrome_step = data.get("chrome_step")
-        client.chrome_last_updated = step_time or utcnow()
-
-    # Chrome-status er browser/runtime-data, ikke client-liveness. Versionsfelter
-    # må stadig opdateres her, når klienten eksplicit rapporterer dem; canonical
-    # liveness kommer udelukkende fra Status-domain presence.
+    # Version metadata remains a compatibility report path; it is not command or
+    # liveness authority. Canonical liveness remains Status-domain only.
     if data.get("client_version") is not None:
         client.client_version = str(data.get("client_version") or "").strip() or client.client_version
     if data.get("ubuntu_version") is not None:
         client.ubuntu_version = str(data.get("ubuntu_version") or "").strip() or client.ubuntu_version
 
-    presence = load_client_presence(session, client)
-    _apply_status_runtime_snapshot(client, presence)
-    _normalize_runtime_state(client, online=presence.is_online)
     session.add(client)
     session.commit()
     session.refresh(client)
@@ -1651,6 +1441,11 @@ def update_client_state(id: int, data: dict = Body(...), session=Depends(get_ses
     state = normalize_client_state(state)
     if state not in VALID_CLIENT_STATES:
         raise HTTPException(status_code=400, detail=f"Ugyldig state '{state}'. Tilladte: {sorted(VALID_CLIENT_STATES)}")
+    if state in SYSTEM_OWNED_STATES:
+        raise HTTPException(
+            status_code=410,
+            detail="Legacy System state-write er fjernet; canonical System command/status er authority.",
+        )
     client.state = state
     session.add(client)
     session.commit()
@@ -1666,7 +1461,7 @@ def get_client_state(id: int, session=Depends(get_session), user=Depends(get_cur
     _require_client_read_access(user, client)
     presence = load_client_presence(session, client)
     _apply_status_runtime_snapshot(client, presence)
-    _normalize_runtime_state(client, online=presence.is_online)
+    _apply_system_projection_for_read(session, client, presence)
     return {"state": client.state}
 
 
@@ -1682,6 +1477,53 @@ def _normalize_livestream_source(source) -> Optional[str]:
             detail=f"Ugyldig source '{source}'. Tilladte: {sorted(VALID_PENDING_CHROME_ACTION_SOURCES)}",
         )
     return normalized
+
+
+@router.post("/clients/{id}/system-command")
+def set_system_command(
+    id: int,
+    data: dict = Body(...),
+    session=Depends(get_session),
+    user=Depends(get_current_user_or_client),
+):
+    client = session.get(Client, id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    action = str(data.get("action") or "").strip().lower()
+    if action not in {"reboot", "shutdown"}:
+        raise HTTPException(status_code=400, detail="Ugyldig System-handling")
+    _require_system_action_access(user, client, action)
+    _require_no_active_clientflow_deployment(session, id)
+    presence = _require_system_ready(session, client)
+    if action in {"reboot", "shutdown"} and not presence.status.boot_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Strømhandlingen kræver et aktuelt canonical Status boot-id, så completion kan verificeres.",
+        )
+
+    lock_system_client(session, id)
+    _require_no_active_clientflow_deployment(session, id)
+    active = active_system_command(session, id, for_update=True)
+    if active is not None:
+        if active.command_type == action:
+            return {"ok": True, "already_requested": True, "command_id": active.id, "action": action}
+        raise HTTPException(status_code=409, detail=f"System-handling '{active.command_type}' er allerede i gang")
+
+    command = queue_system_command(
+        session,
+        client_id=id,
+        command_type=action,
+        payload={
+            "requested_boot_id": presence.status.boot_id,
+            "source": "control_room",
+        },
+        requested_by_user_id=getattr(user, "id", None),
+        ttl_seconds=300,
+        idempotency_prefix=f"control-room-{action}",
+    )
+    logger.info("system_command_queued client_id=%s command_id=%s action=%s", id, command.id, action)
+    session.commit()
+    return {"ok": True, "command_id": command.id, "action": action}
 
 
 @router.post("/clients/{id}/chrome-command")
@@ -1814,45 +1656,11 @@ def get_chrome_command(id: int, session=Depends(get_session), user=Depends(get_c
         session.add(client)
         session.commit()
         action = "none"
-    elif action in _LEGACY_DISPLAY_PENDING_ACTIONS:
-        # Display actions are no longer authoritative through Client.* fields.
+    elif action in (_LEGACY_DISPLAY_PENDING_ACTIONS | _LEGACY_SYSTEM_PENDING_ACTIONS):
+        # Display/System actions are no longer authoritative through Client.* fields.
         action = "none"
     source = None if action == "none" else getattr(client, "pending_chrome_action_source", None)
     return {"action": action, "source": source}
-
-
-def _os_update_is_stale(client: Client) -> bool:
-    """Returnér True hvis en Ubuntu/OS update ser ud til at være efterladt i busy-state."""
-    if not getattr(client, "pending_os_update", False) and getattr(client, "state", None) != "updating":
-        return False
-
-    pca = _normalize_chrome_action_name(
-        getattr(getattr(client, "pending_chrome_action", None), "value", None)
-        or getattr(client, "pending_chrome_action", None)
-    ) or "none"
-
-    # Kun OS-update-flowet skal stale-resettes her. ClientFlow selfupdate har egen logik.
-    if pca not in ("", "none", "os_update"):
-        return False
-
-    ref = _as_naive_utc(getattr(client, "ubuntu_update_updated_at", None)) or _as_naive_utc(
-        getattr(client, "ubuntu_update_started_at", None)
-    )
-    if ref is None:
-        return False
-
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    return (now - ref).total_seconds() > OS_UPDATE_STALE_SECONDS
-
-
-def _normalize_os_update_state_if_finished(client: Client) -> None:
-    """Ryd state=updating hvis OS-update allerede er ryddet fra pending felter."""
-    pca = _normalize_chrome_action_name(
-        getattr(getattr(client, "pending_chrome_action", None), "value", None)
-        or getattr(client, "pending_chrome_action", None)
-    ) or "none"
-    if getattr(client, "state", None) == "updating" and pca in ("", "none") and not getattr(client, "pending_os_update", False):
-        client.state = "normal"
 
 
 @router.post("/clients/{id}/os-update")
@@ -1866,58 +1674,28 @@ async def trigger_os_update(
         raise HTTPException(status_code=404, detail="Client not found")
     _require_admin_client_access(user, client)
     _require_no_active_clientflow_deployment(session, id)
-    _require_client_online(session, client)
+    _require_system_ready(session, client)
 
-    _normalize_os_update_state_if_finished(client)
+    lock_system_client(session, id)
+    _require_no_active_clientflow_deployment(session, id)
+    active = active_system_command(session, id, for_update=True)
+    if active is not None:
+        if active.command_type == "update_os":
+            return {"ok": True, "already_requested": True, "command_id": active.id} | os_update_projection(session, id)
+        raise HTTPException(status_code=409, detail=f"System-handling '{active.command_type}' er allerede i gang")
 
-    if client.state == "updating" or getattr(client, "pending_os_update", False):
-        if _os_update_is_stale(client):
-            client.pending_chrome_action = ChromeAction.NONE
-            client.pending_chrome_action_source = None
-            client.pending_os_update = False
-            client.state = "error"
-            client.chrome_status = "Tidligere Ubuntu-opdatering blev nulstillet som forældet/stalled"
-            client.chrome_color = "red"
-            client.chrome_step = "os_update_failed"
-            client.chrome_last_updated = utcnow()
-            session.add(client)
-            session.commit()
-            session.refresh(client)
-        else:
-            raise HTTPException(status_code=409, detail=_current_update_detail(client))
-
-    now = utcnow()
-    client.pending_chrome_action = ChromeAction.OS_UPDATE
-    client.pending_chrome_action_source = "actionbutton"
-    client.pending_os_update = True
-    client.state = "updating"
-    # Bruges som request-tidsstempel/nøgle for klientens idempotens-marker.
-    client.chrome_status = "Ubuntu-opdatering bestilt fra backend"
-    client.chrome_color = "orange"
-    client.chrome_step = "os_update_requested"
-    client.chrome_last_updated = now
-    client.ubuntu_update_status = "requested"
-    client.ubuntu_update_step = "os_update_requested"
-    client.ubuntu_update_message = "Ubuntu-opdatering bestilt fra backend"
-    client.ubuntu_update_error = None
-    client.ubuntu_update_started_at = None
-    client.ubuntu_update_updated_at = now
-    client.ubuntu_update_finished_at = None
-    client.ubuntu_update_progress = 0
-    client.ubuntu_update_package_count = client.ubuntu_updates_available
-    client.ubuntu_update_reboot_required = False
-    session.add(client)
+    command = queue_system_command(
+        session,
+        client_id=id,
+        command_type="update_os",
+        payload={"source": "control_room"},
+        requested_by_user_id=getattr(user, "id", None),
+        ttl_seconds=10_800,
+        idempotency_prefix="control-room-os-update",
+    )
+    logger.info("system_command_queued client_id=%s command_id=%s action=update_os", id, command.id)
     session.commit()
-    session.refresh(client)
-    return {
-        "ok": True,
-        "message": f"OS-opdatering bestilt for klient {id}",
-        "pending_chrome_action": client.pending_chrome_action.value,
-        "pending_os_update": client.pending_os_update,
-        "state": client.state,
-        "chrome_step": client.chrome_step,
-        "chrome_last_updated": client.chrome_last_updated,
-    }
+    return {"ok": True, "command_id": command.id} | os_update_projection(session, id)
 
 
 @router.post("/clients/{id}/os-update/reset")
@@ -1926,46 +1704,10 @@ async def reset_os_update(
     session=Depends(get_session),
     user=Depends(get_current_superadmin_user),
 ):
-    """Nulstil en fastlåst Ubuntu/OS update uden at starte en ny update."""
-    client = session.get(Client, id)
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-    _require_admin_client_access(user, client)
-
-    now = utcnow()
-    client.pending_chrome_action = ChromeAction.NONE
-    client.pending_chrome_action_source = None
-    client.pending_os_update = False
-    client.state = "normal"
-    client.chrome_status = "Ubuntu-opdateringsstatus nulstillet af admin"
-    client.chrome_color = "green"
-    client.chrome_step = "os_update_reset"
-    client.chrome_last_updated = now
-    client.ubuntu_update_status = "ready"
-    client.ubuntu_update_step = "os_update_reset"
-    client.ubuntu_update_message = "Ubuntu-opdateringsstatus nulstillet af admin"
-    client.ubuntu_update_error = None
-    client.ubuntu_update_updated_at = now
-    client.ubuntu_update_finished_at = now
-    client.ubuntu_update_progress = 0
-    client.ubuntu_update_reboot_required = False
-
-    session.add(client)
-    session.commit()
-    session.refresh(client)
-
-    return {
-        "ok": True,
-        "message": f"Ubuntu-opdateringsstatus nulstillet for klient {id}",
-        "pending_chrome_action": client.pending_chrome_action.value,
-        "pending_os_update": client.pending_os_update,
-        "state": client.state,
-        "chrome_status": client.chrome_status,
-        "chrome_step": client.chrome_step,
-        "chrome_last_updated": client.chrome_last_updated,
-    }
-
-
+    raise HTTPException(
+        status_code=410,
+        detail="Legacy OS-update reset er fjernet; canonical System-command status kan ikke nulstilles kunstigt.",
+    )
 
 
 @router.get("/clients/{id}/ubuntu-updates")
@@ -1974,11 +1716,14 @@ def get_ubuntu_updates(id: int, session=Depends(get_session), user=Depends(get_c
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client)
+    projection = os_update_projection(session, id)
     return {
         "client_id": client.id,
         "ubuntu_updates_available": client.ubuntu_updates_available or 0,
-        "pending_os_update": client.pending_os_update or False,
+        "pending_os_update": projection["pending_os_update"],
         "ubuntu_version": client.ubuntu_version,
+        "ubuntu_update_status": projection["ubuntu_update_status"],
+        "ubuntu_update_step": projection["ubuntu_update_step"],
     }
 
 
@@ -1992,6 +1737,16 @@ async def create_client(
     create_fields = set(client_in.model_fields_set)
     _reject_legacy_display_write_fields(create_fields)
     create_pending_action = _normalize_chrome_action_name(getattr(client_in, "pending_chrome_action", None))
+    create_state = getattr(client_in, "state", None)
+    if (
+        create_fields & (LEGACY_SYSTEM_COMMAND_FIELDS | POWER_LIFECYCLE_FIELDS)
+        or create_pending_action in _LEGACY_SYSTEM_PENDING_ACTIONS
+        or ("state" in create_fields and create_state is not None and normalize_client_state(create_state) in SYSTEM_OWNED_STATES)
+    ):
+        raise HTTPException(
+            status_code=410,
+            detail="Legacy System command/status-state må ikke oprettes. Brug canonical System-command efter enrollment.",
+        )
     if create_pending_action in _LEGACY_DISPLAY_PENDING_ACTIONS:
         raise HTTPException(
             status_code=410,
@@ -2116,8 +1871,7 @@ async def create_client(
     )
     session.commit()
     session.refresh(client)
-    _apply_display_projection_for_read(session, client)
-    return _prepare_client_read(client, load_client_presence(session, client))
+    return _prepare_full_client_read(session, client)
 
 
 LEGACY_DISPLAY_STATUS_WRITE_FIELDS = {"chrome_status", "chrome_color", "chrome_step", "chrome_last_updated"}
@@ -2137,19 +1891,27 @@ def _reject_legacy_display_write_fields(fields: set[str]) -> None:
 
 def _authorize_client_update_fields(user, client: Client, client_update: ClientUpdate, fields: set[str]) -> None:
     """Validate exactly which patch fields the authenticated principal may send."""
-    legacy_status_fields = fields & LEGACY_DISPLAY_STATUS_WRITE_FIELDS
-    if legacy_status_fields:
-        legacy_step = str(getattr(client_update, "chrome_step", None) or "").strip().lower()
-        is_system_compat_report = principal_is_client(user) and (
-            legacy_step in SYSTEM_TERMINAL_STEPS or legacy_step.startswith("os_")
+    if fields & LEGACY_DISPLAY_STATUS_WRITE_FIELDS:
+        _reject_legacy_display_write_fields(fields)
+    legacy_system_fields = sorted(fields & LEGACY_SYSTEM_COMMAND_FIELDS)
+    if legacy_system_fields:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Legacy System command/status-felter er read-only kompatibilitetsprojektion. "
+                "Brug canonical System-command endpoints og ClientCommand(domain='system')."
+            ),
         )
-        if not is_system_compat_report:
-            _reject_legacy_display_write_fields(fields)
     pending_display_action = _normalize_chrome_action_name(getattr(client_update, "pending_chrome_action", None))
     if "pending_chrome_action" in fields and pending_display_action in _LEGACY_DISPLAY_PENDING_ACTIONS:
         raise HTTPException(
             status_code=410,
             detail="Legacy pending Chrome/Display-action er fjernet. Brug canonical /chrome-command Display-endpointet.",
+        )
+    if "pending_chrome_action" in fields and pending_display_action in _LEGACY_SYSTEM_PENDING_ACTIONS:
+        raise HTTPException(
+            status_code=410,
+            detail="Legacy System action i pending_chrome_action er fjernet. Brug canonical System-endpointet.",
         )
     legacy_fields = sorted(fields & LEGACY_CLIENTFLOW_UPDATE_FIELDS)
     if legacy_fields:
@@ -2160,6 +1922,19 @@ def _authorize_client_update_fields(user, client: Client, client_update: ClientU
                 "Brug canonical ClientFlow deployment-endpointet."
             ),
         )
+    if "state" in fields:
+        requested_state = getattr(client_update, "state", None)
+        if requested_state is not None and normalize_client_state(requested_state) in SYSTEM_OWNED_STATES:
+            raise HTTPException(
+                status_code=410,
+                detail="Legacy System state-write er fjernet; canonical System command/status er authority.",
+            )
+    if POWER_LIFECYCLE_FIELDS & fields:
+        raise HTTPException(
+            status_code=410,
+            detail="Legacy power lifecycle writes er fjernet; canonical System command + Status observation er authority.",
+        )
+
     if principal_is_client(user):
         allowed_fields = set(CLIENT_SELF_UPDATE_FIELDS)
         action_value = getattr(client_update, "display_resolution_action", None)
@@ -2200,8 +1975,6 @@ def _validate_client_update_command_availability(session, user, client: Client, 
     if principal_is_client(user):
         return
 
-    wants_reboot = "pending_reboot" in fields and bool(client_update.pending_reboot)
-    wants_shutdown = "pending_shutdown" in fields and bool(client_update.pending_shutdown)
     display_action_value = str(getattr(client_update, "display_resolution_action", "") or "").strip().lower()
     wants_display_action = "display_resolution_action" in fields and display_action_value in VALID_DISPLAY_RESOLUTION_ACTIONS
     pending_action_value = _normalize_chrome_action_name(getattr(client_update, "pending_chrome_action", None))
@@ -2213,7 +1986,7 @@ def _validate_client_update_command_availability(session, user, client: Client, 
             detail="Legacy clientflow_update er fjernet. Brug canonical ClientFlow deployment-endpointet.",
         )
 
-    if not (wants_reboot or wants_shutdown or wants_display_action or wants_pending_action):
+    if not (wants_display_action or wants_pending_action):
         return
 
     _require_no_active_clientflow_deployment(session, client.id)
@@ -2262,26 +2035,6 @@ async def update_client(
     elif "chrome_status" in fields or "chrome_step" in fields:
         client.chrome_last_updated = utcnow()
     if "created_at" in fields: client.created_at = client_update.created_at
-    if "pending_reboot" in fields:
-        client.pending_reboot = client_update.pending_reboot
-        if client.pending_reboot and "state" not in fields:
-            client.state = "rebooting"
-        if client.pending_reboot:
-            now_event = _now_naive_utc()
-            client.last_power_event = "reboot_requested"
-            client.last_power_event_at = now_event
-            client.last_power_event_source = _principal_power_source(user)
-            client.last_reboot_started_at = now_event
-    if "pending_shutdown" in fields:
-        client.pending_shutdown = client_update.pending_shutdown
-        if client.pending_shutdown and "state" not in fields:
-            client.state = "shutdown"
-        if client.pending_shutdown:
-            now_event = _now_naive_utc()
-            client.last_power_event = "shutdown_requested"
-            client.last_power_event_at = now_event
-            client.last_power_event_source = _principal_power_source(user)
-            client.last_shutdown_started_at = now_event
     old_pending_action = _chrome_action_value(getattr(client, "pending_chrome_action", None)) or "none"
     old_pending_source = getattr(client, "pending_chrome_action_source", None)
 
@@ -2319,18 +2072,6 @@ async def update_client(
                 raise HTTPException(status_code=400, detail=f"Ugyldig state '{state}'")
             client.state = state_lower
 
-    if POWER_LIFECYCLE_FIELDS & set(fields):
-        for lifecycle_field in POWER_LIFECYCLE_FIELDS:
-            if lifecycle_field in fields:
-                value = getattr(client_update, lifecycle_field)
-                if lifecycle_field == "last_power_event":
-                    value = _normalize_power_event_value(value)
-                elif lifecycle_field == "last_power_event_source" and value is not None:
-                    value = str(value).strip().lower()[:80] or None
-                elif lifecycle_field == "last_boot_id" and value is not None:
-                    value = str(value).strip()[:128] or None
-                setattr(client, lifecycle_field, value)
-
     if "livestream_status" in fields: client.livestream_status = client_update.livestream_status
     if "livestream_last_segment" in fields: client.livestream_last_segment = client_update.livestream_last_segment
     if "livestream_last_error" in fields: client.livestream_last_error = client_update.livestream_last_error
@@ -2343,33 +2084,6 @@ async def update_client(
     if "ubuntu_updates_available" in fields:
         value = client_update.ubuntu_updates_available
         client.ubuntu_updates_available = max(0, int(value or 0))
-    if "pending_os_update" in fields:
-        client.pending_os_update = client_update.pending_os_update
-    if UBUNTU_UPDATE_FIELDS & set(fields):
-        if "ubuntu_update_status" in fields:
-            value = str(client_update.ubuntu_update_status or "ready").strip().lower()
-            if value not in UBUNTU_UPDATE_STATUSES:
-                raise HTTPException(status_code=400, detail=f"Ugyldig ubuntu_update_status '{value}'")
-            client.ubuntu_update_status = value
-        if "ubuntu_update_step" in fields:
-            client.ubuntu_update_step = str(client_update.ubuntu_update_step or "").strip()[:120] or None
-        if "ubuntu_update_message" in fields:
-            client.ubuntu_update_message = str(client_update.ubuntu_update_message or "").strip()[:2000] or None
-        if "ubuntu_update_error" in fields:
-            client.ubuntu_update_error = str(client_update.ubuntu_update_error or "").strip()[:4000] or None
-        for timestamp_field in (
-            "ubuntu_update_started_at", "ubuntu_update_updated_at", "ubuntu_update_finished_at"
-        ):
-            if timestamp_field in fields:
-                setattr(client, timestamp_field, getattr(client_update, timestamp_field))
-        if "ubuntu_update_progress" in fields:
-            progress = client_update.ubuntu_update_progress
-            client.ubuntu_update_progress = None if progress is None else max(0, min(100, int(progress)))
-        if "ubuntu_update_package_count" in fields:
-            count = client_update.ubuntu_update_package_count
-            client.ubuntu_update_package_count = None if count is None else max(0, int(count))
-        if "ubuntu_update_reboot_required" in fields:
-            client.ubuntu_update_reboot_required = client_update.ubuntu_update_reboot_required
     if "desktop_lockdown_enabled" in fields:
         desired_lockdown = bool(client_update.desktop_lockdown_enabled)
         client.desktop_lockdown_enabled = desired_lockdown
@@ -2398,7 +2112,6 @@ async def update_client(
     if principal_is_client(user):
         presence = load_client_presence(session, client)
         _apply_status_runtime_snapshot(client, presence)
-        _normalize_runtime_state(client, online=presence.is_online)
 
     if "pending_chrome_action" in fields or "pending_chrome_action_source" in fields:
         principal_type, principal_id, principal_role = _principal_log_context(user)
@@ -2416,8 +2129,7 @@ async def update_client(
     session.add(client)
     session.commit()
     session.refresh(client)
-    _apply_display_projection_for_read(session, client)
-    return _prepare_client_read(client, load_client_presence(session, client))
+    return _prepare_full_client_read(session, client)
 
 
 @router.put("/clients/{id}/kiosk_url", response_model=ClientRead)
@@ -2450,8 +2162,7 @@ async def update_kiosk_url(
     )
     session.commit()
     session.refresh(client)
-    _apply_display_projection_for_read(session, client)
-    return _prepare_client_read(client, load_client_presence(session, client))
+    return _prepare_full_client_read(session, client)
 
 
 def _current_season_str() -> str:
@@ -2605,8 +2316,7 @@ async def change_client_organization(
     )
     session.commit()
     session.refresh(client)
-    _apply_display_projection_for_read(session, client)
-    _prepare_client_read(client, load_client_presence(session, client))
+    _prepare_full_client_read(session, client)
 
     return {
         **client.model_dump(),
@@ -2719,8 +2429,7 @@ async def approve_client(
     )
     session.commit()
     session.refresh(client)
-    _apply_display_projection_for_read(session, client)
-    return _prepare_client_read(client, load_client_presence(session, client))
+    return _prepare_full_client_read(session, client)
 
 
 def _generate_client_secret() -> str:
@@ -2919,8 +2628,7 @@ async def restore_client(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     if not _client_is_deleted(client):
-        _apply_display_projection_for_read(session, client)
-        return _prepare_client_read(client, load_client_presence(session, client))
+        return _prepare_full_client_read(session, client)
 
     restored_status = client.deleted_previous_status or "approved"
     if restored_status == "deleted":
@@ -2948,8 +2656,7 @@ async def restore_client(
     )
     session.commit()
     session.refresh(client)
-    _apply_display_projection_for_read(session, client)
-    return _prepare_client_read(client, load_client_presence(session, client))
+    return _prepare_full_client_read(session, client)
 
 
 @router.delete("/clients/{id}/purge")

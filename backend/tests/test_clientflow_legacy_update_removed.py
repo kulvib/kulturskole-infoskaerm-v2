@@ -26,7 +26,9 @@ def test_b1_legacy_clientflow_update_authority_is_not_routable() -> None:
 def test_b1_stale_legacy_command_is_neutralized_and_canonical_deployment_locks_commands() -> None:
     clients = read("backend/service1/routers/clients.py")
 
-    chrome_command = clients[clients.index('def get_chrome_command('):clients.index('def _os_update_is_stale', clients.index('def get_chrome_command('))]
+    chrome_command_start = clients.index('def get_chrome_command(')
+    chrome_command_end = clients.index('@router.post("/clients/{id}/os-update")', chrome_command_start)
+    chrome_command = clients[chrome_command_start:chrome_command_end]
     assert 'if action == "clientflow_update":' in chrome_command
     assert "client.pending_chrome_action = ChromeAction.NONE" in chrome_command
     assert "client.pending_chrome_action_source = None" in chrome_command
@@ -48,8 +50,11 @@ def test_b1_clientflow_and_ubuntu_updates_are_mutually_exclusive() -> None:
     os_update = clients[os_update_start:os_update_reset]
     assert "_require_no_active_clientflow_deployment(session, id)" in os_update
 
-    assert 'getattr(client, "pending_os_update", False)' in deployments
-    assert 'ClientFlow deployment kan ikke startes under en aktiv Ubuntu-opdatering' in deployments
+    assert 'active = active_system_command(session, int(client.id))' in deployments
+    assert "ClientFlow deployment kan ikke startes under aktiv System-handling" in deployments
+    assert 'lock_system_client(session, int(client.id))' in deployments
+    assert '_require_deployable_client(session, client)' in deployments
+    assert 'getattr(client, "pending_os_update", False)' not in deployments
 
 
 def test_b1_frontend_uses_only_first_class_clientflow_deployments() -> None:

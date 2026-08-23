@@ -73,7 +73,7 @@ ADVISORY_LOCK_KEY = -614927384150371204
 # Baseline adoption is deliberately reviewed only for this exact graph. If a
 # later migration changes the head, the adoption path fails closed until the
 # baseline delta is reviewed again.
-REVIEWED_BASELINE_ADOPTION_HEAD = "20260823_53a_display_authority"
+REVIEWED_BASELINE_ADOPTION_HEAD = "20260823_53b_system_authority"
 REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 
 # Production was observed at this Alembic label before Step 40A was deployed,
@@ -82,7 +82,7 @@ REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 # 39A schema; otherwise deployment fails closed without stamping or DDL.
 RECOVERABLE_LEGACY_REVISION = "20260730_41a"
 RECOVERABLE_LEGACY_TARGET = "20260717_39a_livestream_leases"
-REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260823_53a_display_authority"
+REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260823_53b_system_authority"
 REVIEWED_LIVESTREAM_V2_PREDECESSOR = "20260814_40a_livestream_control"
 REVIEWED_LIVESTREAM_V2_REVISION = "20260814_41a_livestream_v2"
 REVIEWED_TERMINAL_V2_REVISION = "20260816_42a_terminal_v2"
@@ -98,6 +98,7 @@ REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION = "20260819_51a_update_control"
 REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION = "20260820_51b_update_auth"
 REVIEWED_CLIENT_LIVENESS_REVISION = "20260822_52a_client_liveness"
 REVIEWED_DISPLAY_AUTHORITY_REVISION = "20260823_53a_display_authority"
+REVIEWED_SYSTEM_AUTHORITY_REVISION = "20260823_53b_system_authority"
 LIVESTREAM_V2_TABLES = frozenset({
     "livestream_v2_agent_status",
     "livestream_v2_command",
@@ -917,6 +918,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
             clientflow_update_auth_revision = script.get_revision(REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION)
             client_liveness_revision = script.get_revision(REVIEWED_CLIENT_LIVENESS_REVISION)
             display_authority_revision = script.get_revision(REVIEWED_DISPLAY_AUTHORITY_REVISION)
+            system_authority_revision = script.get_revision(REVIEWED_SYSTEM_AUTHORITY_REVISION)
             head_revision = script.get_revision(head)
             if any(
                 item is None
@@ -925,7 +927,8 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                     terminal_v2_revision, terminal_policy_revision, terminal_storage_revision,
                     terminal_client_revision, remote_desktop_revision, client_activity_revision, lifecycle_revision,
                     database_contract_revision, canonical_foundations_revision, clientflow_deployment_revision,
-                    clientflow_update_auth_revision, client_liveness_revision, display_authority_revision, head_revision,
+                    clientflow_update_auth_revision, client_liveness_revision, display_authority_revision,
+                    system_authority_revision, head_revision,
                 )
             ):
                 raise RuntimeError("Legacy-revision reconciliation mangler kendte Alembic-noder")
@@ -945,10 +948,11 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                 or clientflow_update_auth_revision.down_revision != REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION
                 or client_liveness_revision.down_revision != REVIEWED_CLIENTFLOW_UPDATE_AUTH_REVISION
                 or display_authority_revision.down_revision != REVIEWED_CLIENT_LIVENESS_REVISION
-                or head != REVIEWED_DISPLAY_AUTHORITY_REVISION
+                or system_authority_revision.down_revision != REVIEWED_DISPLAY_AUTHORITY_REVISION
+                or head != REVIEWED_SYSTEM_AUTHORITY_REVISION
             ):
                 raise RuntimeError(
-                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B -> 52A -> 53A-kæde"
+                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B -> 52A -> 53A -> 53B-kæde"
                 )
             legacy_columns, legacy_constraints, legacy_indexes = (
                 _pre_livestream_control_schema_contract()

@@ -348,12 +348,11 @@ class Client(ClientBase, table=True):
     client_update_allow_downgrade: bool = Field(default=False, nullable=False)
     client_update_reason: Optional[str] = _nullable_text_field()
 
-    # Lokal klientstyring (ikke browser/kiosk-flow).
-    # local_management_secret gemmer kun krypteret one-time secret og må ikke eksponeres i ClientRead.
+    # Legacy local-management metadata retained only for response compatibility.
+    # Command authority is ClientCommand(domain="system"); no password secret is stored here.
     local_management_action: Optional[str] = _nullable_text_field()
     local_management_request_id: Optional[str] = _nullable_text_field()
     local_management_desired_hostname: Optional[str] = _nullable_text_field()
-    local_management_secret: Optional[str] = _nullable_text_field()
     local_management_status: Optional[str] = _nullable_text_field("ready")
     local_management_message: Optional[str] = _nullable_text_field()
     local_management_requested_at: Optional[datetime] = None

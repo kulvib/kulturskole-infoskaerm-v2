@@ -84,42 +84,51 @@ def test_network_diagnostics_are_not_a_command_authority():
     assert "_client_network_unavailable" not in clients
 
 
-def test_live_only_legacy_action_guards_use_canonical_status_liveness_only():
+def test_live_only_action_guards_use_canonical_status_liveness_only():
     clients = read_backend("service1/routers/clients.py")
     assert "def _require_client_online(" in clients
     assert "evidence.is_online" in clients
     assert "_require_domain_ready" not in clients
     assert "_shared_domain_for_action" not in clients
     assert "_client_network_unavailable" not in clients
-    assert "current legacy action endpoints are not producers for the shared ClientCommand" in clients
-    update_guard = clients.split("def _validate_client_update_command_availability", 1)[1].split('@router.put("/clients/{id}/update"', 1)[0]
-    assert "_require_client_online(session, client)" in update_guard
-    assert "network_has_connection" not in update_guard
+    system_ready = clients.split("def _require_system_ready", 1)[1].split("@router.get", 1)[0]
+    assert "_require_client_online(session, client, presence=presence)" in system_ready
+    assert "evidence.system.is_online" in system_ready
+    assert "network_has_connection" not in system_ready
 
 
-def test_os_update_staleness_uses_os_specific_timestamps_only():
+def test_os_update_no_longer_uses_legacy_staleness_mailbox():
     clients = read_backend("service1/routers/clients.py")
-    stale = clients.split("def _os_update_is_stale", 1)[1].split("def _normalize_os_update_state_if_finished", 1)[0]
-    assert 'ubuntu_update_updated_at' in stale
-    assert 'ubuntu_update_started_at' in stale
-    assert 'last_seen' not in stale
-    assert 'chrome_last_updated' not in stale
+    assert "def _os_update_is_stale" not in clients
+    assert "def _normalize_os_update_state_if_finished" not in clients
+    section = clients.split('@router.post("/clients/{id}/os-update")', 1)[1].split('@router.post("/clients/{id}/os-update/reset")', 1)[0]
+    assert "queue_system_command(" in section
+    assert 'command_type="update_os"' in section
+    assert "pending_os_update =" not in section
+    assert "ubuntu_update_updated_at" not in section
+    assert "last_seen" not in section
+    assert "chrome_last_updated" not in section
 
 
 def test_every_clientread_response_path_attaches_canonical_presence():
     clients = read_backend("service1/routers/clients.py")
+    helper = clients.split("def _prepare_full_client_read", 1)[1].split("def _prepare_clients_read", 1)[0]
+    assert "load_client_presence(session, client)" in helper
+    assert "_apply_display_projection_for_read(session, client)" in helper
+    assert "_prepare_client_read(client, evidence)" in helper
+    assert "_apply_system_projection_for_read(session, client, evidence)" in helper
 
     route_expectations = {
         'def get_clients_for_my_organization': '_prepare_clients_read(session, clients)',
         'def get_clients(': '_prepare_clients_read(session, clients)',
         'def get_deleted_clients(': '_prepare_clients_read(session, clients)',
         'def get_deleted_clients_slash': 'return get_deleted_clients(session=session, user=user)',
-        'def get_client(': 'return _prepare_client_read(client, presence)',
-        'async def create_client': 'return _prepare_client_read(client, load_client_presence(session, client))',
-        'async def update_client': 'return _prepare_client_read(client, load_client_presence(session, client))',
-        'async def update_kiosk_url': 'return _prepare_client_read(client, load_client_presence(session, client))',
-        'async def approve_client': 'return _prepare_client_read(client, load_client_presence(session, client))',
-        'async def restore_client': '_prepare_client_read(client, load_client_presence(session, client))',
+        'def get_client(': 'return _prepare_full_client_read(session, client)',
+        'async def create_client': 'return _prepare_full_client_read(session, client)',
+        'async def update_client': 'return _prepare_full_client_read(session, client)',
+        'async def update_kiosk_url': 'return _prepare_full_client_read(session, client)',
+        'async def approve_client': 'return _prepare_full_client_read(session, client)',
+        'async def restore_client': '_prepare_full_client_read(session, client)',
     }
     for marker, expected in route_expectations.items():
         section = clients.split(marker, 1)[1]
@@ -137,8 +146,8 @@ def test_step52a_drops_legacy_columns_and_is_the_reviewed_head():
     assert 'down_revision = "20260820_51b_update_auth"' in migration
     assert 'op.drop_column("client", "last_seen")' in migration
     assert 'op.drop_column("client", "isOnline")' in migration
-    assert contract.rsplit('EXPECTED_HEAD_REVISION = ', 1)[1].splitlines()[0] == '"20260823_53a_display_authority"'
-    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260823_53a_display_authority"' in runner
-    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260823_53a_display_authority"' in runner
+    assert contract.rsplit('EXPECTED_HEAD_REVISION = ', 1)[1].splitlines()[0] == '"20260823_53b_system_authority"'
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260823_53b_system_authority"' in runner
+    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260823_53b_system_authority"' in runner
     assert 'REVIEWED_CLIENT_LIVENESS_REVISION = "20260822_52a_client_liveness"' in runner
     assert "_without_client_liveness_schema" in runner

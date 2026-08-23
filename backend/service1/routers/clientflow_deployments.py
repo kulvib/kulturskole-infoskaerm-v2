@@ -35,6 +35,7 @@ from ..clientflow_releases import (
 from ..clientflow_update_models import ClientFlowDeployment
 from ..db import get_session
 from ..models import Client
+from ..system_control import active_system_command, lock_system_client
 
 router = APIRouter(tags=["clientflow-deployments"])
 
@@ -83,11 +84,16 @@ def _client_or_404(session: Session, client_id: int) -> Client:
     return client
 
 
-def _require_deployable_client(client: Client) -> None:
+def _require_deployable_client(session: Session, client: Client) -> None:
     if getattr(client, "deleted_at", None) is not None or str(getattr(client, "status", "")) != "approved":
         raise HTTPException(status_code=409, detail="ClientFlow deployment kræver en aktiv godkendt klient")
-    if bool(getattr(client, "pending_os_update", False)):
-        raise HTTPException(status_code=409, detail="ClientFlow deployment kan ikke startes under en aktiv Ubuntu-opdatering")
+    if client.id is not None:
+        active = active_system_command(session, int(client.id))
+        if active is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"ClientFlow deployment kan ikke startes under aktiv System-handling '{active.command_type}'",
+            )
 
 
 def _deployment_or_404(session: Session, deployment_id: str) -> ClientFlowDeployment:
@@ -106,7 +112,7 @@ def create_clientflow_deployment(
     user=Depends(get_current_superadmin_user),
 ):
     client = _client_or_404(session, client_id)
-    _require_deployable_client(client)
+    _require_deployable_client(session, client)
     requested_version = str(body.target_version or "").strip()
     if requested_version.lower() == "latest":
         raise HTTPException(status_code=400, detail="ClientFlow deployment kræver en konkret katalogversion; 'latest' er ikke tilladt")
@@ -144,6 +150,11 @@ def create_clientflow_deployment(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     try:
+        # Serialize canonical System commands and ClientFlow deployments on the
+        # same client row, then re-check after acquiring the lock. This closes
+        # the race where both producers could pass their preliminary guard.
+        lock_system_client(session, int(client.id))
+        _require_deployable_client(session, client)
         deployment = create_authorized_deployment(
             session,
             client_id=int(client.id),
