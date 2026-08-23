@@ -9,6 +9,7 @@ from sqlmodel import Session
 
 from ..db import engine
 from ..display_control import reconcile_display_configuration
+from ..calendar_control import build_display_calendar_delivery
 from ..system_control import apply_system_command_completion
 from ..shared_domain import (
     claim_shared_command,
@@ -137,6 +138,18 @@ def _fail(domain: str, client_id: int, command_id: str, body: FailBody, authoriz
         )
         session.commit()
         return payload
+
+
+@router.get("/display-agent/clients/{client_id}/calendar")
+def display_calendar(client_id: int, authorization: str | None = Header(default=None)):
+    with Session(engine) as session:
+        require_shared_agent_token(
+            session,
+            authorization,
+            client_id=client_id,
+            domain="display",
+        )
+        return build_display_calendar_delivery(session, client_id=client_id)
 
 
 @router.put("/status-agent/clients/{client_id}/status")

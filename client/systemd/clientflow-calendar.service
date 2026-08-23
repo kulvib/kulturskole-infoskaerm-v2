@@ -1,0 +1,37 @@
+[Unit]
+Description=ClientFlow local calendar scheduler for Display
+After=network-online.target clientflow-display-runtime.service clientflow-display-power-broker.socket
+Wants=network-online.target clientflow-display-runtime.service clientflow-display-power-broker.socket
+ConditionPathExists=/etc/clientflow/credentials/display.json
+
+[Service]
+Type=simple
+User=clientflow-display-agent
+Group=clientflow-display-agent
+SupplementaryGroups=clientflow-display-control
+ExecStart=/opt/clientflow/active/runtime/bin/clientflow-calendar
+Restart=on-failure
+RestartSec=5s
+LoadCredential=display.json:/etc/clientflow/credentials/display.json
+StateDirectory=clientflow/calendar
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/clientflow/display-agent
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=clientflow.target

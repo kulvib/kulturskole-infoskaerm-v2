@@ -122,10 +122,10 @@ def test_frontend_has_single_transaction_kiosk_write_and_no_fake_auto_refresh():
     assert "apiUpdateKioskUrl" not in frontend
 
 
-def test_release_identity_and_chrome_lock_are_exact_1207_inputs():
-    assert read("client/VERSION").strip() == "1.3.6"
+def test_release_identity_and_chrome_lock_are_exact_1208_inputs():
+    assert read("client/VERSION").strip() == "1.3.7"
     release_input = json.loads(read("client/release/release-input.json"))
-    assert release_input["release_sequence"] == 1207
+    assert release_input["release_sequence"] == 1208
     lock = json.loads(read("client/release/runtime-platform-inputs.lock.json"))
     assert lock["schema_version"] == 1
     assert lock["platform_artifacts"] == [{
@@ -160,7 +160,9 @@ def test_display_read_projection_cannot_autoflush_into_legacy_client_columns():
 def test_legacy_display_writes_remain_unroutable_after_system_authority_cutover():
     clients = read("backend/service1/routers/clients.py")
 
-    assert 'LEGACY_DISPLAY_STATUS_WRITE_FIELDS = {"chrome_status", "chrome_color", "chrome_step", "chrome_last_updated"}' in clients
+    legacy_set = clients[clients.index("LEGACY_DISPLAY_STATUS_WRITE_FIELDS ="):clients.index("def _reject_legacy_display_write_fields")]
+    for field in ("chrome_status", "chrome_color", "chrome_step", "chrome_last_updated", "service_calendar_status"):
+        assert f'"{field}"' in legacy_set
     assert "_reject_legacy_display_write_fields(create_fields)" in clients
     assert 'pending_display_action in _LEGACY_DISPLAY_PENDING_ACTIONS' in clients
     assert 'Legacy pending Chrome/Display-action er fjernet' in clients

@@ -72,10 +72,10 @@ def test_catalog_1205_remains_approved_authority_while_source_moves_ahead() -> N
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
 
-    assert source_version == "1.3.6"
-    assert release_input["release_sequence"] == 1207
+    assert source_version == "1.3.7"
+    assert release_input["release_sequence"] == 1208
 
-    # Source/build identity is intentionally ahead while 1.3.6/1207 is only a
+    # Source/build identity is intentionally ahead while 1.3.7/1208 is only a
     # candidate. Runtime selector policy must remain on the separately approved
     # and immutably published 1.3.4/1205 release until explicit promotion.
     assert data["catalog_sequence"] == 1205
