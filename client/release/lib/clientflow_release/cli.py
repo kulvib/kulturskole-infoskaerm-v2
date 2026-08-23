@@ -8,6 +8,7 @@ from pathlib import Path
 import pwd
 import grp
 import re
+import shutil
 import stat
 import secrets
 import subprocess
@@ -17,6 +18,7 @@ from .bundle import verify_bundle
 from .constants import DOMAIN_NAMES, INSTALL_MODE_FRESH, MAX_BUNDLE_BYTES
 from .crypto import sha256_file
 from .enrollment import (
+    EnrollmentHTTPError,
     claim,
     complete,
     generate_system_key,
@@ -102,6 +104,46 @@ def _fresh_conflicts(layout: Layout) -> list[str]:
             except KeyError:
                 pass
     return sorted(set(conflicts))
+
+
+def _cleanup_new_install_preclaim_state(layout: Layout, *, install_id: str) -> None:
+    # _fresh_conflicts() proves these roots did not exist before a brand-new
+    # transaction. Verify ownership of the still-uncommitted local transaction
+    # before deleting anything, so concurrent or externally replaced state is
+    # never mistaken for cleanup material.
+    state_path = _install_state_path(layout)
+    state = load_secure_json(state_path)
+    if str(state.get("install_id") or "") != str(install_id):
+        raise RuntimeError("Pre-claim cleanup afviste install-state fra en anden transaction")
+    for absolute in ("/etc/clientflow", "/var/lib/clientflow"):
+        path = layout.path(absolute)
+        if path.is_symlink():
+            raise RuntimeError(f"Pre-claim cleanup afviste symlink: {path}")
+        if path.exists():
+            shutil.rmtree(path)
+
+
+def _prepare_claim_ca(layout: Layout, ca_file: Path | None, *, new_install: bool) -> str | None:
+    target = layout.path("/etc/clientflow/tls/ca.pem")
+    if ca_file is not None:
+        source = ca_file.resolve()
+        raw = _secure_regular_file(source, max_bytes=1024 * 1024, secret=False)
+        if b"BEGIN CERTIFICATE" not in raw:
+            raise RuntimeError("CA-filen indeholder ikke et PEM-certifikat")
+        if target.exists() or target.is_symlink():
+            existing = _secure_regular_file(target, max_bytes=1024 * 1024, secret=False)
+            if new_install:
+                raise RuntimeError("Fresh install CA-target opstod efter clean-state preflight")
+            if existing != raw:
+                raise RuntimeError("Resume kræver samme gemte CA-fil som den oprindelige installation")
+        atomic_write_bytes(target, raw, mode=0o644)
+        return "/etc/clientflow/tls/ca.pem"
+    if not target.exists() and not target.is_symlink():
+        return None
+    raw = _secure_regular_file(target, max_bytes=1024 * 1024, secret=False)
+    if b"BEGIN CERTIFICATE" not in raw:
+        raise RuntimeError("Den gemte CA-fil indeholder ikke et PEM-certifikat")
+    return "/etc/clientflow/tls/ca.pem"
 
 
 def _secure_regular_file(path: Path, *, max_bytes: int = 1024 * 1024, secret: bool = True) -> bytes:
@@ -360,8 +402,9 @@ def install_fresh(args: argparse.Namespace) -> dict:
     )
     release_id = str(binding["release_id"])
     state_path = _install_state_path(layout)
+    new_install = not state_path.exists()
 
-    if state_path.exists():
+    if not new_install:
         install_state = load_secure_json(state_path)
         if install_state.get("schema_version") != INSTALL_STATE_SCHEMA:
             raise RuntimeError(
@@ -413,48 +456,73 @@ def install_fresh(args: argparse.Namespace) -> dict:
     seed = base64.urlsafe_b64decode(seed_text + "=" * (-len(seed_text) % 4))
     install_id = str(install_state["install_id"])
     etc_root = layout.path("/etc/clientflow")
-    ensure_real_directory(etc_root, mode=0o750)
-    stage_bundle(
-        args.bundle,
-        release_id=release_id,
-        expected_bundle_sha256=approved_bundle_sha256,
-        install_mode=INSTALL_MODE_FRESH,
-        layout=layout,
-    )
-    install_staged_definitions(release_id, layout=layout, kiosk_user=kiosk_user)
-    stored_ca_path = _copy_install_configuration(layout, release_id, ca_file=args.ca_file)
-    request_ca_file = layout.path(stored_ca_path) if stored_ca_path else None
-    install_state["status"] = "staged_inactive"
-    atomic_write_json(state_path, install_state, mode=0o600)
 
-    private_key = etc_root / "system-private-key.pem"
-    if not private_key.exists():
-        public_key_pem, _key_id = generate_system_key(private_key)
-        atomic_write_bytes(etc_root / "system-public-key.pem", public_key_pem.encode("ascii"), mode=0o644)
-    else:
-        public_key_pem = (etc_root / "system-public-key.pem").read_text(encoding="ascii")
+    # Only minimal crash-resume material may exist before the consuming claim:
+    # install-id/seed, optional pinned CA, and the exact system/update key pair
+    # whose public material is committed by the receipt. Staged release files,
+    # managed definitions, sysusers and tmpfiles are deliberately deferred until
+    # after the backend trust gate succeeds.
+    try:
+        ensure_real_directory(etc_root, mode=0o750)
+        stored_ca_path = _prepare_claim_ca(layout, args.ca_file, new_install=new_install)
+        request_ca_file = layout.path(stored_ca_path) if stored_ca_path else None
 
-    update_private_key = etc_root / "update/private-key.pem"
-    if not update_private_key.exists():
-        update_public_key_pem, _update_key_id, _update_jwk, _update_jkt = generate_update_key(update_private_key)
-    else:
-        update_public_key_pem, _update_key_id, _update_jwk, _update_jkt = update_public_material(update_private_key)
-    _persist_updater_tls_ca(layout, stored_ca_path)
+        private_key = etc_root / "system-private-key.pem"
+        if not private_key.exists():
+            public_key_pem, _key_id = generate_system_key(private_key)
+            atomic_write_bytes(etc_root / "system-public-key.pem", public_key_pem.encode("ascii"), mode=0o644)
+        else:
+            public_key_pem = (etc_root / "system-public-key.pem").read_text(encoding="ascii")
+
+        update_private_key = etc_root / "update/private-key.pem"
+        if not update_private_key.exists():
+            update_public_key_pem, _update_key_id, _update_jwk, _update_jkt = generate_update_key(update_private_key)
+        else:
+            update_public_key_pem, _update_key_id, _update_jwk, _update_jkt = update_public_material(update_private_key)
+    except Exception:
+        if new_install:
+            _cleanup_new_install_preclaim_state(layout, install_id=install_id)
+        raise
 
     if not _all_credentials_present(layout):
-        response = claim(
-            backend_url=backend_url,
-            enrollment_code=args.enrollment_code,
-            fresh_install_authorization=args.fresh_install_authorization,
-            fresh_install_binding=binding,
-            install_id=install_id,
-            seed=seed,
-            public_key_pem=public_key_pem,
-            update_auth_public_key_pem=update_public_key_pem,
-            name=args.name,
-            locality=args.locality,
-            ca_file=request_ca_file,
+        try:
+            response = claim(
+                backend_url=backend_url,
+                enrollment_code=args.enrollment_code,
+                fresh_install_authorization=args.fresh_install_authorization,
+                fresh_install_binding=binding,
+                install_id=install_id,
+                seed=seed,
+                public_key_pem=public_key_pem,
+                update_auth_public_key_pem=update_public_key_pem,
+                name=args.name,
+                locality=args.locality,
+                ca_file=request_ca_file,
+            )
+        except EnrollmentHTTPError as exc:
+            # A definite 4xx response from the first claim is a fail-closed,
+            # pre-commit rejection. Restore the original clean-machine state so
+            # an authorization/release mismatch cannot strand partial local state.
+            # 5xx/transport/invalid-response failures remain resumable because
+            # the backend may already have committed the receipt.
+            if new_install and 400 <= exc.status_code < 500:
+                _cleanup_new_install_preclaim_state(layout, install_id=install_id)
+            raise
+
+        stage_bundle(
+            args.bundle,
+            release_id=release_id,
+            expected_bundle_sha256=approved_bundle_sha256,
+            install_mode=INSTALL_MODE_FRESH,
+            layout=layout,
         )
+        install_staged_definitions(release_id, layout=layout, kiosk_user=kiosk_user)
+        stored_ca_path = _copy_install_configuration(layout, release_id, ca_file=None)
+        request_ca_file = layout.path(stored_ca_path) if stored_ca_path else None
+        _persist_updater_tls_ca(layout, stored_ca_path)
+        install_state["status"] = "staged_inactive"
+        atomic_write_json(state_path, install_state, mode=0o600)
+
         persist_enrollment(
             response,
             seed=seed,
@@ -467,8 +535,22 @@ def install_fresh(args: argparse.Namespace) -> dict:
         )
         install_state["status"] = "credentials_persisted"
         atomic_write_json(state_path, install_state, mode=0o600)
+    else:
+        # A resumed transaction with already-persisted credentials must already
+        # have its exact release staged and definitions materialized. Validation
+        # below fails closed if that durable post-claim state is incomplete.
+        stored_ca_path = _copy_install_configuration(layout, release_id, ca_file=None)
+        request_ca_file = layout.path(stored_ca_path) if stored_ca_path else None
+        _persist_updater_tls_ca(layout, stored_ca_path)
+
     if install_state.get("status") != "enrollment_completed":
-        complete(backend_url=backend_url, install_id=install_id, seed=seed, fresh_install_binding=binding, ca_file=request_ca_file)
+        complete(
+            backend_url=backend_url,
+            install_id=install_id,
+            seed=seed,
+            fresh_install_binding=binding,
+            ca_file=request_ca_file,
+        )
         install_state["status"] = "enrollment_completed"
         atomic_write_json(state_path, install_state, mode=0o600)
 
@@ -489,7 +571,6 @@ def install_fresh(args: argparse.Namespace) -> dict:
         "next_command": f"clientflow-installer activate --release-id {release_id} --expected-release-approval-reference <release-approval-reference>",
         "automatic_reboot": False,
     }
-
 
 def _common_transaction_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", help=argparse.SUPPRESS)

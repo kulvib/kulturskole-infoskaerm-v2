@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 
 import pytest
@@ -11,7 +12,7 @@ for entry in (ROOT / "backend", ROOT / "client/release/lib"):
         sys.path.insert(0, str(entry))
 
 from clientflow_release import cli as installer_cli  # noqa: E402
-from clientflow_release.enrollment import EnrollmentError, validate_fresh_install_binding  # noqa: E402
+from clientflow_release.enrollment import EnrollmentError, EnrollmentHTTPError, validate_fresh_install_binding  # noqa: E402
 
 
 BINDING = {
@@ -99,6 +100,115 @@ def test_installer_carries_same_binding_into_claim_and_complete_resume_transacti
     source = (ROOT / "client/release/lib/clientflow_release/cli.py").read_text(encoding="utf-8")
     assert "fresh_install_binding=binding" in source
     claim_index = source.index("response = claim(")
-    complete_index = source.index("complete(backend_url=backend_url", claim_index)
+    complete_index = source.index("complete(\n", claim_index)
     assert source.index("fresh_install_binding=binding", claim_index) < complete_index
-    assert "fresh_install_binding=binding" in source[complete_index:complete_index + 240]
+    assert "fresh_install_binding=binding" in source[complete_index:complete_index + 360]
+
+
+def _fresh_install_args(tmp_path: Path) -> SimpleNamespace:
+    return SimpleNamespace(
+        root=str(tmp_path),
+        kiosk_user="kiosk",
+        backend_url="https://display.example.invalid",
+        bundle=tmp_path / "approved.tar",
+        expected_bundle_sha256=BINDING["bundle_sha256"],
+        enrollment_code="CF-TEST-TEST-TEST",
+        fresh_install_authorization="signed-authorization",
+        name=None,
+        locality=None,
+        ca_file=None,
+    )
+
+
+def _patch_new_install_primitives(monkeypatch, *, claim_error: Exception):
+    manifest = {
+        "release_id": BINDING["release_id"],
+        "version": BINDING["version"],
+        "release_sequence": BINDING["release_sequence"],
+        "release_approval": {
+            "reference": BINDING["release_approval_reference"],
+            "candidate_sha256": BINDING["release_candidate_sha256"],
+        },
+        "source": {"commit": BINDING["source_commit"], "dirty": False},
+    }
+    monkeypatch.setattr(
+        installer_cli,
+        "_verify_expected_bundle_identity",
+        lambda *_args, **_kwargs: (BINDING["bundle_size"], BINDING["bundle_sha256"]),
+    )
+    monkeypatch.setattr(
+        installer_cli,
+        "verify_bundle",
+        lambda *_args, **_kwargs: (manifest, BINDING["bundle_size"], BINDING["bundle_sha256"]),
+    )
+
+    def fake_system_key(path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("system-private", encoding="ascii")
+        path.chmod(0o600)
+        return "system-public", "system-key"
+
+    def fake_update_key(path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("update-private", encoding="ascii")
+        path.chmod(0o600)
+        return "update-public", "update-key", {}, "thumbprint"
+
+    monkeypatch.setattr(installer_cli, "generate_system_key", fake_system_key)
+    monkeypatch.setattr(installer_cli, "generate_update_key", fake_update_key)
+    monkeypatch.setattr(installer_cli, "claim", lambda **_kwargs: (_ for _ in ()).throw(claim_error))
+
+
+def test_first_claim_definite_rejection_restores_clean_client_state(monkeypatch, tmp_path):
+    _patch_new_install_primitives(
+        monkeypatch,
+        claim_error=EnrollmentHTTPError(409, "Fresh-install release-binding matcher ikke authorization"),
+    )
+    staged = []
+    monkeypatch.setattr(installer_cli, "stage_bundle", lambda *_args, **_kwargs: staged.append("stage"))
+    monkeypatch.setattr(
+        installer_cli, "install_staged_definitions", lambda *_args, **_kwargs: staged.append("definitions")
+    )
+
+    with pytest.raises(EnrollmentHTTPError) as exc:
+        installer_cli.install_fresh(_fresh_install_args(tmp_path))
+
+    assert exc.value.status_code == 409
+    assert staged == []
+    assert not (tmp_path / "etc/clientflow").exists()
+    assert not (tmp_path / "var/lib/clientflow").exists()
+    assert not (tmp_path / "opt/clientflow").exists()
+
+
+def test_first_claim_ambiguous_server_failure_keeps_only_resume_material(monkeypatch, tmp_path):
+    _patch_new_install_primitives(
+        monkeypatch,
+        claim_error=EnrollmentHTTPError(503, "ambiguous backend failure"),
+    )
+    staged = []
+    monkeypatch.setattr(installer_cli, "stage_bundle", lambda *_args, **_kwargs: staged.append("stage"))
+    monkeypatch.setattr(
+        installer_cli, "install_staged_definitions", lambda *_args, **_kwargs: staged.append("definitions")
+    )
+
+    with pytest.raises(EnrollmentHTTPError) as exc:
+        installer_cli.install_fresh(_fresh_install_args(tmp_path))
+
+    assert exc.value.status_code == 503
+    assert staged == []
+    assert (tmp_path / "var/lib/clientflow/release/install-state.json").is_file()
+    assert (tmp_path / "etc/clientflow/system-private-key.pem").is_file()
+    assert (tmp_path / "etc/clientflow/update/private-key.pem").is_file()
+    assert not (tmp_path / "opt/clientflow").exists()
+
+
+def test_first_claim_precedes_release_staging_and_managed_definitions():
+    source = (ROOT / "client/release/lib/clientflow_release/cli.py").read_text(encoding="utf-8")
+    start = source.index("def install_fresh(")
+    end = source.index("def _common_transaction_parser", start)
+    install = source[start:end]
+    claim_index = install.index("response = claim(")
+    assert claim_index < install.index("stage_bundle(", claim_index)
+    assert claim_index < install.index("install_staged_definitions(", claim_index)
+    assert "except EnrollmentHTTPError as exc:" in install
+    assert "_cleanup_new_install_preclaim_state(layout, install_id=install_id)" in install
