@@ -63,7 +63,7 @@ def test_catalog_1210_rejects_update_from_130_and_keeps_131_as_minimum_bootstrap
         )
 
 
-def test_catalog_1210_matches_source_after_approved_publication() -> None:
+def test_catalog_1210_remains_selected_while_next_source_identity_is_unpromoted() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -72,18 +72,22 @@ def test_catalog_1210_matches_source_after_approved_publication() -> None:
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
 
-    assert source_version == "1.3.9"
-    assert release_input["release_sequence"] == 1210
+    # Source/build identity advances before candidate build/approval/publication.
+    # Policy selection must remain on the last immutable published release.
+    assert int(release_input["release_sequence"]) == data["catalog_sequence"] + 1
+    assert tuple(int(part) for part in source_version.split(".")) > tuple(
+        int(part) for part in data["latest_stable"].split(".")
+    )
 
-    # Promotion changes policy selection only. Exact approved byte identity remains
-    # authority of the immutable 51M artifact and must not be copied into catalog.
-    assert data["catalog_sequence"] == release_input["release_sequence"] == 1210
-    assert data["latest_stable"] == source_version == "1.3.9"
-    assert data["default_install_version"] == source_version
-    assert release["version"] == source_version
-    assert release["release_sequence"] == release_input["release_sequence"]
+    assert data["catalog_sequence"] == 1210
+    assert data["latest_stable"] == "1.3.9"
+    assert data["default_install_version"] == "1.3.9"
+    assert release["version"] == "1.3.9"
+    assert release["release_sequence"] == 1210
     assert release["release_id"] == "clientflow-1.3.9-seq-1210"
 
+    # Exact approved byte identity remains authority of the immutable 51M store
+    # and is deliberately not copied into the policy catalog.
     for field in (
         "bundle_sha256",
         "bundle_size",

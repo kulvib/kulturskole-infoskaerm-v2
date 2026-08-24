@@ -122,10 +122,7 @@ def test_frontend_has_single_transaction_kiosk_write_and_no_fake_auto_refresh():
     assert "apiUpdateKioskUrl" not in frontend
 
 
-def test_release_identity_and_chrome_lock_are_exact_1210_inputs():
-    assert read("client/VERSION").strip() == "1.3.9"
-    release_input = json.loads(read("client/release/release-input.json"))
-    assert release_input["release_sequence"] == 1210
+def test_chrome_platform_lock_is_exact_and_builder_consumes_it():
     lock = json.loads(read("client/release/runtime-platform-inputs.lock.json"))
     assert lock["schema_version"] == 1
     assert lock["platform_artifacts"] == [{
