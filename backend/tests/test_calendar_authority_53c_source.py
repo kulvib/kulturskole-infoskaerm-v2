@@ -10,17 +10,6 @@ def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-def test_53c_source_139_uses_promoted_canonical_139_runtime() -> None:
-    assert read("client/VERSION").strip() == "1.3.9"
-    release_input = json.loads(read("client/release/release-input.json"))
-    assert release_input["release_sequence"] == 1210
-    catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
-    assert catalog["catalog_sequence"] == 1210
-    assert catalog["latest_stable"] == "1.3.9"
-    assert catalog["default_install_version"] == "1.3.9"
-    assert catalog["releases"][0]["revision"] == "clientflow-1.3.9-seq-1210"
-
-
 def test_53c_calendar_delivery_is_display_domain_self_only_and_complete() -> None:
     shared = read("backend/service1/routers/shared_domain.py")
     control = read("backend/service1/calendar_control.py")

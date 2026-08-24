@@ -24,32 +24,31 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     release_input = json.loads(RELEASE_INPUT_PATH.read_text(encoding="utf-8"))
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    # Source/build identity may advance before publication, but after the exact
-    # approved artifact is physically published the catalog may be promoted to it.
-    assert version == "1.3.9"
-    assert release_input["release_sequence"] == 1210
-    source_release_id = f"clientflow-{version}-seq-{release_input['release_sequence']}"
-    assert source_release_id == "clientflow-1.3.9-seq-1210"
+    source_sequence = int(release_input["release_sequence"])
+    catalog_sequence = int(catalog["catalog_sequence"])
+    source_tuple = tuple(int(part) for part in version.split("."))
 
-    # 1.3.9/1210 has passed approval, immutable publication and store
-    # re-verification, so policy selection now matches source/build identity.
-    assert catalog["catalog_sequence"] == 1210
-    assert catalog["latest_stable"] == "1.3.9"
-    assert catalog["default_install_version"] == "1.3.9"
-    assert catalog["catalog_sequence"] == release_input["release_sequence"]
+    # Source/build identity is allowed to move exactly one release ahead while
+    # candidate build, manual approval and immutable publication are pending.
+    # The runtime catalog must never lead source/build identity.
+    assert source_sequence >= catalog_sequence
+    assert source_sequence - catalog_sequence in {0, 1}
+    assert len(source_tuple) == 3
+
     assert len(catalog["releases"]) == 1
-
     selected = catalog["releases"][0]
     assert selected["version"] == catalog["latest_stable"]
     assert selected["version"] == catalog["default_install_version"]
-    assert selected["release_sequence"] == catalog["catalog_sequence"]
+    assert selected["release_sequence"] == catalog_sequence
     assert selected["release_id"] == f"clientflow-{selected['version']}-seq-{selected['release_sequence']}"
     assert selected["revision"] == selected["release_id"]
 
     selected_tuple = tuple(int(part) for part in selected["version"].split("."))
-    source_tuple = tuple(int(part) for part in version.split("."))
-    assert selected_tuple == source_tuple
-    assert selected["release_sequence"] == release_input["release_sequence"]
+    assert selected_tuple <= source_tuple
+    if source_sequence == catalog_sequence:
+        assert selected_tuple == source_tuple
+    else:
+        assert selected_tuple < source_tuple
 
 
 def test_51f_139_update_keeps_131_as_minimum_proven_bootstrap() -> None:

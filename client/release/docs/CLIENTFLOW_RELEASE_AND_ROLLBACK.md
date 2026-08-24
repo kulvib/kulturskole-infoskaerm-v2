@@ -2,7 +2,7 @@
 
 ## Én versionskilde
 
-`VERSION` indeholder `1.3.1` og er den eneste manuelt vedligeholdte produktversion. Filnavne, payload-root, release-ID og manifestværdier genereres. Release sequence vedligeholdes separat i `release/release-input.json`, fordi den er en monoton anti-rollback-værdi og ikke en alternativ versionskilde.
+`VERSION` indeholder den aktuelle source/build-version og er den eneste manuelt vedligeholdte produktversion. Filnavne, payload-root, release-ID og manifestværdier genereres. Release sequence vedligeholdes separat i `release/release-input.json`, fordi den er en monoton anti-rollback-værdi og ikke en alternativ versionskilde.
 
 Runtime-wheelets PEP 621-version er også dynamisk bundet til denne authority via `clientflow_runtime.version.VERSION`; `client/runtime/pyproject.toml` indeholder derfor ingen separat statisk produktversion. I source/build-kontekst læser modulet `client/VERSION`; i installeret runtime rapporterer det versionen fra wheelets egen distributionsmetadata. Dermed kan en staged runtime ikke arve versionsnummeret fra et ældre `/opt/clientflow/active`-target.
 

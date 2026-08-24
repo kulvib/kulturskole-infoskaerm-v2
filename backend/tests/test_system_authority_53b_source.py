@@ -166,15 +166,3 @@ def test_53b_os_update_reports_reboot_requirement_without_auto_reboot_or_fake_pr
     assert '"claimed": ("installing", "os_update_installing", "Ubuntu-opdatering kører", None)' in control
     assert 'if "CLIENTFLOW_REBOOT_REQUIRED=1" in output:' in control
     assert '"ubuntu_update_reboot_required": reboot_required' in control
-
-def test_53b_source_139_uses_promoted_canonical_139_runtime() -> None:
-    version = read("client/VERSION").strip()
-    release_input = json.loads(read("client/release/release-input.json"))
-    catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
-
-    assert version == "1.3.9"
-    assert release_input["release_sequence"] == 1210
-    assert catalog["catalog_sequence"] == 1210
-    assert catalog["latest_stable"] == "1.3.9"
-    assert catalog["default_install_version"] == "1.3.9"
-    assert catalog["releases"][0]["release_id"] == "clientflow-1.3.9-seq-1210"
