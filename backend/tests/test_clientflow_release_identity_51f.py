@@ -51,10 +51,10 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
         assert selected_tuple < source_tuple
 
 
-def test_51f_139_update_keeps_131_as_minimum_proven_bootstrap() -> None:
+def test_51f_promoted_release_keeps_131_as_minimum_proven_bootstrap() -> None:
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = catalog["releases"][0]
-    assert release["version"] == "1.3.9"
+    assert release["version"] == _version()
     assert release["min_current_version"] == "1.3.1"
     assert "fresh_install" in release["install_modes"]
     assert "in_place_update" in release["install_modes"]
