@@ -683,9 +683,40 @@ def _systemd_prepare(layout: Layout) -> None:
     _run(["/usr/bin/systemctl", "daemon-reload"])
 
 
-def _stop_target(layout: Layout) -> None:
-    if layout.root == Path("/"):
-        _run(["/usr/bin/systemctl", "stop", "clientflow.target"], check=False)
+_UPDATE_CONTROL_PLANE_UNITS = frozenset({
+    "clientflow-updater.service",
+    "clientflow-updater.timer",
+    "clientflow-update-controller.service",
+})
+
+
+def _runtime_unit_names(layout: Layout) -> list[str]:
+    names = {path.name for path in _managed_unit_paths(layout)}
+    return sorted(name for name in names if name not in _UPDATE_CONTROL_PLANE_UNITS)
+
+
+def _quiesce_runtime(layout: Layout, *, require_target: bool = True) -> None:
+    if layout.root != Path("/"):
+        return
+    units = _runtime_unit_names(layout)
+    if require_target and "clientflow.target" not in units:
+        raise TransactionError("Canonical clientflow.target mangler før runtime-quiesce")
+    if not units:
+        return
+    _run(["/usr/bin/systemctl", "stop", *units])
+    still_active: list[str] = []
+    for unit in units:
+        result = _run(
+            ["/usr/bin/systemctl", "show", unit, "-p", "ActiveState", "--value"],
+            check=False,
+        )
+        state = result.stdout.strip() if result.returncode == 0 else ""
+        if state not in {"inactive", "failed"}:
+            still_active.append(f"{unit}={state or 'unknown'}")
+    if still_active:
+        raise TransactionError(
+            "ClientFlow runtime kunne ikke quiesces før release-swap: " + ", ".join(still_active)
+        )
 
 
 def _start_target(layout: Layout) -> None:
@@ -696,8 +727,7 @@ def _start_target(layout: Layout) -> None:
 
 def _disable_target(layout: Layout) -> None:
     if layout.root == Path("/"):
-        _run(["/usr/bin/systemctl", "disable", "--now", "clientflow.target"], check=False)
-        _run(["/usr/bin/systemctl", "daemon-reload"], check=False)
+        _run(["/usr/bin/systemctl", "disable", "clientflow.target"])
 
 
 def _expected_active_units(release_root: Path) -> tuple[list[str], list[str]]:
@@ -766,7 +796,7 @@ def _activate_release(
         return {"status": "already_active", "release_id": release_id}
     release_root = layout.releases / release_id
     previous = current
-    _stop_target(layout)
+    _quiesce_runtime(layout)
     try:
         _apply_definitions(layout, release_root)
         _switch_active(layout, release_id)
@@ -775,7 +805,7 @@ def _activate_release(
         manifest = json.loads((release_root / "release-manifest.json").read_text())
         _health_check(layout, release_id, timeout=int(manifest["activation"]["health_timeout_seconds"]))
     except Exception as activation_error:
-        _stop_target(layout)
+        _quiesce_runtime(layout)
         try:
             if previous:
                 previous_root = layout.releases / previous
@@ -785,9 +815,11 @@ def _activate_release(
                 _start_target(layout)
                 _health_check(layout, previous, timeout=120)
             else:
+                _disable_target(layout)
                 layout.active.unlink(missing_ok=True)
                 _remove_definitions(layout)
-                _disable_target(layout)
+                if layout.root == Path("/"):
+                    _run(["/usr/bin/systemctl", "daemon-reload"])
         except Exception as rollback_error:
             _append_history(
                 state,
@@ -972,7 +1004,8 @@ def install_staged_definitions(
             _run(["/usr/bin/systemd-sysusers", str(layout.sysusers_file)])
             _run(["/usr/bin/systemd-tmpfiles", "--create", str(layout.tmpfiles_file)])
             _run(["/usr/bin/systemctl", "daemon-reload"])
-            _run(["/usr/bin/systemctl", "disable", "--now", "clientflow.target"], check=False)
+            _quiesce_runtime(layout)
+            _disable_target(layout)
         _append_history(state, "definitions_installed_inactive", release_id=release_id, unit_count=len(units))
         save_state(layout, state)
         return {"status": "installed_inactive", "release_id": release_id, "units": units}
