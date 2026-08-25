@@ -50,7 +50,8 @@ def test_51e_installer_wires_updater_only_after_enrollment_and_keeps_target_inac
     assert '"/usr/lib/clientflow"' in cli
     assert '"clientflow-updater"' in cli
     assert '["/usr/bin/systemctl", "enable", "--now", "clientflow-updater.timer"]' in transaction
-    assert '["/usr/bin/systemctl", "disable", "--now", "clientflow.target"]' in transaction
+    assert '_quiesce_runtime(layout)' in transaction
+    assert '["/usr/bin/systemctl", "disable", "clientflow.target"]' in transaction
 
 
 def test_51e_wipe_removes_stable_plane_without_reusing_legacy_activation():
@@ -62,6 +63,7 @@ def test_51e_wipe_removes_stable_plane_without_reusing_legacy_activation():
     assert '"/usr/lib/clientflow"' in wipe
     assert '"disable", "--now", "clientflow-updater.timer"' in wipe
     assert '"stop", "clientflow-updater.service"' in wipe
+    assert "_quiesce_runtime(layout, require_target=False)" in wipe
     assert "StableUpdaterClient" in updater_entrypoint
     assert "stage_bundle" not in updater_entrypoint
     assert "activate_release" not in updater_entrypoint
