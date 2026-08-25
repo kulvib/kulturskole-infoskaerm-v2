@@ -898,6 +898,9 @@ export default function ClientDetailsPage({
       ? client.chromeRunning
       : null
   );
+  const [liveBrowserRequested, setLiveBrowserRequested] = useState(
+    typeof client?.browser_requested === "boolean" ? client.browser_requested : null
+  );
   const [liveStep, setLiveStep]      = useState(client?.chrome_step ?? null);
   const liveStepRef                  = useRef(client?.chrome_step ?? null);
   const liveStepTimestampRef         = useRef(client?.chrome_last_updated ?? null);
@@ -972,6 +975,11 @@ export default function ClientDetailsPage({
     } else if (typeof client?.chromeRunning === "boolean") {
       liveChromeRunningRef.current = client.chromeRunning;
       setLiveChromeRunning(client.chromeRunning);
+    }
+    if (typeof client?.browser_requested === "boolean") {
+      setLiveBrowserRequested(client.browser_requested);
+    } else {
+      setLiveBrowserRequested(null);
     }
     setLiveDisplayResolution(pickDisplayResolutionFields(client));
     setLiveNetworkStatus(pickNetworkFields(client));
@@ -1108,6 +1116,10 @@ export default function ClientDetailsPage({
           } else if (polledChromeRunningHasValue) {
             liveChromeRunningRef.current = polledChromeRunning;
             setLiveChromeRunning(polledChromeRunning);
+          }
+
+          if (typeof data?.browser_requested === "boolean") {
+            setLiveBrowserRequested(data.browser_requested);
           }
 
           if (data?.uptime != null) {
@@ -1405,6 +1417,7 @@ export default function ClientDetailsPage({
       chrome_step: liveStep ?? client?.chrome_step ?? null,
       last_chrome_step: liveStep ?? client?.last_chrome_step ?? client?.chrome_step ?? null,
       chrome_running: liveChromeRunning,
+      browser_requested: liveBrowserRequested,
     }),
     [
       client,
@@ -1420,6 +1433,7 @@ export default function ClientDetailsPage({
       liveChromeColor,
       liveStep,
       liveChromeRunning,
+      liveBrowserRequested,
       liveLivestreamStatus,
       liveLivestreamProcessStatus,
       liveLivestreamDesiredState,
@@ -1486,6 +1500,7 @@ export default function ClientDetailsPage({
               liveStep={liveStep}
               liveChromeStatus={liveChromeStatus}
               chromeRunning={liveChromeRunning}
+              browserRequested={liveBrowserRequested}
               clientStatus={client?.status}
               pendingOsUpdate={liveClient?.pending_os_update}
               serviceUbuntuUpdateStatus={liveClient?.service_ubuntu_update_status}

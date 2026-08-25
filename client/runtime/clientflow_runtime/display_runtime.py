@@ -1,6 +1,7 @@
 """Unprivileged Display runtime for the canonical Google Chrome kiosk process."""
 from __future__ import annotations
 
+import grp
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ import time
 from typing import Any
 from urllib.parse import urlsplit
 
-from .atomic import atomic_write_json
+from .display_shared_file import atomic_write_shared_json
 from .logging_utils import configure_logging
 from .unix_rpc import RpcError, encode_message, read_message
 
@@ -27,6 +28,7 @@ STATUS_PATH = STATE_DIR / "runtime-status.json"
 PID_PATH = RUNTIME_DIR / "browser.pid"
 PROFILE_DIR = STATE_DIR / "browser-profile"
 CHROME_BINARY = Path("/usr/bin/google-chrome-stable")
+CONTROL_GROUP_NAME = os.getenv("CLIENTFLOW_DISPLAY_CONTROL_GROUP", "clientflow-display-control")
 _ALLOWED_CONFIGURATION_KEYS = {"schema_version", "revision", "kiosk_url"}
 
 
@@ -37,6 +39,26 @@ class DisplayRuntime:
         self.configuration: dict[str, Any] = self._load_configuration()
         self.browser_requested = bool(self.configuration.get("kiosk_url"))
         self.next_start_attempt = 0.0
+        self.shared_group_gid: int | None = None
+
+    @staticmethod
+    def _control_group_gid() -> int:
+        try:
+            return grp.getgrnam(CONTROL_GROUP_NAME).gr_gid
+        except KeyError as exc:
+            raise RuntimeError("Display control-gruppen mangler") from exc
+
+    def _prepare_shared_permissions(self) -> None:
+        gid = self._control_group_gid()
+        for directory in (STATE_DIR, RUNTIME_DIR):
+            directory.mkdir(parents=True, exist_ok=True)
+            os.chown(directory, -1, gid)
+            os.chmod(directory, 0o750)
+        for path, mode in ((CONFIG_PATH, 0o640), (STATUS_PATH, 0o640)):
+            if path.exists():
+                os.chown(path, -1, gid)
+                os.chmod(path, mode)
+        self.shared_group_gid = gid
 
     def _load_configuration(self) -> dict[str, Any]:
         try:
@@ -55,10 +77,11 @@ class DisplayRuntime:
             "configuration_revision": self.configuration.get("revision") if self.configuration else None,
             "state": state,
             "browser_pid": self.browser.pid if self.browser and self.browser.poll() is None else None,
+            "browser_requested": bool(self.browser_requested),
             "updated_at": time.time(),
             **details,
         }
-        atomic_write_json(STATUS_PATH, payload, mode=0o640)
+        atomic_write_shared_json(STATUS_PATH, payload, mode=0o640, group_gid=self.shared_group_gid)
 
     @staticmethod
     def _normalize_kiosk_url(value: Any) -> str | None:
@@ -106,7 +129,7 @@ class DisplayRuntime:
         if configuration["revision"] == current_revision and self.configuration and configuration != self.configuration:
             raise ValueError("Displaykonfigurationens revision matcher ikke det allerede anvendte indhold")
         changed = configuration != self.configuration
-        atomic_write_json(CONFIG_PATH, configuration, mode=0o640)
+        atomic_write_shared_json(CONFIG_PATH, configuration, mode=0o640, group_gid=self.shared_group_gid)
         self.configuration = configuration
         if changed:
             if configuration["kiosk_url"]:
@@ -364,17 +387,30 @@ class DisplayRuntime:
                 "state": "running" if self.browser and self.browser.poll() is None else "stopped",
                 "pid": self.browser.pid if self.browser and self.browser.poll() is None else None,
                 "configuration_revision": self.configuration.get("revision") if self.configuration else None,
+                "browser_requested": bool(self.browser_requested),
             }
         raise ValueError("Ukendt displayruntimehandling")
 
-    def run(self) -> int:
-        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    def _open_server_socket(self) -> socket.socket:
+        if self.shared_group_gid is None:
+            raise RuntimeError("Display control-gruppen er ikke initialiseret")
         SOCKET_PATH.unlink(missing_ok=True)
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server.bind(str(SOCKET_PATH))
-        os.chmod(SOCKET_PATH, 0o660)
-        server.listen(8)
-        server.setblocking(False)
+        try:
+            server.bind(str(SOCKET_PATH))
+            os.chown(SOCKET_PATH, -1, self.shared_group_gid)
+            os.chmod(SOCKET_PATH, 0o660)
+            server.listen(8)
+            server.setblocking(False)
+            return server
+        except Exception:
+            server.close()
+            SOCKET_PATH.unlink(missing_ok=True)
+            raise
+
+    def run(self) -> int:
+        self._prepare_shared_permissions()
+        server = self._open_server_socket()
         selector = selectors.DefaultSelector()
         selector.register(server, selectors.EVENT_READ)
         if self.configuration.get("kiosk_url"):

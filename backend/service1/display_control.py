@@ -280,6 +280,7 @@ def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
     status_payload = status.status_payload if status and isinstance(status.status_payload, dict) else {}
     runtime = _runtime_payload(status_payload)
     state = str(runtime.get("state") or "unknown").strip().lower()
+    browser_requested = runtime.get("browser_requested") if isinstance(runtime.get("browser_requested"), bool) else None
     runtime_updated = _epoch_datetime(runtime.get("updated_at"))
     if state == "running":
         chrome_status = "Kiosk browser kører"
@@ -342,6 +343,7 @@ def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
         "chrome_color": chrome_color,
         "chrome_step": chrome_step,
         "chrome_running": chrome_running,
+        "browser_requested": browser_requested,
         "chrome_last_updated": step_updated or (status.reported_at if status else None),
         "pending_chrome_action": pending,
         "pending_chrome_action_source": "display_command" if pending != "none" else None,

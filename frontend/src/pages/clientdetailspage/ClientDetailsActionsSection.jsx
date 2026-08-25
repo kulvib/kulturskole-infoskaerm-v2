@@ -28,6 +28,7 @@ import DesktopWindowsIcon from "@mui/icons-material/DesktopWindows";
 import { useTheme } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
 import { getActiveClientflowDeployment } from "../../api";
+import { getBrowserProcessActionDisabledInfo } from "./displayActionPolicy.mjs";
 
 /*
   DetailsActionsSection.jsx
@@ -390,6 +391,7 @@ export default function ClientDetailsActionsSection({
   liveStep = null,
   liveChromeStatus = null,
   chromeRunning = null,
+  browserRequested = null,
   clientStatus = null,
   pendingOsUpdate = false,
   serviceUbuntuUpdateStatus = null,
@@ -564,6 +566,8 @@ export default function ClientDetailsActionsSection({
     ? false
     : null;
 
+  const explicitBrowserRequested = typeof browserRequested === "boolean" ? browserRequested : null;
+
   const anyLoading = Object.values(actionLoading).some(Boolean);
 
   // v7.1.34: display_wake_complete er terminalt og display-only.
@@ -720,8 +724,12 @@ export default function ClientDetailsActionsSection({
 
       if (key === "wakeup") return { disabled: true, reason: "Klienten er allerede vågen" };
       if (key === "sleep" && sleepActionPending) return { disabled: true, reason: "Dvale er allerede sendt" };
-      if (key === "start" && chromeIsRunning === true) return { disabled: true, reason: "Kiosk browser kører allerede" };
-      if (key === "stop" && chromeIsRunning === false) return { disabled: true, reason: "Kiosk browser er allerede stoppet" };
+      const browserProcessInfo = getBrowserProcessActionDisabledInfo(
+        key,
+        chromeIsRunning,
+        explicitBrowserRequested
+      );
+      if (browserProcessInfo) return browserProcessInfo;
 
       return { disabled: false, reason: null };
     },
@@ -739,6 +747,7 @@ export default function ClientDetailsActionsSection({
       isSleeping,
       sleepActionPending,
       chromeIsRunning,
+      explicitBrowserRequested,
     ]
   );
 
@@ -856,10 +865,7 @@ export default function ClientDetailsActionsSection({
       disabled: isDisabledByState("stop"),
       disabledTooltip: getDisabledTooltip("stop", "Stop kiosk browser"),
       lockDuringBusy: true,
-      tooltip:
-        chromeIsRunning === false
-          ? "Kiosk browser er allerede stoppet"
-          : "Stop kiosk browser",
+      tooltip: "Stop kiosk browser",
     },
     {
       key: "sleep",

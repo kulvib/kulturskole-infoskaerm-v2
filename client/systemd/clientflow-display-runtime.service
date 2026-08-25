@@ -7,8 +7,7 @@ Requires=clientflow-display-platform-prepare.service
 [Service]
 Type=simple
 User=@CLIENTFLOW_KIOSK_USER@
-Group=clientflow-display-control
-SupplementaryGroups=video render audio
+SupplementaryGroups=clientflow-display-control video render audio
 ExecStart=/opt/clientflow/active/runtime/bin/clientflow-display-runtime
 Restart=on-failure
 RestartSec=5s

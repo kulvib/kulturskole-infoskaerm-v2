@@ -989,6 +989,7 @@ def _apply_display_projection_for_read(session, client: Client) -> None:
     _set_runtime_read_attr(client, "chrome_color", projection["chrome_color"])
     _set_runtime_read_attr(client, "chrome_last_updated", projection["chrome_last_updated"])
     _set_runtime_read_attr(client, "chrome_running", projection["chrome_running"])
+    _set_runtime_read_attr(client, "browser_requested", projection["browser_requested"])
     _set_runtime_read_attr(client, "chrome_step", projection["chrome_step"])
     _set_runtime_read_attr(client, "service_calendar_status", projection["service_calendar_status"])
 
@@ -1320,6 +1321,7 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "chrome_color": chrome_color_value,
         "chrome_step": chrome_step_value,
         "chrome_running": getattr(client, "chrome_running", None),
+        "browser_requested": getattr(client, "browser_requested", None),
         **_derive_network_status(client),
         "step": step_obj,
         "uptime": client.uptime,
