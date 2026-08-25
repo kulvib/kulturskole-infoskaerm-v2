@@ -377,3 +377,115 @@ def test_pending_approval_runtime_protocol_presence_reconnect_and_command_roundt
             select(ClientCommand).where(ClientCommand.client_id == CLIENT_ID)
         ).all()
         assert {row.status for row in commands} == {"succeeded"}
+
+
+def test_display_commissioning_uses_canonical_desired_state_and_real_apply_configuration(operational_http):
+    http, engine = operational_http
+
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
+    assert approved.status_code == 200, approved.text
+
+    display_token_response = _token(http, "display")
+    assert display_token_response.status_code == 200, display_token_response.text
+    display_token = display_token_response.json()["access_token"]
+
+    kiosk_url = "https://infoskaerm.example.test/client/4242"
+    configured = http.put(
+        f"/api/clients/{CLIENT_ID}/update",
+        json={"kiosk_url": kiosk_url},
+    )
+    assert configured.status_code == 200, configured.text
+
+    # A capable Display agent reports no applied configuration yet. The canonical
+    # backend must reconcile durable desired state into a real apply_configuration
+    # command instead of relying on a synthetic transport probe.
+    status = http.put(
+        f"/api/display-agent/clients/{CLIENT_ID}/status",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={
+            "schema_version": 1,
+            "observed_state": "online",
+            "status_payload": {
+                "runtime": {
+                    "state": "stopped",
+                    "configuration_revision": None,
+                    "browser_pid": None,
+                }
+            },
+            "agent_version": "1.3.10",
+            "boot_id": "display-boot-a",
+        },
+    )
+    assert status.status_code == 200, status.text
+
+    claim = http.post(
+        f"/api/display-agent/clients/{CLIENT_ID}/commands/claim",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={"lease_seconds": 60},
+    )
+    assert claim.status_code == 200, claim.text
+    claimed = claim.json()["claimed"]
+    assert claimed is not None
+    command = claimed["command"]
+    assert command["command_type"] == "apply_configuration"
+    assert command["payload"] == {
+        "schema_version": 1,
+        "revision": 1,
+        "kiosk_url": kiosk_url,
+    }
+
+    completed = http.post(
+        f"/api/display-agent/clients/{CLIENT_ID}/commands/{command['id']}/complete",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={
+            "claim_token": claimed["claim_token"],
+            "result": {"applied": True, "revision": 1},
+        },
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["completed"] is True
+
+    # The next real Display status reports the exact durable revision and a running
+    # browser. Reconciliation must converge without generating another command.
+    observed = http.put(
+        f"/api/display-agent/clients/{CLIENT_ID}/status",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={
+            "schema_version": 1,
+            "observed_state": "online",
+            "status_payload": {
+                "runtime": {
+                    "state": "running",
+                    "configuration_revision": 1,
+                    "browser_pid": 5101,
+                }
+            },
+            "agent_version": "1.3.10",
+            "boot_id": "display-boot-a",
+        },
+    )
+    assert observed.status_code == 200, observed.text
+
+    no_second_command = http.post(
+        f"/api/display-agent/clients/{CLIENT_ID}/commands/claim",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={"lease_seconds": 60},
+    )
+    assert no_second_command.status_code == 200, no_second_command.text
+    assert no_second_command.json()["claimed"] is None
+
+    with Session(engine) as session:
+        desired = session.get(DisplayDesiredConfiguration, CLIENT_ID)
+        assert desired is not None
+        assert desired.revision == 1
+        assert desired.kiosk_url == kiosk_url
+        display_status = session.exec(
+            select(ClientDomainStatus).where(
+                ClientDomainStatus.client_id == CLIENT_ID,
+                ClientDomainStatus.domain == "display",
+            )
+        ).one()
+        runtime = display_status.status_payload["runtime"]
+        assert runtime["state"] == "running"
+        assert runtime["configuration_revision"] == desired.revision
+        assert runtime["browser_pid"] == 5101
