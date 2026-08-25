@@ -16,7 +16,6 @@ import time
 from typing import Any
 from urllib.parse import urlsplit
 
-from .atomic import atomic_write_json
 from .display_shared_file import atomic_write_shared_json
 from .logging_utils import configure_logging
 from .unix_rpc import RpcError, encode_message, read_message
