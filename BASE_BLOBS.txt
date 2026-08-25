@@ -1,6 +1,0 @@
-e72af38ab66aff6cc8652ce19ec1e64db2ae5b74  client/systemd/clientflow-display-runtime.service
-8b6bf53772c51af9c6f3b6988fef6e8b8c97bc11  client/runtime/clientflow_runtime/display_runtime.py
-e127c639d7e432dd91dcecef4e1f4b4d2244aa16  backend/service1/display_control.py
-b2c5cf1b73af8fed194e762aea0ebf67a469670b  backend/service1/routers/clients.py
-632d342ad8919156f22f496f0661282d750330c5  frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx
-be0b0cb2c6d32511f9e5770a82c9cb88a6b57c90  frontend/src/pages/clientdetailspage/ClientDetailsActionsSection.jsx
