@@ -3,10 +3,16 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import sys
 
 import pytest
 
-from clientflow_runtime import display_runtime as runtime_module
+ROOT = Path(__file__).resolve().parents[2]
+RUNTIME_ROOT = ROOT / "client/runtime"
+if str(RUNTIME_ROOT) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_ROOT))
+
+from clientflow_runtime import display_runtime as runtime_module  # noqa: E402
 
 
 class _FakeProcess:
