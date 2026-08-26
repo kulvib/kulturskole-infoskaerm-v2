@@ -862,6 +862,12 @@ def _activate_release(
     )
     previous = intent.get("previous_release_id")
     release_root = layout.releases / release_id
+
+    # Once activation intent is durable, runtime boot must remain fail-closed
+    # until the exact target definitions + active symlink are ready.  Stopping
+    # the currently running units is not sufficient: an enabled target could
+    # otherwise auto-start after a crash/power-loss in the middle of the swap.
+    _disable_target(layout)
     _quiesce_runtime(layout)
     try:
         # Re-applying the exact target definitions is deliberate: after a crash we

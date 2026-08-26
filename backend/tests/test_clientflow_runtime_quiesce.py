@@ -115,6 +115,7 @@ def test_activation_quiesces_before_definition_and_active_symlink_swap(tmp_path,
     order: list[str] = []
 
     monkeypatch.setattr(transaction, "_read_active_release_id", lambda _layout: None)
+    monkeypatch.setattr(transaction, "_disable_target", lambda _layout: order.append("disable"))
     monkeypatch.setattr(transaction, "_quiesce_runtime", lambda _layout: order.append("quiesce"))
     monkeypatch.setattr(transaction, "_apply_definitions", lambda *_args, **_kwargs: order.append("definitions"))
     monkeypatch.setattr(transaction, "_switch_active", lambda *_args, **_kwargs: order.append("switch"))
@@ -126,7 +127,7 @@ def test_activation_quiesces_before_definition_and_active_symlink_swap(tmp_path,
     result = transaction._activate_release(layout, state, release_id, approval)
 
     assert result["status"] == "active"
-    assert order == ["quiesce", "definitions", "switch", "prepare", "start", "health"]
+    assert order == ["disable", "quiesce", "definitions", "switch", "prepare", "start", "health"]
 
 
 def test_failed_first_activation_quiesces_again_before_definition_removal(tmp_path, monkeypatch):
@@ -162,5 +163,45 @@ def test_failed_first_activation_quiesces_again_before_definition_removal(tmp_pa
     with pytest.raises(TransactionError, match="tidligere release blev automatisk gendannet"):
         transaction._activate_release(layout, state, release_id, approval)
 
-    assert order[:6] == ["quiesce", "definitions", "switch", "prepare", "start", "quiesce"]
-    assert order[6:8] == ["disable", "remove"]
+    assert order[:7] == ["disable", "quiesce", "definitions", "switch", "prepare", "start", "quiesce"]
+    assert order[7:9] == ["disable", "remove"]
+
+
+def test_activation_disable_failure_prevents_any_runtime_mutation(tmp_path, monkeypatch):
+    release_id = "clientflow-1.3.11-seq-1212"
+    approval = f"{release_id}/test-approval"
+    previous = "clientflow-1.3.10-seq-1211"
+    layout = Layout(tmp_path / "root")
+    release_root = layout.releases / release_id
+    release_root.mkdir(parents=True)
+    (release_root / "release-manifest.json").write_text(
+        '{"activation":{"health_timeout_seconds":120}}\n', encoding="utf-8"
+    )
+    state = {
+        "schema_version": transaction.STATE_SCHEMA,
+        "installed": {release_id: {}},
+        "active_release_id": previous,
+        "previous_release_id": None,
+        "staged_release_id": release_id,
+        "activation_intent": None,
+        "history": [],
+    }
+    mutations: list[str] = []
+
+    monkeypatch.setattr(transaction, "_read_active_release_id", lambda _layout: previous)
+    monkeypatch.setattr(transaction, "save_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        transaction,
+        "_disable_target",
+        lambda _layout: (_ for _ in ()).throw(TransactionError("disable failed")),
+    )
+    monkeypatch.setattr(transaction, "_quiesce_runtime", lambda _layout: mutations.append("quiesce"))
+    monkeypatch.setattr(transaction, "_apply_definitions", lambda *_args, **_kwargs: mutations.append("definitions"))
+    monkeypatch.setattr(transaction, "_switch_active", lambda *_args, **_kwargs: mutations.append("switch"))
+
+    with pytest.raises(TransactionError, match="disable failed"):
+        transaction._activate_release(layout, state, release_id, approval)
+
+    assert mutations == []
+    assert state["activation_intent"]["release_id"] == release_id
+    assert state["activation_intent"]["previous_release_id"] == previous
