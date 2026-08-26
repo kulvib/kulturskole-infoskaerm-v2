@@ -1,20 +1,20 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1211,
-  "latest_stable": "1.3.10",
-  "default_install_version": "1.3.10",
+  "catalog_sequence": 1212,
+  "latest_stable": "1.3.11",
+  "default_install_version": "1.3.11",
   "retention_policy": {
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
   },
-  "created_at": "2026-08-24T00:00:00Z",
+  "created_at": "2026-08-26T00:00:00Z",
   "releases": [
     {
-      "version": "1.3.10",
-      "client_version": "1.3.10",
-      "release_sequence": 1211,
-      "revision": "clientflow-1.3.10-seq-1211",
+      "version": "1.3.11",
+      "client_version": "1.3.11",
+      "release_sequence": 1212,
+      "revision": "clientflow-1.3.11-seq-1212",
       "status": "stable",
       "installable": true,
       "update_allowed": true,
@@ -34,17 +34,17 @@
         "requires_platform_preflight": true
       },
       "notes": [
-        "Canonical ClientFlow 1.3.10 release with fail-closed first activation: local runtime activation requires existing backend approval before systemd/runtime mutation begins.",
-        "Includes prepared-runtime entrypoint coverage for calendar plus executable client/backend/frontend operational compatibility gates while preserving the existing in-place compatibility contract from ClientFlow 1.3.1.",
-        "Promoted only after the exact approved 1.3.10/1211 artifact was published and independently deep-verified in the canonical 51M artifact store."
+        "Canonical ClientFlow 1.3.11 fresh-install baseline after the end-to-end operational compatibility review, including fail-closed activation/recovery and runtime quiesce/reboot safety.",
+        "Fresh install remains supported; in-place update policy starts at ClientFlow 1.3.11, so ClientFlow 1.3.10 is deliberately not advertised as a safe source for this release.",
+        "Promoted only after the exact approved 1.3.11/1212 artifact was published and independently deep-verified in the canonical 51M artifact store."
       ],
-      "release_id": "clientflow-1.3.10-seq-1211",
+      "release_id": "clientflow-1.3.11-seq-1212",
       "artifact_type": "runtime_release",
       "install_modes": [
         "fresh_install",
         "in_place_update"
       ],
-      "min_current_version": "1.3.1"
+      "min_current_version": "1.3.11"
     }
   ]
 }

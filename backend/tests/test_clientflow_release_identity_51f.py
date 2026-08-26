@@ -51,16 +51,17 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
         assert selected_tuple < source_tuple
 
 
-def test_51f_runtime_catalog_keeps_131_as_minimum_proven_bootstrap_during_staged_source_identity() -> None:
+def test_51f_promoted_1311_is_fresh_baseline_and_blocks_1310_in_place_bootstrap() -> None:
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = catalog["releases"][0]
 
-    # Bootstrap/update policy belongs to the currently published runtime
-    # selector. Source/build identity may already be one release ahead while
-    # candidate build, approval and immutable publication are pending.
+    # 1.3.11/1212 is the first release containing the corrected activation/update
+    # transaction implementation. It remains selectable for fresh install, but
+    # must not advertise immutable 1.3.10 as a safe in-place predecessor.
+    assert release["version"] == _version()
     assert release["version"] == catalog["latest_stable"]
     assert release["version"] == catalog["default_install_version"]
-    assert release["min_current_version"] == "1.3.1"
+    assert release["min_current_version"] == "1.3.11"
     assert "fresh_install" in release["install_modes"]
     assert "in_place_update" in release["install_modes"]
 
