@@ -465,3 +465,45 @@ def test_target_release_without_controller_support_is_not_authorized_for_activat
         assert actions == ["local_stage"]
         assert "staged" not in actions
         assert "activation_start" not in actions
+
+
+def test_controller_resumes_exact_transaction_activation_intent_after_symlink_swap_crash():
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        tmp = Path(raw_tmp)
+        controller, transport, snapshot, actions, local_state = _controller_fixture(tmp)
+
+        controller.controller_state.bind(snapshot)
+        controller._stage_verified(snapshot)
+        deployment = controller._report_staged(snapshot)
+        assert deployment is not None and deployment["state"] == "staged"
+        deployment = controller._authorize_activation(snapshot)
+        assert deployment is not None and deployment["state"] == "activating"
+
+        previous = local_state["active_release_id"]
+        local_state["activation_intent"] = {
+            "release_id": snapshot.target_release_id,
+            "previous_release_id": previous,
+            "release_approval_reference": snapshot.release_approval_reference,
+            "started_at": "2026-08-26T10:00:00Z",
+        }
+        local_state["active_symlink_release_id"] = snapshot.target_release_id
+
+        def resume_activate(release_id: str, *, expected_release_approval_reference: str, layout: Layout):
+            actions.append("local_resume")
+            assert release_id == snapshot.target_release_id
+            assert expected_release_approval_reference == snapshot.release_approval_reference
+            assert local_state["activation_intent"]["previous_release_id"] == previous
+            local_state["previous_release_id"] = previous
+            local_state["active_release_id"] = snapshot.target_release_id
+            local_state["active_symlink_release_id"] = snapshot.target_release_id
+            local_state["staged_release_id"] = None
+            local_state["activation_intent"] = None
+            local_state["installed"][snapshot.target_release_id]["activated_at"] = "2026-08-26T10:01:00Z"
+            return {"status": "active", "release_id": release_id, "previous_release_id": previous}
+
+        controller.activate_func = resume_activate
+        result = controller.run_once()
+
+        assert result["status"] == "succeeded"
+        assert "local_resume" in actions
+        assert controller.controller_state.phase == "activation_succeeded"

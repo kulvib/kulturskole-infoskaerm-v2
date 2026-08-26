@@ -129,6 +129,7 @@ def _initial_state() -> dict[str, Any]:
         "active_release_id": None,
         "previous_release_id": None,
         "staged_release_id": None,
+        "activation_intent": None,
         "installed": {},
         "history": [],
     }
@@ -782,6 +783,63 @@ def _switch_active(layout: Layout, release_id: str) -> None:
     atomic_symlink(f"releases/{release_id}", layout.active)
 
 
+def _activation_intent(
+    layout: Layout,
+    state: dict[str, Any],
+    *,
+    release_id: str,
+    release_approval_reference: str,
+    current_release_id: str | None,
+) -> tuple[dict[str, Any], bool]:
+    existing = state.get("activation_intent")
+    if existing is not None:
+        if not isinstance(existing, dict):
+            raise TransactionError("Release state har ugyldig activation_intent")
+        if (
+            existing.get("release_id") != release_id
+            or existing.get("release_approval_reference") != release_approval_reference
+        ):
+            raise TransactionError("En anden activation er allerede committed lokalt")
+        previous = existing.get("previous_release_id")
+        if previous is not None:
+            previous = _validate_release_id(str(previous))
+        expected_previous = state.get("active_release_id")
+        if expected_previous != previous:
+            raise TransactionError("Activation-intent matcher ikke den durable pre-activation state")
+        if current_release_id not in {previous, release_id}:
+            raise TransactionError("Active-symlink matcher hverken activation target eller oprindelig release")
+        return existing, False
+
+    if current_release_id == release_id:
+        if state.get("active_release_id") == release_id:
+            return {
+                "release_id": release_id,
+                "previous_release_id": state.get("previous_release_id"),
+                "release_approval_reference": release_approval_reference,
+                "started_at": None,
+            }, False
+        raise TransactionError("Target er aktivt uden durable activation-intent")
+
+    if state.get("active_release_id") != current_release_id:
+        raise TransactionError("Durable active release-state matcher ikke active-symlink før activation")
+    intent = {
+        "release_id": release_id,
+        "previous_release_id": current_release_id,
+        "release_approval_reference": release_approval_reference,
+        "started_at": _now(),
+    }
+    state["activation_intent"] = intent
+    _append_history(
+        state,
+        "activation_intent_committed",
+        release_id=release_id,
+        previous_release_id=current_release_id,
+        release_approval_reference=release_approval_reference,
+    )
+    save_state(layout, state)
+    return intent, True
+
+
 def _activate_release(
     layout: Layout,
     state: dict[str, Any],
@@ -792,12 +850,23 @@ def _activate_release(
     if release_id not in installed:
         raise TransactionError("Releasen er ikke staged")
     current = _read_active_release_id(layout)
-    if current == release_id:
+    if current == release_id and state.get("active_release_id") == release_id and state.get("activation_intent") is None:
         return {"status": "already_active", "release_id": release_id}
+
+    intent, _created = _activation_intent(
+        layout,
+        state,
+        release_id=release_id,
+        release_approval_reference=release_approval_reference,
+        current_release_id=current,
+    )
+    previous = intent.get("previous_release_id")
     release_root = layout.releases / release_id
-    previous = current
     _quiesce_runtime(layout)
     try:
+        # Re-applying the exact target definitions is deliberate: after a crash we
+        # cannot know whether the previous process died before or after the unit
+        # swap. The immutable staged release makes this operation idempotent.
         _apply_definitions(layout, release_root)
         _switch_active(layout, release_id)
         _systemd_prepare(layout)
@@ -832,6 +901,7 @@ def _activate_release(
             raise TransactionError("Aktivering og automatisk rollback fejlede") from rollback_error
         state["active_release_id"] = previous
         state["previous_release_id"] = None
+        state["activation_intent"] = None
         _append_history(
             state,
             "automatic_rollback_completed",
@@ -844,6 +914,7 @@ def _activate_release(
     state["previous_release_id"] = previous
     state["active_release_id"] = release_id
     state["staged_release_id"] = None
+    state["activation_intent"] = None
     installed[release_id]["activated_at"] = _now()
     _append_history(
         state,

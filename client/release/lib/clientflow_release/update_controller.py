@@ -522,7 +522,16 @@ def _assert_local_staged(layout: Layout, snapshot: DeploymentSnapshot, local_sta
     active = local_state.get("active_release_id")
     active_link = local_state.get("active_symlink_release_id")
     if active != active_link:
-        raise UpdateControllerError("Lokal active release-state matcher ikke active-symlink")
+        intent = local_state.get("activation_intent")
+        resumable = (
+            isinstance(intent, dict)
+            and intent.get("release_id") == snapshot.target_release_id
+            and intent.get("release_approval_reference") == snapshot.release_approval_reference
+            and intent.get("previous_release_id") == active
+            and active_link == snapshot.target_release_id
+        )
+        if not resumable:
+            raise UpdateControllerError("Lokal active release-state matcher ikke active-symlink")
     if active == snapshot.target_release_id:
         raise UpdateControllerError("Backend markerer staged, men target release er allerede aktiv lokalt")
 

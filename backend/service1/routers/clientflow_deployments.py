@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 
 from ..audit import add_audit_log
 from ..auth import get_current_superadmin_user
+from ..client_presence import load_client_presence
 from ..clientflow_deployments import (
     ClientFlowDeploymentConflict,
     ClientFlowDeploymentNotFound,
@@ -96,6 +97,19 @@ def _require_deployable_client(session: Session, client: Client) -> None:
             )
 
 
+
+
+def _canonical_runtime_version(session: Session, client: Client) -> str:
+    presence = load_client_presence(session, client)
+    status = presence.status
+    version = str(status.agent_version or "").strip().lstrip("vV")
+    if not status.is_online or not version:
+        raise HTTPException(
+            status_code=409,
+            detail="ClientFlow deployment kræver frisk canonical Status-version fra en online klient",
+        )
+    return version
+
 def _deployment_or_404(session: Session, deployment_id: str) -> ClientFlowDeployment:
     row = session.get(ClientFlowDeployment, deployment_id)
     if row is None:
@@ -116,19 +130,19 @@ def create_clientflow_deployment(
     requested_version = str(body.target_version or "").strip()
     if requested_version.lower() == "latest":
         raise HTTPException(status_code=400, detail="ClientFlow deployment kræver en konkret katalogversion; 'latest' er ikke tilladt")
+    current_version = _canonical_runtime_version(session, client)
     try:
         catalog = load_catalog()
         release = resolve_release(requested_version)
         validate_release_compatibility(
             release,
-            current_version=client.client_version,
+            current_version=current_version,
             ubuntu_version=client.ubuntu_version,
         )
     except ClientFlowCatalogError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     target_version = str(release["version"])
-    current_version = str(client.client_version or "").strip().lstrip("vV")
     latest_version = str(catalog["latest_stable"])
     is_downgrade = bool(current_version and compare_versions(target_version, current_version) < 0)
     is_non_latest_without_current = bool(not current_version and target_version != latest_version)
