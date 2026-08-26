@@ -25,6 +25,7 @@ from service1.client_domain_models import (
     ClientDomainStatus,
     DisplayDesiredConfiguration,
 )
+from service1.clientflow_update_models import ClientFlowDeployment
 from service1.models import Client
 from service1.remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
 from service1.shared_domain import utcnow
@@ -179,6 +180,7 @@ def operational_http(monkeypatch):
             ClientDomainStatus.__table__,
             DisplayDesiredConfiguration.__table__,
             ClientCommand.__table__,
+            ClientFlowDeployment.__table__,
             TerminalClient.__table__,
             TerminalCredential.__table__,
             RemoteDesktopClient.__table__,
