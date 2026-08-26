@@ -63,7 +63,7 @@ def test_catalog_1211_rejects_update_from_130_and_keeps_131_as_minimum_bootstrap
         )
 
 
-def test_catalog_1211_matches_promoted_source_and_keeps_byte_authority_out_of_catalog() -> None:
+def test_catalog_1211_stays_on_published_release_while_source_is_staged_for_1311_1212() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -72,15 +72,18 @@ def test_catalog_1211_matches_promoted_source_and_keeps_byte_authority_out_of_ca
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
 
-    # Catalog promotion is allowed only after immutable publication. At this
-    # point selector identity must match the already-built source identity.
-    assert source_version == "1.3.10"
-    assert int(release_input["release_sequence"]) == 1211
-    assert data["catalog_sequence"] == int(release_input["release_sequence"])
-    assert data["latest_stable"] == source_version
-    assert data["default_install_version"] == source_version
-    assert release["version"] == source_version
-    assert release["release_sequence"] == int(release_input["release_sequence"])
+    # Source/build identity moves ahead before catalog promotion. The runtime
+    # selector must remain on the last physically published approved release
+    # until the new approved bundle has been published and independently
+    # verified in the canonical immutable store.
+    assert source_version == "1.3.11"
+    assert int(release_input["release_sequence"]) == 1212
+
+    assert data["catalog_sequence"] == 1211
+    assert data["latest_stable"] == "1.3.10"
+    assert data["default_install_version"] == "1.3.10"
+    assert release["version"] == "1.3.10"
+    assert release["release_sequence"] == 1211
     assert release["release_id"] == "clientflow-1.3.10-seq-1211"
 
     # Exact approved byte identity remains authority of the immutable 51M store
