@@ -68,6 +68,10 @@ const responseByOperation = {
     display: { domain: "display", is_online: true },
     system: { domain: "system", is_online: true },
   },
+  getChromeStatus: { client_id: 42, state: "normal", pending_reboot: false, pending_shutdown: false },
+  updateClientKiosk: { id: 42, status: "approved", kiosk_url: "https://infoskaerm.example.test/client/42" },
+  clientActionReboot: { ok: true, command_id: "system-command-1", action: "reboot" },
+  clientActionStopBrowser: { ok: true, pending_chrome_action: "stop" },
   approveClient: { id: 42, status: "approved", presence: { is_online: false } },
   getClientflowReleases: {
     catalog_sequence: 6543,
@@ -89,6 +93,10 @@ const invoke = {
   getClients: (api) => api.getClients(),
   getClient: (api) => api.getClient(42),
   getClientPresence: (api) => api.getClientPresence(42),
+  getChromeStatus: (api) => api.getChromeStatus(42),
+  updateClientKiosk: (api) => api.updateClient(42, { kiosk_url: "https://infoskaerm.example.test/client/42" }),
+  clientActionReboot: (api) => api.clientAction(42, "reboot"),
+  clientActionStopBrowser: (api) => api.clientAction(42, "stop"),
   approveClient: (api) => api.approveClient(42, 7),
   getClientflowReleases: (api) => api.getClientflowReleases(),
   getClientflowDeployments: (api) => api.getClientflowDeployments(42),
@@ -185,6 +193,21 @@ test("ClientFlow frontend API functions execute the shared backend contract", as
         }
       }
     }
+
+    currentOperation = "clientActionReboot";
+    calls.length = 0;
+    await invoke.clientActionReboot(api);
+    assert.deepEqual(parsedBody(calls[0]), { action: "reboot", source: "actionbutton" });
+
+    currentOperation = "clientActionStopBrowser";
+    calls.length = 0;
+    await invoke.clientActionStopBrowser(api);
+    assert.deepEqual(parsedBody(calls[0]), { action: "stop", source: "actionbutton" });
+
+    currentOperation = "updateClientKiosk";
+    calls.length = 0;
+    await invoke.updateClientKiosk(api);
+    assert.deepEqual(parsedBody(calls[0]), { kiosk_url: "https://infoskaerm.example.test/client/42" });
 
     currentOperation = "requestClientflowDeployment";
     calls.length = 0;

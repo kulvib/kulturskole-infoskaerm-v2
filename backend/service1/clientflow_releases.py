@@ -19,6 +19,13 @@ from .clientflow_release_artifacts import (
 
 CATALOG_PATH = Path(__file__).with_name("clientflow_release_catalog.json")
 SELECTABLE_STATUSES = {"stable", "supported"}
+
+# 1.3.10/1211 predates the runtime-quiesce + durable activation/reboot-safe
+# transaction contract. Immutable releases cannot be retrofitted, so any
+# later canonical release must refuse pre-1.3.11 in-place update sources.
+# Fresh installation is unaffected by this compatibility boundary.
+SAFE_IN_PLACE_UPDATE_BASELINE_VERSION = "1.3.11"
+SAFE_IN_PLACE_UPDATE_BASELINE_SEQUENCE = 1212
 KNOWN_STATUSES = SELECTABLE_STATUSES | {"deprecated", "blocked"}
 
 
@@ -116,6 +123,16 @@ def load_catalog() -> dict[str, Any]:
         install_modes = release.get("install_modes")
         if not isinstance(install_modes, list) or "in_place_update" not in install_modes:
             raise ClientFlowCatalogError(f"Release {version} understøtter ikke in-place update")
+        if sequence >= SAFE_IN_PLACE_UPDATE_BASELINE_SEQUENCE:
+            minimum_current = str(release.get("min_current_version") or "").strip().lstrip("vV")
+            if (
+                not minimum_current
+                or compare_versions(minimum_current, SAFE_IN_PLACE_UPDATE_BASELINE_VERSION) < 0
+            ):
+                raise ClientFlowCatalogError(
+                    f"Release {version} må ikke opdatere fra før den sikre ClientFlow "
+                    f"{SAFE_IN_PLACE_UPDATE_BASELINE_VERSION}-baseline"
+                )
         policy = release.get("ubuntu_compatibility") or {}
         if policy:
             if policy.get("policy") != "ubuntu-desktop-lts-minimum":

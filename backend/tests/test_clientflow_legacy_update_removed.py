@@ -11,6 +11,8 @@ def read(relative: str) -> str:
 
 def test_b1_legacy_clientflow_update_authority_is_not_routable() -> None:
     clients = read("backend/service1/routers/clients.py")
+    system_agent = read("client/runtime/clientflow_runtime/system_agent.py")
+    system_broker = read("client/runtime/clientflow_runtime/system_broker.py")
 
     assert '@router.post("/clients/{id}/clientflow-update")' not in clients
     assert '@router.post("/clients/{id}/clientflow-update/reset")' not in clients
@@ -21,6 +23,14 @@ def test_b1_legacy_clientflow_update_authority_is_not_routable() -> None:
     assert "LEGACY_CLIENTFLOW_UPDATE_FIELDS" in clients
     assert "Legacy ClientFlow update-felter er fjernet fra runtime-kontrakten" in clients
     assert "Legacy ClientFlow update-state må ikke oprettes" in clients
+
+    # Canonical ClientFlow update authority is the isolated update identity +
+    # stable updater/controller. The retained System domain must not contain a
+    # second executable release download/stage/activate/rollback path.
+    assert "release_download" not in system_agent
+    for legacy_action in ("update_clientflow", "activate_release", "rollback_release"):
+        assert legacy_action not in system_agent
+        assert legacy_action not in system_broker
 
 
 def test_b1_stale_legacy_command_is_neutralized_and_canonical_deployment_locks_commands() -> None:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 import json
+from pathlib import Path
+import sys
 from types import SimpleNamespace
 from typing import Any
 import uuid
@@ -30,6 +32,15 @@ from service1.terminal_v2_models import TerminalClient, TerminalCredential
 from service1.routers import client_auth_compat
 from service1.routers import clients
 from service1.routers import shared_domain as shared_domain_router
+
+# Exercise the real client-side System command handler/broker boundary too.
+ROOT = Path(__file__).resolve().parents[2]
+CLIENT_RUNTIME_ROOT = ROOT / "client" / "runtime"
+if str(CLIENT_RUNTIME_ROOT) not in sys.path:
+    sys.path.insert(0, str(CLIENT_RUNTIME_ROOT))
+
+from clientflow_runtime.command_agent import CommandContext  # noqa: E402
+from clientflow_runtime import system_agent, system_broker  # noqa: E402
 
 
 class _ASGIResponse:
@@ -377,6 +388,123 @@ def test_pending_approval_runtime_protocol_presence_reconnect_and_command_roundt
             select(ClientCommand).where(ClientCommand.client_id == CLIENT_ID)
         ).all()
         assert {row.status for row in commands} == {"succeeded"}
+
+
+
+def test_system_reboot_roundtrip_uses_real_route_agent_broker_and_boot_evidence(
+    operational_http,
+    monkeypatch,
+    tmp_path,
+):
+    http, engine = operational_http
+
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
+    assert approved.status_code == 200, approved.text
+
+    tokens: dict[str, str] = {}
+    for domain in ("status", "system"):
+        response = _token(http, domain)
+        assert response.status_code == 200, response.text
+        tokens[domain] = response.json()["access_token"]
+
+    # Canonical global boot evidence comes from Status; System separately proves
+    # that its privileged fixed-function broker socket is present.
+    status = _put_status(http, "status", tokens["status"], boot_id="boot-a")
+    assert status.status_code == 200, status.text
+    system_status = http.put(
+        f"/api/system-agent/clients/{CLIENT_ID}/status",
+        headers={"Authorization": f"Bearer {tokens['system']}"},
+        json={
+            "schema_version": 1,
+            "observed_state": "online",
+            "status_payload": {"broker_socket": True},
+            "agent_version": "1.3.10",
+            "boot_id": "boot-a",
+        },
+    )
+    assert system_status.status_code == 200, system_status.text
+
+    requested = http.post(
+        f"/api/clients/{CLIENT_ID}/system-command",
+        json={"action": "reboot", "source": "actionbutton"},
+    )
+    assert requested.status_code == 200, requested.text
+    command_id = requested.json()["command_id"]
+
+    claimed_response = http.post(
+        f"/api/system-agent/clients/{CLIENT_ID}/commands/claim",
+        headers={"Authorization": f"Bearer {tokens['system']}"},
+        json={"lease_seconds": 60},
+    )
+    assert claimed_response.status_code == 200, claimed_response.text
+    claimed = claimed_response.json()["claimed"]
+    assert claimed is not None
+    command = claimed["command"]
+    assert command["id"] == command_id
+    assert command["command_type"] == "reboot"
+    assert command["payload"]["requested_boot_id"] == "boot-a"
+
+    # Use the actual client System handler and fixed-function broker parser. Only
+    # the final host systemctl execution is replaced; no reboot occurs in CI.
+    broker_state = tmp_path / "system-broker"
+    monkeypatch.setattr(system_broker, "STATE_DIR", broker_state)
+    monkeypatch.setattr(system_broker, "JOURNAL_PATH", broker_state / "command-journal.json")
+    monkeypatch.setattr(system_broker, "JOURNAL_LOCK_PATH", broker_state / "command-journal.lock")
+    monkeypatch.setattr(system_broker, "_fixed_binary", lambda name: f"/usr/bin/{name}")
+    executed: list[dict[str, Any]] = []
+
+    def fake_execute(prepared: dict[str, Any]) -> dict[str, Any]:
+        executed.append(dict(prepared))
+        return {"exit_code": 0, "output": "accepted"}
+
+    monkeypatch.setattr(system_broker, "_execute", fake_execute)
+    monkeypatch.setattr(
+        system_agent,
+        "call",
+        lambda _socket, request, timeout: system_broker.handle(request),
+    )
+    context = CommandContext(
+        command_id=command["id"],
+        client_id=command["client_id"],
+        command_type=command["command_type"],
+        payload=command["payload"],
+        schema_version=command["schema_version"],
+        claim_token=claimed["claim_token"],
+    )
+    result = system_agent.build_handler(SimpleNamespace())(context)
+    assert result["exit_code"] == 0
+    assert executed == [
+        {"command": ["/usr/bin/systemctl", "--no-block", "reboot"], "timeout": 10}
+    ]
+
+    completed = http.post(
+        f"/api/system-agent/clients/{CLIENT_ID}/commands/{command_id}/complete",
+        headers={"Authorization": f"Bearer {tokens['system']}"},
+        json={"claim_token": claimed["claim_token"], "result": result},
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["completed"] is True
+
+    # systemctl acceptance is not reboot completion. The backend keeps reboot
+    # pending until Status reports a different canonical boot_id.
+    before_reconnect = http.get(f"/api/clients/{CLIENT_ID}/chrome-status")
+    assert before_reconnect.status_code == 200, before_reconnect.text
+    assert before_reconnect.json()["pending_reboot"] is True
+    assert before_reconnect.json()["state"] == "rebooting"
+
+    reconnect = _put_status(http, "status", tokens["status"], boot_id="boot-b")
+    assert reconnect.status_code == 200, reconnect.text
+    after_reconnect = http.get(f"/api/clients/{CLIENT_ID}/chrome-status")
+    assert after_reconnect.status_code == 200, after_reconnect.text
+    assert after_reconnect.json()["pending_reboot"] is False
+    assert after_reconnect.json()["state"] == "normal"
+
+    with Session(engine) as session:
+        row = session.get(ClientCommand, command_id)
+        assert row is not None
+        assert row.status == "succeeded"
+        assert row.client_id == CLIENT_ID
+        assert row.domain == "system"
 
 
 def test_display_commissioning_uses_canonical_desired_state_and_real_apply_configuration(operational_http):

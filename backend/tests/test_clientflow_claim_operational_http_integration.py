@@ -17,6 +17,8 @@ pytest.importorskip("passlib")
 from fastapi import FastAPI
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 # Exercise the client-side derivation contract against the real backend claim route.
 ROOT = Path(__file__).resolve().parents[2]
@@ -241,6 +243,14 @@ def _put_status(
             "boot_id": boot_id,
         },
     )
+
+
+def _new_system_public_key_pem() -> str:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return private_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
 
 
 @pytest.fixture
@@ -630,3 +640,204 @@ def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed
         ).one()
         persisted_ids = {row.id for row in shared} | {livestream.id, terminal.id, remote_desktop.id}
         assert persisted_ids == set(credential_ids.values())
+
+
+
+def test_two_fresh_installations_have_disjoint_identities_and_cross_client_auth_fails_closed(
+    claimed_operational_http,
+    tmp_path,
+):
+    http, engine, update_private_a, update_public_a, update_key_id_a = claimed_operational_http
+    update_private_b = tmp_path / "update-private-key-b.pem"
+    update_public_b, update_key_id_b, _jwk_b, _jkt_b = generate_update_key(update_private_b)
+    system_public_a = _new_system_public_key_pem()
+    system_public_b = _new_system_public_key_pem()
+    assert system_public_a != system_public_b
+    assert update_public_a != update_public_b
+    assert update_key_id_a != update_key_id_b
+
+    def claim_one(label: str, seed: bytes, update_public: str, system_public: str) -> dict[str, Any]:
+        capability_response = http.post(
+            "/api/admin/enrollment-tokens",
+            json={"expires_in_hours": 1, "note": f"multiclient {label}"},
+        )
+        assert capability_response.status_code == 201, capability_response.text
+        capability = capability_response.json()
+        binding = _binding_from_capability(capability)
+        install_id = str(uuid.uuid4())
+        seed_b64 = base64.urlsafe_b64encode(seed).rstrip(b"=").decode("ascii")
+        resume_proof = derive_resume_proof(seed, install_id)
+        response = http.post(
+            "/api/enrollment/claim",
+            json={
+                "enrollment_code": capability["code"],
+                "fresh_install_authorization": capability["fresh_install_authorization"],
+                "fresh_install_binding": binding,
+                "install_id": install_id,
+                "credential_seed_b64": seed_b64,
+                "resume_proof": resume_proof,
+                "system_encryption_public_key_pem": system_public,
+                "update_auth_public_key_pem": update_public,
+                "name": f"Multi {label}",
+                "hostname": f"multi-{label.lower()}",
+                "machine_id": f"machine-{label.lower()}-{uuid.uuid4()}",
+                "ubuntu_version": "26.04",
+            },
+        )
+        assert response.status_code == 200, response.text
+        claim = response.json()
+        complete = http.post(
+            "/api/enrollment/complete",
+            json={
+                "install_id": install_id,
+                "resume_proof": resume_proof,
+                "fresh_install_binding": binding,
+            },
+        )
+        assert complete.status_code == 200, complete.text
+        return {
+            "claim": claim,
+            "capability": capability,
+            "binding": binding,
+            "install_id": install_id,
+            "seed": seed,
+        }
+
+    install_a = claim_one("A", bytes(range(32)), update_public_a, system_public_a)
+    install_b = claim_one("B", bytes(reversed(range(32))), update_public_b, system_public_b)
+    claim_a = install_a["claim"]
+    claim_b = install_b["claim"]
+    client_a = int(claim_a["client_id"])
+    client_b = int(claim_b["client_id"])
+    assert client_a != client_b
+
+    credentials_a = {row["domain"]: row["credential_id"] for row in claim_a["credentials"]}
+    credentials_b = {row["domain"]: row["credential_id"] for row in claim_b["credentials"]}
+    assert set(credentials_a) == set(DOMAIN_NAMES)
+    assert set(credentials_b) == set(DOMAIN_NAMES)
+    assert set(credentials_a.values()).isdisjoint(credentials_b.values())
+    assert claim_a["system_encryption_key_id"] != claim_b["system_encryption_key_id"]
+    assert claim_a["update_auth"]["credential_id"] != claim_b["update_auth"]["credential_id"]
+    assert claim_a["update_auth"]["key_id"] != claim_b["update_auth"]["key_id"]
+
+    approved_a = http.post(f"/api/clients/{client_a}/approve")
+    approved_b = http.post(f"/api/clients/{client_b}/approve")
+    assert approved_a.status_code == 200, approved_a.text
+    assert approved_b.status_code == 200, approved_b.text
+
+    secrets_a = {
+        domain: derive_domain_secret(
+            install_a["seed"],
+            client_id=client_a,
+            credential_id=credentials_a[domain],
+            domain=domain,
+        )
+        for domain in DOMAIN_NAMES
+    }
+    secrets_b = {
+        domain: derive_domain_secret(
+            install_b["seed"],
+            client_id=client_b,
+            credential_id=credentials_b[domain],
+            domain=domain,
+        )
+        for domain in DOMAIN_NAMES
+    }
+
+    tokens_a: dict[str, str] = {}
+    tokens_b: dict[str, str] = {}
+    for domain in DOMAIN_NAMES:
+        accepted_a = _domain_token(
+            http,
+            client_id=client_a,
+            domain=domain,
+            credential_id=credentials_a[domain],
+            client_secret=secrets_a[domain],
+        )
+        accepted_b = _domain_token(
+            http,
+            client_id=client_b,
+            domain=domain,
+            credential_id=credentials_b[domain],
+            client_secret=secrets_b[domain],
+        )
+        assert accepted_a.status_code == 200, (domain, accepted_a.text)
+        assert accepted_b.status_code == 200, (domain, accepted_b.text)
+        tokens_a[domain] = accepted_a.json()["access_token"]
+        tokens_b[domain] = accepted_b.json()["access_token"]
+
+        # A credential/secret pair cannot be relabelled as installation B.
+        wrong_client = _domain_token(
+            http,
+            client_id=client_b,
+            domain=domain,
+            credential_id=credentials_a[domain],
+            client_secret=secrets_a[domain],
+        )
+        assert wrong_client.status_code in {401, 403}, (domain, wrong_client.text)
+
+    # Bearer tokens for the shared domains are also route-bound to their exact
+    # installation, not only to the credential ID used when issuing the token.
+    cross_status = http.put(
+        f"/api/status-agent/clients/{client_b}/status",
+        headers={"Authorization": f"Bearer {tokens_a['status']}"},
+        json={
+            "schema_version": 1,
+            "observed_state": "online",
+            "status_payload": {"cross_client": True},
+            "agent_version": TEST_RELEASE_SNAPSHOT["target_version"],
+            "boot_id": "wrong-client-boot",
+        },
+    )
+    assert cross_status.status_code == 403, cross_status.text
+
+    for domain in ("display", "system"):
+        cross_claim = http.post(
+            f"/api/{domain}-agent/clients/{client_b}/commands/claim",
+            headers={"Authorization": f"Bearer {tokens_a[domain]}"},
+            json={"lease_seconds": 60},
+        )
+        assert cross_claim.status_code == 403, (domain, cross_claim.text)
+
+    # The asymmetric update identity cannot impersonate installation B by
+    # substituting B's credential metadata while signing with A's private key.
+    wrong_update_assertion = build_client_assertion(
+        update_private_a,
+        credential_id=claim_b["update_auth"]["credential_id"],
+        key_id=claim_b["update_auth"]["key_id"],
+    )
+    wrong_update_dpop = build_dpop_proof(
+        update_private_a,
+        method="POST",
+        url="http://testserver/api/clientflow-update/token",
+    )
+    wrong_update = http.post(
+        "/api/clientflow-update/token",
+        headers={"DPoP": wrong_update_dpop},
+        json={
+            "client_assertion_type": CLIENT_ASSERTION_TYPE,
+            "client_assertion": wrong_update_assertion,
+            "scope": " ".join(sorted(UPDATE_SCOPES)),
+        },
+    )
+    assert wrong_update.status_code == 401, wrong_update.text
+
+    with Session(engine) as session:
+        receipts = session.exec(select(ClientEnrollmentReceipt)).all()
+        assert {row.client_id for row in receipts} == {client_a, client_b}
+        assert len({row.install_id for row in receipts}) == 2
+
+        system_keys = session.exec(select(ClientSystemEncryptionKey)).all()
+        assert len(system_keys) == 2
+        assert len({row.id for row in system_keys}) == 2
+        assert len({row.public_key_pem for row in system_keys}) == 2
+
+        update_credentials = session.exec(select(ClientFlowUpdateCredential)).all()
+        assert len(update_credentials) == 2
+        assert len({row.id for row in update_credentials}) == 2
+        assert len({row.key_id for row in update_credentials}) == 2
+        assert len({row.public_key_pem for row in update_credentials}) == 2
+
+        enrollment_tokens = session.exec(select(EnrollmentToken)).all()
+        used_by = {row.used_by_client_id for row in enrollment_tokens if row.used_at is not None}
+        assert used_by == {client_a, client_b}

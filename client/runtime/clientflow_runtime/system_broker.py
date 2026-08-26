@@ -20,7 +20,6 @@ from .server import serve_forever
 from .socket_activation import activated_socket
 
 _HOSTNAME_RE = re.compile(r"^(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
-_RELEASE_ID_RE = re.compile(r"^clientflow-\d+\.\d+\.\d+-seq-[1-9]\d*$")
 _FIXED_BINARIES = {
     "systemctl": Path("/usr/bin/systemctl"),
     "hostnamectl": Path("/usr/bin/hostnamectl"),
@@ -33,14 +32,11 @@ JOURNAL_LOCK_PATH = STATE_DIR / "command-journal.lock"
 JOURNAL_RETENTION_SECONDS = 90 * 24 * 60 * 60
 
 ALLOWED_ACTIONS = frozenset({
-    "update_clientflow",
     "update_os",
     "reboot",
     "shutdown",
     "change_hostname",
     "change_password",
-    "activate_release",
-    "rollback_release",
 })
 
 
@@ -285,46 +281,6 @@ def _prepare(action: str, payload: dict[str, Any], *, client_id: int, command_id
         if not helper.is_file() or helper.is_symlink():
             raise RuntimeError("OS-updatehelper er ikke installeret")
         return {"command": [str(helper)], "timeout": 7200}
-    if action in {"update_clientflow", "activate_release", "rollback_release"}:
-        helper = Path("/opt/clientflow/active/release/bin/clientflow-release-transaction")
-        if not helper.is_file() or helper.is_symlink():
-            raise RuntimeError("Release-transaktionen installeres først i Bid 3")
-        operation = {
-            "update_clientflow": "stage",
-            "activate_release": "activate",
-            "rollback_release": "rollback",
-        }[action]
-        release_id = str(payload.get("release_id") or "")
-        if release_id and not _RELEASE_ID_RE.fullmatch(release_id):
-            raise ValueError("release_id er ugyldig")
-        if operation != "rollback" and not release_id:
-            raise ValueError("release_id mangler")
-        command = [str(helper), operation]
-        if release_id:
-            command.extend(["--release-id", release_id])
-        if operation == "stage":
-            expected = Path(f"/var/lib/clientflow/system-agent/incoming/{release_id}.tar")
-            try:
-                metadata = expected.lstat()
-            except FileNotFoundError as exc:
-                raise ValueError("Releasebundlen mangler i den faste incoming-sti") from exc
-            if expected.is_symlink() or not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
-                raise ValueError("Releasebundlen har ugyldig type eller rettigheder")
-            bundle_sha256 = str(payload.get("bundle_sha256") or "")
-            if not re.fullmatch(r"[0-9a-f]{64}", bundle_sha256):
-                raise ValueError("bundle_sha256 er ugyldig")
-            command.extend([
-                "--bundle", str(expected),
-                "--expected-bundle-sha256", bundle_sha256,
-            ])
-        elif operation == "activate":
-            command.extend(["--approval-reference", command_id])
-        else:
-            reason = str(payload.get("reason") or "").strip()
-            if not 8 <= len(reason) <= 500:
-                raise ValueError("Rollback kræver en begrundelse")
-            command.extend(["--approval-reference", command_id, "--reason", reason])
-        return {"command": command, "timeout": 1800}
     raise ValueError("Systemhandlingen er ikke implementeret")
 
 
