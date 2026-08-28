@@ -176,3 +176,22 @@ def test_fresh_conflict_inventory_owns_cfadmin_account():
     wipe = (ROOT / "client/release/lib/clientflow_release/wipe.py").read_text(encoding="utf-8")
     assert '"cfadmin"' in source
     assert '"cfadmin"' in wipe
+
+
+def test_status_diagnostics_projection_uses_canonical_existing_units():
+    source = (ROOT / "backend/service1/routers/clients.py").read_text(encoding="utf-8")
+    expected = {
+        "service_clientflow_status": "clientflow-status-agent.service",
+        "service_calendar_status": "clientflow-calendar.service",
+        "service_browser_guard_status": "clientflow-display-runtime.service",
+        "service_remote_terminal_status": "clientflow-terminal-agent.service",
+        "service_admin_terminal_status": "clientflow-root-terminal-broker.socket",
+        "service_remote_desktop_status": "clientflow-remote-desktop-agent.service",
+        "service_livestream_status": "clientflow-livestream-producer.service",
+        "service_selfupdate_status": "clientflow-updater.timer",
+        "service_ubuntu_update_status": "clientflow-system-broker.socket",
+    }
+    systemd_units = {path.name for path in (ROOT / "client/systemd").iterdir() if path.is_file()}
+    for field, unit in expected.items():
+        assert f'"{field}": "{unit}"' in source
+        assert unit in systemd_units

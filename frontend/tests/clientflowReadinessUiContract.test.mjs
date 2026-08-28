@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
+const REPO_ROOT = path.resolve(ROOT, "..");
 const read = (relative) => fs.readFileSync(path.join(ROOT, relative), "utf8");
 
 test("Display power is the primary frontend authority and copy is display-specific", () => {
@@ -41,5 +42,22 @@ test("diagnostic labels point to canonical units instead of obsolete agents", ()
   assert.match(info, /clientflow-terminal-agent\.service/);
   assert.match(info, /clientflow-root-terminal-broker\.socket/);
   assert.match(info, /clientflow-remote-desktop-agent\.service/);
+  assert.match(info, /clientflow-livestream-producer\.service/);
+  assert.match(info, /clientflow-system-broker\.socket/);
   assert.doesNotMatch(info, /clientflow_browser_guard\.service/);
+  assert.doesNotMatch(info, /clientflow_ubuntu_update\.service/);
+  assert.doesNotMatch(info, /clientflow_local_reboot_reporter\.service/);
+  assert.doesNotMatch(info, /clientflow_local_shutdown_reporter\.service/);
+});
+
+test("every ClientFlow systemd unit named by diagnostics exists in the canonical payload", () => {
+  const info = read("src/pages/clientdetailspage/ClientDetailsInfoSection.jsx");
+  const referencedUnits = [...info.matchAll(/unit: "(clientflow[^"]+\.(?:service|socket|timer|target))"/g)]
+    .map((match) => match[1]);
+  assert.ok(referencedUnits.length > 0);
+
+  const systemdRoot = path.join(REPO_ROOT, "client", "systemd");
+  const canonicalUnits = new Set(fs.readdirSync(systemdRoot));
+  const missing = [...new Set(referencedUnits)].filter((unit) => !canonicalUnits.has(unit));
+  assert.deepEqual(missing, []);
 });

@@ -31,10 +31,12 @@ def test_status_snapshot_projects_canonical_version_network_and_real_unit_health
                 "lan_ip_address": "192.0.2.10",
                 "lan_mac_address": "02:00:00:00:00:10",
                 "services": {
-                    "clientflow.target": "active",
+                    "clientflow-status-agent.service": "active",
                     "clientflow-display-runtime.service": "active",
                     "clientflow-root-terminal-broker.socket": "active",
+                    "clientflow-livestream-producer.service": "inactive",
                     "clientflow-updater.timer": "active",
+                    "clientflow-system-broker.socket": "active",
                 },
             },
         )
@@ -50,7 +52,9 @@ def test_status_snapshot_projects_canonical_version_network_and_real_unit_health
     assert client.service_clientflow_status == "active"
     assert client.service_browser_guard_status == "active"
     assert client.service_admin_terminal_status == "active"
+    assert client.service_livestream_status == "inactive"
     assert client.service_selfupdate_status == "active"
+    assert client.service_ubuntu_update_status == "active"
 
 
 def test_lockdown_desired_mutation_fails_closed_until_canonical_consumer_exists():

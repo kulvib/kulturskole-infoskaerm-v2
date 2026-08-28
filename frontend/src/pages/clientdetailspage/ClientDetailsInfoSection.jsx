@@ -2696,9 +2696,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const supportServiceRows = [
     { label: "Livestream service", value: client?.service_livestream_status, livestreamService: true, unit: "clientflow-livestream-producer.service", helper: livestreamExpectedRunning ? "Skal køre når livestream er åbnet/ønsket" : "Må gerne være stoppet når livestream ikke bruges" },
     { label: "Livestream process", value: client?.livestream_process_status, livestreamService: true, unit: "gst-launch / livestream_wayland.py / uploader", helper: livestreamExpectedRunning ? "Skal være Aktiv når livestream_status=running" : "Må gerne være Stoppet når livestream er idle" },
-    { label: "Ubuntu update", value: client?.service_ubuntu_update_status, service: true, oneshot: true, unit: "clientflow_ubuntu_update.service", helper: "Klar er normal idle-status" },
-    { label: "Lifecycle reboot", value: client?.service_local_reboot_reporter_status, service: true, oneshot: true, unit: "clientflow_local_reboot_reporter.service", helper: "Klar er normal idle-status" },
-    { label: "Lifecycle shutdown", value: client?.service_local_shutdown_reporter_status, service: true, oneshot: true, unit: "clientflow_local_shutdown_reporter.service", helper: "Klar er normal idle-status" },
+    { label: "Ubuntu update broker", value: client?.service_ubuntu_update_status, service: true, unit: "clientflow-system-broker.socket", helper: "Canonical broker/socket for privilegerede Ubuntu update-kommandoer" },
   ];
 
   const serviceRows = [...criticalServiceRows, ...supportServiceRows];
@@ -2946,7 +2944,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
       columns: 2,
       rows: [
         { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : "ok" },
-        { label: "Ubuntu update service", value: client?.service_ubuntu_update_status, service: true, oneshot: true, unit: "clientflow_ubuntu_update.service" },
+        { label: "Ubuntu update broker", value: client?.service_ubuntu_update_status, service: true, unit: "clientflow-system-broker.socket" },
         { label: "Pending OS update", value: formatDiagnosticBoolean(client?.pending_os_update), boolean: client?.pending_os_update, trueLevel: "info" },
       ],
     },

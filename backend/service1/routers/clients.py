@@ -1013,13 +1013,13 @@ def _apply_status_runtime_snapshot(client: Client, presence: ClientPresence) -> 
 
     services = payload.get("services") if isinstance(payload.get("services"), dict) else {}
     service_projection = {
-        "service_clientflow_status": "clientflow.target",
+        "service_clientflow_status": "clientflow-status-agent.service",
         "service_calendar_status": "clientflow-calendar.service",
         "service_browser_guard_status": "clientflow-display-runtime.service",
         "service_remote_terminal_status": "clientflow-terminal-agent.service",
         "service_admin_terminal_status": "clientflow-root-terminal-broker.socket",
         "service_remote_desktop_status": "clientflow-remote-desktop-agent.service",
-        "service_livestream_status": "clientflow-livestream-agent.service",
+        "service_livestream_status": "clientflow-livestream-producer.service",
         "service_selfupdate_status": "clientflow-updater.timer",
         "service_ubuntu_update_status": "clientflow-system-broker.socket",
     }
