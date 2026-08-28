@@ -1926,7 +1926,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
 
 
     return payload;
-  }, [form, initialForm, canEditClientName, canEditKioskUrlAndLocality, canChangeOrganization, isSuperadmin]);
+  }, [form, initialForm, canEditClientName, canEditKioskUrlAndLocality, canChangeOrganization]);
 
   const hasChanges = React.useMemo(() => {
     try {
