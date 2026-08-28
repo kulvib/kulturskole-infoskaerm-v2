@@ -309,6 +309,30 @@ def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
         chrome_step = None
         chrome_running = None
 
+    runtime_step = str(runtime.get("step") or "").strip().lower()
+    if runtime_step in {"clear_cookies", "countdown", "display_sleep_countdown"}:
+        chrome_step = runtime_step
+        chrome_color = "orange"
+        chrome_running = False if runtime_step == "clear_cookies" else chrome_running
+        try:
+            countdown_remaining = int(runtime.get("countdown_remaining"))
+        except (TypeError, ValueError):
+            countdown_remaining = None
+        if runtime_step == "clear_cookies":
+            chrome_status = "Rydder browserprofil, cookies og cache"
+        elif runtime_step == "display_sleep_countdown":
+            chrome_status = (
+                f"Skærmen slukkes om {countdown_remaining} sekunder"
+                if countdown_remaining is not None
+                else "Skærmen slukkes efter countdown"
+            )
+        else:
+            chrome_status = (
+                f"Kiosk-browser starter om {countdown_remaining} sekunder"
+                if countdown_remaining is not None
+                else "Kiosk-browser starter efter countdown"
+            )
+
     step_updated = runtime_updated
     power = status_payload.get("display_power") if isinstance(status_payload, dict) else None
     power = power if isinstance(power, dict) else {}

@@ -9,6 +9,7 @@ Type=simple
 User=@CLIENTFLOW_KIOSK_USER@
 SupplementaryGroups=clientflow-display-control video render audio
 ExecStart=/opt/clientflow/active/runtime/bin/clientflow-display-runtime
+ExecStartPost=/opt/clientflow/active/runtime/bin/clientflow-display-readiness
 Restart=on-failure
 RestartSec=5s
 StateDirectory=clientflow/display-runtime

@@ -108,6 +108,10 @@ def record_power_state(state: str) -> None:
 def set_display_power(state: str) -> dict[str, Any]:
     if state not in {"on", "off"}:
         raise ValueError("Display power state skal være on eller off")
+    if state == "off":
+        # Legacy parity: display sleep has a visible 5..1 pre-power countdown.
+        # V2 deliberately keeps browser and display-power as separate authorities.
+        call(RUNTIME_SOCKET, {"action": "display_sleep_countdown"})
     result = call(POWER_SOCKET, {"action": "set_display_power", "state": state})
     record_power_state(state)
     return result

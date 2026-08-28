@@ -13,7 +13,7 @@ import subprocess
 
 RELEASE_ROOT = Path(os.getenv("CLIENTFLOW_RELEASE_ROOT", "/opt/clientflow/active"))
 LOCK_PATH = RELEASE_ROOT / "runtime-inputs/platform/runtime-platform-inputs.lock.json"
-RUNTIME_PYTHON = RELEASE_ROOT / "runtime/bin/python"
+SYSTEM_PYTHON = Path("/usr/bin/python3")
 
 
 class PlatformPreparationError(RuntimeError):
@@ -113,21 +113,50 @@ def _ensure_packages(packages: list[dict]) -> None:
 
 
 def _verify_capabilities() -> None:
-    if not RUNTIME_PYTHON.is_file() or not os.access(RUNTIME_PYTHON, os.X_OK):
-        raise PlatformPreparationError("Bundled runtime Python mangler")
+    required_binaries = (
+        Path("/usr/bin/setfacl"),
+        Path("/usr/bin/setpriv"),
+        Path("/usr/bin/loginctl"),
+        Path("/usr/bin/gdbus"),
+        Path("/usr/bin/gsettings"),
+        Path("/usr/bin/dbus-run-session"),
+        SYSTEM_PYTHON,
+    )
+    missing_binaries = [str(path) for path in required_binaries if not path.exists() or not os.access(path, os.X_OK)]
+    if missing_binaries:
+        raise PlatformPreparationError("Host-platform mangler executables: " + ", ".join(missing_binaries))
+
+    # Frozen Livestream and Remote Desktop helpers deliberately execute with
+    # Ubuntu's /usr/bin/python3 so PyGObject/GI must be verified with the exact
+    # interpreter they use, not ClientFlow's bundled Python 3.13 runtime.
     probe = r'''
 import gi
+gi.require_version("Gio", "2.0")
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-from gi.repository import Gst, GstApp
+gi.require_version("Gtk", "4.0")
+gi.require_version("Pango", "1.0")
+from gi.repository import Gio, GLib, Gst, GstApp, Gtk, Pango
 Gst.init(None)
-required = ("h264parse", "mpegtsmux", "hlssink")
+required = (
+    "pipewiresrc",
+    "queue",
+    "videoconvert",
+    "videorate",
+    "videoscale",
+    "jpegenc",
+    "appsink",
+    "x264enc",
+    "h264parse",
+    "mpegtsmux",
+    "hlssink",
+)
 missing = [name for name in required if Gst.ElementFactory.find(name) is None]
 if missing:
     raise SystemExit("missing_gstreamer_elements:" + ",".join(missing))
 print("CLIENTFLOW_PLATFORM_CAPABILITIES_OK")
 '''
-    _run([str(RUNTIME_PYTHON), "-c", probe], timeout=60)
+    _run([str(SYSTEM_PYTHON), "-c", probe], timeout=60)
 
 
 def prepare() -> None:

@@ -46,12 +46,37 @@
     "package_authority": "Ubuntu signed APT repositories",
     "packages": [
       {
-        "package": "gstreamer1.0-plugins-bad",
-        "minimum_version": "1.28.2-1ubuntu1.1",
-        "required_elements": [
-          "h264parse",
-          "mpegtsmux",
-          "hlssink"
+        "package": "acl",
+        "minimum_version": "2.3.2-2",
+        "required_binaries": [
+          "/usr/bin/setfacl"
+        ]
+      },
+      {
+        "package": "python3-gi",
+        "minimum_version": "3.56.2-1",
+        "required_python": "/usr/bin/python3"
+      },
+      {
+        "package": "dbus",
+        "minimum_version": "1.16.2-2ubuntu4",
+        "required_binaries": [
+          "/usr/bin/dbus-run-session"
+        ]
+      },
+      {
+        "package": "libglib2.0-bin",
+        "minimum_version": "2.88.0-1",
+        "required_binaries": [
+          "/usr/bin/gdbus",
+          "/usr/bin/gsettings"
+        ]
+      },
+      {
+        "package": "gir1.2-gstreamer-1.0",
+        "minimum_version": "1.28.2-1",
+        "required_gi_namespaces": [
+          "Gst-1.0"
         ]
       },
       {
@@ -59,6 +84,55 @@
         "minimum_version": "1.28.2-1",
         "required_gi_namespaces": [
           "GstApp-1.0"
+        ]
+      },
+      {
+        "package": "gir1.2-gtk-4.0",
+        "minimum_version": "4.22.2+ds-1ubuntu1",
+        "required_gi_namespaces": [
+          "Gtk-4.0",
+          "Pango-1.0"
+        ]
+      },
+      {
+        "package": "gstreamer1.0-plugins-base",
+        "minimum_version": "1.28.2-1",
+        "required_elements": [
+          "queue",
+          "videoconvert",
+          "videorate",
+          "videoscale",
+          "appsink"
+        ]
+      },
+      {
+        "package": "gstreamer1.0-plugins-good",
+        "minimum_version": "1.28.2-2",
+        "required_elements": [
+          "jpegenc"
+        ]
+      },
+      {
+        "package": "gstreamer1.0-plugins-bad",
+        "minimum_version": "1.28.2-1ubuntu1",
+        "required_elements": [
+          "h264parse",
+          "mpegtsmux",
+          "hlssink"
+        ]
+      },
+      {
+        "package": "gstreamer1.0-plugins-ugly",
+        "minimum_version": "1.28.2-1",
+        "required_elements": [
+          "x264enc"
+        ]
+      },
+      {
+        "package": "gstreamer1.0-pipewire",
+        "minimum_version": "1.6.2-1ubuntu1",
+        "required_elements": [
+          "pipewiresrc"
         ]
       }
     ]

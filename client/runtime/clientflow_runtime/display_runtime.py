@@ -31,6 +31,12 @@ PROFILE_DIR = STATE_DIR / "browser-profile"
 CHROME_BINARY = Path("/usr/bin/google-chrome-stable")
 CONTROL_GROUP_NAME = os.getenv("CLIENTFLOW_DISPLAY_CONTROL_GROUP", "clientflow-display-control")
 _ALLOWED_CONFIGURATION_KEYS = {"schema_version", "revision", "kiosk_url"}
+BOOT_START_COUNTDOWN_SECONDS = 12
+CONFIGURATION_START_COUNTDOWN_SECONDS = 12
+RESET_BROWSER_COUNTDOWN_SECONDS = 8
+DISPLAY_SLEEP_COUNTDOWN_SECONDS = 5
+BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
+BOOT_MARKER_PATH = STATE_DIR / "browser-boot.json"
 
 
 class DisplayRuntime:
@@ -85,6 +91,42 @@ class DisplayRuntime:
         atomic_write_shared_json(STATUS_PATH, payload, mode=0o640, group_gid=self.shared_group_gid)
 
     @staticmethod
+    def _boot_id() -> str | None:
+        try:
+            value = BOOT_ID_PATH.read_text(encoding="ascii").strip()
+        except OSError:
+            return None
+        return value or None
+
+    def _first_browser_start_this_boot(self) -> bool:
+        boot_id = self._boot_id()
+        if not boot_id:
+            return False
+        try:
+            current = json.loads(BOOT_MARKER_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            current = {}
+        if isinstance(current, dict) and current.get("boot_id") == boot_id:
+            return False
+        atomic_write_shared_json(
+            BOOT_MARKER_PATH,
+            {"schema_version": 1, "boot_id": boot_id, "updated_at": time.time()},
+            mode=0o640,
+            group_gid=self.shared_group_gid,
+        )
+        return True
+
+    def _countdown(self, step: str, seconds: int, *, reason: str) -> None:
+        for remaining in range(max(0, int(seconds)), 0, -1):
+            self._status(
+                "countdown",
+                step=step,
+                countdown_remaining=remaining,
+                countdown_reason=reason,
+            )
+            time.sleep(1)
+
+    @staticmethod
     def _normalize_kiosk_url(value: Any) -> str | None:
         raw = str(value or "").strip()
         if not raw:
@@ -135,7 +177,9 @@ class DisplayRuntime:
         if changed:
             if configuration["kiosk_url"]:
                 self.browser_requested = True
-                self.restart_browser()
+                self.stop_browser(preserve_request=True)
+                self._countdown("countdown", CONFIGURATION_START_COUNTDOWN_SECONDS, reason="configuration_change")
+                self.start_browser()
             else:
                 self.browser_requested = False
                 self.stop_browser()
@@ -393,9 +437,22 @@ class DisplayRuntime:
         state = STATE_DIR.resolve(strict=False)
         if profile.parent != state or profile.name != "browser-profile":
             raise RuntimeError("Display-browserprofilens sti er ugyldig")
+        # Legacy product rule: browser reset is the explicit destructive action
+        # that clears profile/cookies/cache. Normal boot, URL changes and display
+        # wake preserve the browser profile.
+        self._status("resetting", step="clear_cookies")
         shutil.rmtree(profile, ignore_errors=False) if profile.exists() else None
+        self._countdown("countdown", RESET_BROWSER_COUNTDOWN_SECONDS, reason="reset_browser")
         result = self.start_browser()
         return {"reset": True, **result}
+
+    def display_sleep_countdown(self) -> dict[str, Any]:
+        self._countdown(
+            "display_sleep_countdown",
+            DISPLAY_SLEEP_COUNTDOWN_SECONDS,
+            reason="display_power_off",
+        )
+        return {"countdown": True, "seconds": DISPLAY_SLEEP_COUNTDOWN_SECONDS}
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         action = str(request.get("action") or "")
@@ -410,6 +467,8 @@ class DisplayRuntime:
             return self.stop_browser()
         if action == "reset_browser":
             return self.reset_browser()
+        if action == "display_sleep_countdown":
+            return self.display_sleep_countdown()
         if action == "status":
             return {
                 "state": "running" if self.browser and self.browser.poll() is None else "stopped",
@@ -443,6 +502,8 @@ class DisplayRuntime:
         selector.register(server, selectors.EVENT_READ)
         if self.configuration.get("kiosk_url"):
             try:
+                if self._first_browser_start_this_boot():
+                    self._countdown("countdown", BOOT_START_COUNTDOWN_SECONDS, reason="system_start")
                 self.start_browser()
             except Exception:
                 self.logger.exception("browser_start_waiting_for_session")
