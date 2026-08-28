@@ -36,7 +36,11 @@ def _handle(context: CommandContext) -> dict[str, Any]:
             if context.command_type in {"apply_configuration", "start_browser", "stop_browser", "reset_browser"}:
                 result = runtime_action(
                     context.command_type,
-                    payload=context.payload if context.command_type == "apply_configuration" else None,
+                    payload=(
+                        context.payload
+                        if context.command_type == "apply_configuration"
+                        else {"source": "backend"}
+                    ),
                 )
                 if context.command_type != "apply_configuration":
                     record_calendar_manual_override(context.command_type)

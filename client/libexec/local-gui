@@ -1,0 +1,323 @@
+#!/usr/bin/python3
+"""ClientFlow local GTK4 status/control GUI for the kiosk Wayland session.
+
+Read-only status is derived from canonical local runtime/systemd state. The only
+mutating controls are Start/Stop kiosk, sent to the narrow Display runtime RPC.
+No domain credential or secret is read by this process.
+"""
+from __future__ import annotations
+
+from datetime import date
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import threading
+import time
+from typing import Any
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+from gi.repository import GLib, Gtk, Pango  # noqa: E402
+
+SOCKET_PATH = os.getenv("CLIENTFLOW_DISPLAY_RUNTIME_SOCKET", "/run/clientflow/display/runtime.sock")
+STATUS_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_STATUS_PATH", "/var/lib/clientflow/display-runtime/runtime-status.json"))
+GUI_STATUS_PATH = Path(os.getenv("CLIENTFLOW_GUI_STATUS_PATH", "/var/lib/clientflow/display-runtime/local-gui-status.json"))
+CALENDAR_PREVIEW_PATH = Path(os.getenv("CLIENTFLOW_CALENDAR_PREVIEW_PATH", "/var/lib/clientflow/display-runtime/calendar-preview.json"))
+VERSION_PATH = Path("/opt/clientflow/active/VERSION")
+CLIENT_ID = str(os.getenv("CLIENTFLOW_CLIENT_ID") or "-").strip() or "-"
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _write_gui_status(state: str, *, error: str | None = None) -> None:
+    GUI_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "state": state,
+        "pid": os.getpid(),
+        "updated_at": time.time(),
+        "error": (error or "")[:300] or None,
+    }
+    tmp = GUI_STATUS_PATH.with_name(f".{GUI_STATUS_PATH.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, GUI_STATUS_PATH)
+
+
+def _rpc(payload: dict[str, Any], timeout: float = 20.0) -> dict[str, Any]:
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+        conn.settimeout(timeout)
+        conn.connect(SOCKET_PATH)
+        conn.sendall(raw)
+        data = bytearray()
+        while b"\n" not in data:
+            chunk = conn.recv(65536)
+            if not chunk:
+                raise RuntimeError("Display runtime lukkede forbindelsen")
+            data.extend(chunk)
+            if len(data) > 262144:
+                raise RuntimeError("Display runtime svarede med for meget data")
+    response = json.loads(bytes(data).split(b"\n", 1)[0].decode("utf-8"))
+    if not isinstance(response, dict) or response.get("ok") is not True:
+        raise RuntimeError(str(response.get("error") if isinstance(response, dict) else "Ugyldigt svar"))
+    result = response.get("result")
+    return result if isinstance(result, dict) else {}
+
+
+def _run(command: list[str], timeout: float = 3.0) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env={"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return (result.stdout or "").strip() if result.returncode == 0 else ""
+
+
+def _service_state(unit: str) -> str:
+    value = _run(["/usr/bin/systemctl", "is-active", unit])
+    return value or "unknown"
+
+
+def _network() -> str:
+    route = _run(["/usr/sbin/ip", "-j", "route", "show", "default"])
+    try:
+        rows = json.loads(route or "[]")
+    except json.JSONDecodeError:
+        rows = []
+    interface = str(rows[0].get("dev") or "") if isinstance(rows, list) and rows and isinstance(rows[0], dict) else ""
+    if not interface:
+        return "Ingen aktiv forbindelse"
+    address_raw = _run(["/usr/sbin/ip", "-j", "address", "show", "dev", interface])
+    ip = "-"
+    try:
+        address_rows = json.loads(address_raw or "[]")
+        for row in address_rows if isinstance(address_rows, list) else []:
+            for info in row.get("addr_info") or []:
+                if info.get("family") == "inet" and info.get("scope") == "global":
+                    ip = str(info.get("local") or "-")
+                    break
+    except (AttributeError, json.JSONDecodeError):
+        pass
+    try:
+        mac = Path(f"/sys/class/net/{interface}/address").read_text(encoding="ascii").strip()
+    except OSError:
+        mac = "-"
+    return f"{interface} · {ip} · {mac}"
+
+
+def _uptime() -> str:
+    try:
+        seconds = int(float(Path("/proc/uptime").read_text(encoding="ascii").split()[0]))
+    except (OSError, ValueError, IndexError):
+        return "-"
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes = rem // 60
+    return f"{days}d {hours:02d}t {minutes:02d}m"
+
+
+def _version() -> str:
+    try:
+        return VERSION_PATH.read_text(encoding="utf-8").strip() or "-"
+    except OSError:
+        return "-"
+
+
+def _calendar_lines() -> list[str]:
+    preview = _read_json(CALENDAR_PREVIEW_PATH)
+    rows = preview.get("days") if isinstance(preview.get("days"), list) else []
+    by_date = {str(row.get("date")): row for row in rows if isinstance(row, dict)}
+    lines: list[str] = []
+    today = date.today()
+    danish = ("man", "tir", "ons", "tor", "fre", "lør", "søn")
+    for offset in range(7):
+        current = date.fromordinal(today.toordinal() + offset)
+        key = current.isoformat()
+        row = by_date.get(key, {})
+        status = str(row.get("status") or "missing")
+        if status == "on":
+            value = f"{str(row.get('onTime') or '-')[:5]}–{str(row.get('offTime') or '-')[:5]}"
+        elif status == "off":
+            value = "Lukket"
+        else:
+            value = "Ikke rapporteret"
+        lines.append(f"{danish[current.weekday()]} {current.strftime('%d/%m')}: {value}")
+    return lines
+
+
+class ClientFlowWindow(Gtk.ApplicationWindow):
+    def __init__(self, app: Gtk.Application) -> None:
+        super().__init__(application=app, title="ClientFlow Status")
+        self.set_default_size(760, 900)
+        self.set_resizable(True)
+        self.labels: dict[str, Gtk.Label] = {}
+        self.message = Gtk.Label(xalign=0)
+        self.calendar_labels: list[Gtk.Label] = []
+        self._build()
+        _write_gui_status("running")
+        self.refresh()
+        GLib.timeout_add_seconds(1, self.refresh)
+
+    def _build(self) -> None:
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        outer.set_margin_top(16)
+        outer.set_margin_bottom(16)
+        outer.set_margin_start(18)
+        outer.set_margin_end(18)
+        self.set_child(outer)
+
+        title = Gtk.Label(label="ClientFlow", xalign=0)
+        title.add_css_class("title-1")
+        outer.append(title)
+
+        grid = Gtk.Grid(column_spacing=18, row_spacing=7)
+        outer.append(grid)
+        fields = (
+            ("Client ID", "client_id"),
+            ("Hostname", "hostname"),
+            ("ClientFlow-version", "version"),
+            ("Backend sync", "backend"),
+            ("Display runtime", "display"),
+            ("Display power", "power"),
+            ("Livestream", "livestream"),
+            ("Remote Desktop", "remote_desktop"),
+            ("Terminal", "terminal"),
+            ("ClientFlow update", "update"),
+            ("Ubuntu update", "ubuntu_update"),
+            ("Netværk", "network"),
+            ("Uptime", "uptime"),
+        )
+        for row, (name, key) in enumerate(fields):
+            label = Gtk.Label(label=name, xalign=0)
+            label.add_css_class("dim-label")
+            value = Gtk.Label(label="-", xalign=0)
+            value.set_selectable(True)
+            value.set_hexpand(True)
+            value.set_ellipsize(Pango.EllipsizeMode.END)
+            grid.attach(label, 0, row, 1, 1)
+            grid.attach(value, 1, row, 1, 1)
+            self.labels[key] = value
+
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        outer.append(controls)
+        self.start_button = Gtk.Button(label="Start kiosk")
+        self.stop_button = Gtk.Button(label="Stop kiosk")
+        self.start_button.connect("clicked", lambda _button: self._send_action("start_browser"))
+        self.stop_button.connect("clicked", lambda _button: self._send_action("stop_browser"))
+        controls.append(self.start_button)
+        controls.append(self.stop_button)
+
+        self.message.set_wrap(True)
+        outer.append(self.message)
+
+        calendar_title = Gtk.Label(label="Kalender · næste 7 dage", xalign=0)
+        calendar_title.add_css_class("title-4")
+        outer.append(calendar_title)
+        calendar_grid = Gtk.Grid(column_spacing=12, row_spacing=5)
+        outer.append(calendar_grid)
+        for index in range(7):
+            label = Gtk.Label(label="-", xalign=0)
+            label.set_selectable(True)
+            calendar_grid.attach(label, 0, index, 1, 1)
+            self.calendar_labels.append(label)
+
+    def _send_action(self, action: str) -> None:
+        self.start_button.set_sensitive(False)
+        self.stop_button.set_sensitive(False)
+        self.message.set_text("Kommando sendes…")
+
+        def worker() -> None:
+            try:
+                payload: dict[str, Any] = {"action": action}
+                if action == "start_browser":
+                    payload["payload"] = {"source": "gui"}
+                _rpc(payload, timeout=25.0)
+            except Exception as exc:  # GUI boundary: show bounded error, keep process alive.
+                GLib.idle_add(self.message.set_text, f"Kommando fejlede: {str(exc)[:180]}")
+            else:
+                GLib.idle_add(self.message.set_text, "Kommando udført.")
+            finally:
+                GLib.idle_add(self.refresh)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def refresh(self) -> bool:
+        try:
+            runtime = _read_json(STATUS_PATH)
+            state = str(runtime.get("state") or "unknown")
+            pid = runtime.get("browser_pid")
+            countdown = runtime.get("countdown_remaining")
+            reason = str(runtime.get("countdown_reason") or "")
+            if state == "countdown" and countdown:
+                display = f"Countdown {countdown}s · {reason or 'forbereder'}"
+                self.present()
+            elif state == "running" and pid:
+                display = f"Chrome kører · PID {pid}"
+            else:
+                display = state
+            self.labels["client_id"].set_text(CLIENT_ID)
+            self.labels["hostname"].set_text(socket.gethostname())
+            self.labels["version"].set_text(_version())
+            self.labels["backend"].set_text(_service_state("clientflow-status-agent.service"))
+            self.labels["display"].set_text(display)
+            self.labels["power"].set_text(str(runtime.get("display_power") or "unknown"))
+            self.labels["livestream"].set_text(_service_state("clientflow-livestream-producer.service"))
+            self.labels["remote_desktop"].set_text(_service_state("clientflow-remote-desktop-agent.service"))
+            self.labels["terminal"].set_text(_service_state("clientflow-terminal-agent.service"))
+            self.labels["update"].set_text(_service_state("clientflow-updater.timer"))
+            self.labels["ubuntu_update"].set_text(_service_state("clientflow-system-broker.socket"))
+            self.labels["network"].set_text(_network())
+            self.labels["uptime"].set_text(_uptime())
+            for label, text in zip(self.calendar_labels, _calendar_lines()):
+                label.set_text(text)
+            busy = state in {"countdown", "resetting"}
+            running = bool(pid) and state == "running"
+            self.start_button.set_sensitive(not busy and not running)
+            self.stop_button.set_sensitive(not busy and running)
+            _write_gui_status("running")
+        except Exception as exc:
+            self.message.set_text(f"GUI refresh-fejl: {str(exc)[:180]}")
+            _write_gui_status("running", error=str(exc))
+        return True
+
+
+class ClientFlowApplication(Gtk.Application):
+    def __init__(self) -> None:
+        super().__init__(application_id="dk.kulvib.ClientFlow.LocalGui")
+        self.window: ClientFlowWindow | None = None
+
+    def do_activate(self) -> None:
+        if self.window is None:
+            self.window = ClientFlowWindow(self)
+        self.window.present()
+
+
+def main() -> int:
+    try:
+        return ClientFlowApplication().run([])
+    finally:
+        try:
+            _write_gui_status("stopped")
+        except OSError:
+            pass
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

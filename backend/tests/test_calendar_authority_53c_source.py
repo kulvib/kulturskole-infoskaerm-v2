@@ -47,9 +47,9 @@ def test_53c_calendar_transitions_preserve_historical_display_semantics_without_
     transition = agent[agent.index("def _apply_transition("):agent.index("def _timezone_label", agent.index("def _apply_transition("))]
 
     on_block = transition[transition.index('if state == "on"'):transition.index('if state == "off"')]
-    assert on_block.index('set_display_power("on")') < on_block.index('runtime_action("start_browser")')
+    assert on_block.index('set_display_power("on")') < on_block.index('runtime_action("start_browser", payload={"source": "calendar"})')
     off_block = transition[transition.index('if state == "off"'):]
-    assert off_block.index('runtime_action("stop_browser")') < off_block.index('set_display_power("off")')
+    assert off_block.index('runtime_action("stop_browser", payload={"source": "calendar"})') < off_block.index('set_display_power("off")')
     assert "display_control_lock()" in transition
 
 

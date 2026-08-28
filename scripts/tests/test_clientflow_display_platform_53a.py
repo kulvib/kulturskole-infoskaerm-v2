@@ -115,3 +115,22 @@ def test_53a_source_uses_release_owned_chrome_and_display_only_prerequisite():
         assert f"clientflow-{frozen}" not in prep_unit
 
 
+
+
+def test_prepare_gdm_reports_only_real_configuration_changes(monkeypatch, tmp_path):
+    module = _load_module()
+    real_path = Path
+    def platform_path(value):
+        if str(value) == "/usr/sbin/gdm3":
+            return type("ExistingBinary", (), {"exists": lambda self: True})()
+        if str(value) == "/usr/share/wayland-sessions/ubuntu.desktop":
+            return type("ExistingSession", (), {"is_file": lambda self: True})()
+        return real_path(value)
+    monkeypatch.setattr(module, "Path", platform_path)
+    gdm = tmp_path / "custom.conf"
+    gdm.write_text("[daemon]\nAutomaticLoginEnable=false\nAutomaticLogin=old\nWaylandEnable=true\n", encoding="utf-8")
+    assert module._prepare_gdm("kiosk", gdm) is True
+    first = gdm.read_text(encoding="utf-8")
+    assert "AutomaticLoginEnable=true" in first and "AutomaticLogin=kiosk" in first
+    assert module._prepare_gdm("kiosk", gdm) is False
+    assert gdm.read_text(encoding="utf-8") == first

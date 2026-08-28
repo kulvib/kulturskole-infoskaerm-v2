@@ -11,6 +11,7 @@ import time
 STATE_DIR = Path(os.getenv("CLIENTFLOW_DISPLAY_STATE_DIR", "/var/lib/clientflow/display-runtime"))
 CONFIG_PATH = STATE_DIR / "configuration.json"
 STATUS_PATH = STATE_DIR / "runtime-status.json"
+LOCAL_GUI_STATUS_PATH = STATE_DIR / "local-gui-status.json"
 TIMEOUT_SECONDS = int(os.getenv("CLIENTFLOW_DISPLAY_READINESS_TIMEOUT_SECONDS", "90"))
 
 
@@ -58,8 +59,28 @@ def _read_json(path: Path) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+
+
+def _local_gui_ready() -> bool:
+    status = _read_json(LOCAL_GUI_STATUS_PATH)
+    if status.get("state") != "running":
+        return False
+    try:
+        pid = int(status.get("pid") or 0)
+        updated_at = float(status.get("updated_at") or 0)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 1 or updated_at <= 0 or (time.time() - updated_at) > 5:
+        return False
+    try:
+        os.kill(pid, 0)
+    except (OSError, ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
 def ready() -> bool:
-    if not _active_kiosk_session():
+    if not _active_kiosk_session() or not _local_gui_ready():
         return False
     configuration = _read_json(CONFIG_PATH)
     kiosk_url = str(configuration.get("kiosk_url") or "").strip()
@@ -77,12 +98,12 @@ def ready() -> bool:
 
 def wait_until_ready(timeout: int = TIMEOUT_SECONDS) -> None:
     deadline = time.monotonic() + max(1, timeout)
-    last_error = "GUI/session endnu ikke klar"
+    last_error = "ClientFlow GUI/session endnu ikke klar"
     while time.monotonic() < deadline:
         try:
             if ready():
                 return
-            last_error = "Kiosk Wayland-session eller browser er endnu ikke klar"
+            last_error = "ClientFlow GUI, kiosk Wayland-session eller browser er endnu ikke klar"
         except (OSError, KeyError, DisplayReadinessError) as exc:
             last_error = str(exc)
         time.sleep(1)

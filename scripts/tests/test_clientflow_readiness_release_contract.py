@@ -227,13 +227,47 @@ def test_gui_readiness_is_part_of_display_service_start_job():
 def test_legacy_countdown_and_cookie_contract_is_explicit_in_v2():
     runtime = (ROOT / "client/runtime/clientflow_runtime/display_runtime.py").read_text(encoding="utf-8")
     control = (ROOT / "client/runtime/clientflow_runtime/display_local_control.py").read_text(encoding="utf-8")
-    assert "BOOT_START_COUNTDOWN_SECONDS = 12" in runtime
-    assert "CONFIGURATION_START_COUNTDOWN_SECONDS = 12" in runtime
-    assert "RESET_BROWSER_COUNTDOWN_SECONDS = 8" in runtime
-    assert "DISPLAY_SLEEP_COUNTDOWN_SECONDS = 5" in runtime
+    assert "BOOT_START_COUNTDOWN_SECONDS = 10" in runtime
+    assert "CONFIGURATION_START_COUNTDOWN_SECONDS = 10" in runtime
+    assert "MANUAL_START_COUNTDOWN_SECONDS = 10" in runtime
+    assert "RESET_BROWSER_COUNTDOWN_SECONDS = 10" in runtime
+    assert "DISPLAY_SLEEP_COUNTDOWN_SECONDS = 10" in runtime
     assert 'step="clear_cookies"' in runtime
     assert 'shutil.rmtree(profile' in runtime
     assert 'if state == "off"' in control and 'display_sleep_countdown' in control
-    # Wake must remain non-destructive: profile reset is owned only by reset_browser.
+    # Wake/Calendar remain non-destructive; clean profile is owned by boot,
+    # explicit backend/GUI start, URL change and reset-browser.
     wake_block = control[control.index("def set_display_power"):control.index("def runtime_action")]
     assert "rmtree" not in wake_block and "clear_cookies" not in wake_block
+    for reason in ("system_start", "configuration_change", "reset_browser"):
+        assert reason in runtime
+    assert 'source in {"backend", "gui"}' in runtime
+    assert 'reason=f"{source}_start"' in runtime
+
+
+def test_local_clientflow_gui_is_release_owned_and_readiness_gated():
+    runtime = (ROOT / "client/runtime/clientflow_runtime/display_runtime.py").read_text(encoding="utf-8")
+    readiness = (ROOT / "client/runtime/clientflow_runtime/display_readiness.py").read_text(encoding="utf-8")
+    gui = (ROOT / "client/libexec/local-gui").read_text(encoding="utf-8")
+    unit = (ROOT / "client/systemd/clientflow-display-runtime.service").read_text(encoding="utf-8")
+    transaction = (ROOT / "client/release/lib/clientflow_release/transaction.py").read_text(encoding="utf-8")
+    assert 'LOCAL_GUI_SCRIPT = Path("/opt/clientflow/active/client-runtime/libexec/local-gui")' in runtime
+    assert '[str(SYSTEM_PYTHON), str(LOCAL_GUI_SCRIPT)]' in runtime
+    assert 'LOCAL_GUI_STATUS_PATH = STATE_DIR / "local-gui-status.json"' in readiness
+    assert '_local_gui_ready()' in readiness
+    assert 'CLIENTFLOW_CLIENT_ID=@CLIENTFLOW_CLIENT_ID@' in unit
+    assert '@CLIENTFLOW_CLIENT_ID@' in transaction
+    cli_source = (ROOT / 'client/release/lib/clientflow_release/cli.py').read_text(encoding='utf-8')
+    assert 'client_id=int(response["client_id"])' in cli_source
+    assert 'gi.require_version("Gtk", "4.0")' in gui
+    assert 'Start kiosk' in gui and 'Stop kiosk' in gui
+    assert 'Kalender · næste 7 dage' in gui
+    assert '/etc/clientflow/credentials' not in gui and 'client_secret' not in gui
+    compile(gui, "client/libexec/local-gui", "exec")
+
+
+def test_first_activation_restarts_gdm_only_when_autologin_config_changes():
+    prepare = (ROOT / "client/runtime/clientflow_runtime/display_platform_prepare.py").read_text(encoding="utf-8")
+    assert 'def _prepare_gdm' in prepare and '-> bool' in prepare
+    assert 'if gdm_changed:' in prepare
+    assert '["/usr/bin/systemctl", "restart", "gdm3"]' in prepare
