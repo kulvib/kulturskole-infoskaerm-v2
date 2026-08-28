@@ -1,6 +1,7 @@
 [Unit]
 Description=ClientFlow Remote Desktop local capture helper
-After=graphical.target
+After=graphical.target clientflow-platform-prepare.service
+Requires=clientflow-platform-prepare.service
 
 [Service]
 Type=simple

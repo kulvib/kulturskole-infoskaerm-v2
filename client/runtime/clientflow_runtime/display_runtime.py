@@ -227,8 +227,35 @@ class DisplayRuntime:
             return {}
         return value if isinstance(value, dict) else {}
 
+    def _clear_stale_process_singleton(self) -> None:
+        lock = PROFILE_DIR / "SingletonLock"
+        if not lock.exists() and not lock.is_symlink():
+            return
+        if not lock.is_symlink():
+            raise RuntimeError("Chrome SingletonLock er ikke et symlink; afviser profil-overtagelse")
+        target = os.readlink(lock)
+        host, separator, pid_text = target.rpartition("-")
+        if not separator or not host or not pid_text.isdigit():
+            raise RuntimeError("Chrome SingletonLock har ukendt format")
+        pid = int(pid_text)
+        if host == socket.gethostname():
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                pass
+            except PermissionError as exc:
+                raise RuntimeError("Chrome-profilen ejes af en aktiv proces") from exc
+            else:
+                raise RuntimeError("Chrome-profilen ejes af en aktiv proces")
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            path = PROFILE_DIR / name
+            if path.is_dir() and not path.is_symlink():
+                raise RuntimeError(f"Chrome {name} er uventet et katalog")
+            path.unlink(missing_ok=True)
+
     def _prepare_profile(self, kiosk_url: str) -> None:
         PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        self._clear_stale_process_singleton()
         default_dir = PROFILE_DIR / "Default"
         default_dir.mkdir(parents=True, exist_ok=True)
         for name in ("Current Session", "Current Tabs", "Last Session", "Last Tabs", "Preferences.tmp"):
@@ -278,7 +305,7 @@ class DisplayRuntime:
         command = [
             str(CHROME_BINARY),
             "--ozone-platform=wayland",
-            "--kiosk",
+            "--start-fullscreen",
             f"--user-data-dir={PROFILE_DIR}",
             "--no-first-run",
             "--no-default-browser-check",

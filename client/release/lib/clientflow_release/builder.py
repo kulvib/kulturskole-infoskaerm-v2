@@ -58,9 +58,23 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+DIRECT_EXEC_PAYLOAD_SUFFIXES = frozenset({
+    "client-runtime/libexec/display-power",
+    "client-runtime/libexec/update-os",
+})
+
+
 def _source_mode(path: Path) -> int:
     mode = path.stat().st_mode
     return 0o755 if mode & stat.S_IXUSR else 0o644
+
+
+def _payload_source_mode(source: Path, target: PurePosixPath) -> int:
+    """Return deterministic installed mode for direct-exec payload helpers."""
+    target_name = target.as_posix()
+    if any(target_name.endswith("/" + suffix) for suffix in DIRECT_EXEC_PAYLOAD_SUFFIXES):
+        return 0o755
+    return _source_mode(source)
 
 
 def _iter_files(root: Path):
@@ -203,7 +217,7 @@ def _create_payload(
                     target.as_posix(),
                     source,
                     expected_size=source.stat().st_size,
-                    mode=_source_mode(source),
+                    mode=_payload_source_mode(source, target),
                     epoch=epoch,
                 )
     return complete, sorted(runtime_files, key=lambda item: item["file"])

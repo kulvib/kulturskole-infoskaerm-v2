@@ -40,3 +40,14 @@ def test_canonical_runtime_version_fails_closed_without_agent_version(monkeypatc
     with pytest.raises(HTTPException) as exc:
         clientflow_deployments._canonical_runtime_version(object(), client)
     assert exc.value.status_code == 409
+
+
+def test_same_version_deployment_is_rejected_server_side():
+    with pytest.raises(HTTPException) as exc:
+        clientflow_deployments._require_version_change("1.3.11", "v1.3.11")
+    assert exc.value.status_code == 409
+    assert "same-version" in str(exc.value.detail)
+
+
+def test_different_version_passes_server_guard():
+    clientflow_deployments._require_version_change("1.3.12", "1.3.11")

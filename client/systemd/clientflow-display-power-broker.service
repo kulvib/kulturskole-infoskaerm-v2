@@ -9,7 +9,7 @@ ExecStart=/opt/clientflow/active/runtime/bin/clientflow-display-power-broker
 LoadCredential=identity.json:/etc/clientflow/identity.json
 Environment=CLIENTFLOW_IDENTITY_FILE=%d/identity.json
 UMask=0077
-NoNewPrivileges=yes
+NoNewPrivileges=no
 PrivateTmp=yes
 PrivateDevices=no
 ProtectSystem=strict

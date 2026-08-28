@@ -95,7 +95,8 @@ def test_display_configuration_starts_browser_and_survives_runtime_recreation(mo
     first_command, first_env = launched[0]
     assert first_command[0] == "/bin/true"
     assert "--ozone-platform=wayland" in first_command
-    assert "--kiosk" in first_command
+    assert "--start-fullscreen" in first_command
+    assert "--kiosk" not in first_command
     assert first_command[-1] == kiosk_url
     assert first_env["WAYLAND_DISPLAY"] == "wayland-0"
     assert first_env["XDG_SESSION_TYPE"] == "wayland"

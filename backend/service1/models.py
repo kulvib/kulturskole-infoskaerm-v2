@@ -419,6 +419,7 @@ class ClientRead(ClientBase):
     pending_shutdown: Optional[bool] = False
     chrome_color: Optional[str] = None
     chrome_step: Optional[str] = None
+    display_power: Optional[str] = None
     pending_chrome_action: Optional[ChromeAction] = ChromeAction.NONE
     pending_chrome_action_source: Optional[str] = None
     organization_id: Optional[int] = None

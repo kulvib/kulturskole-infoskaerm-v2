@@ -2,6 +2,8 @@
 DefaultDependencies=no
 Description=ClientFlow domain-isolated services
 Documentation=file:/usr/share/doc/clientflow/CLIENTFLOW_RUNTIME.md
+Requires=clientflow-platform-prepare.service
+After=clientflow-platform-prepare.service
 Wants=clientflow-status-agent.service
 Wants=clientflow-display-agent.service clientflow-display-runtime.service clientflow-display-power-broker.socket clientflow-calendar.service
 Wants=clientflow-livestream-agent.service clientflow-livestream-broker.service clientflow-livestream-producer.service clientflow-livestream-uploader.service

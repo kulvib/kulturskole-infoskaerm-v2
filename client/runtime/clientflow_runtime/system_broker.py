@@ -48,16 +48,18 @@ def _credential_path(name: str) -> Path:
 
 
 def _run(command: list[str], *, timeout: float, input_bytes: bytes | None = None) -> dict[str, Any]:
-    completed = subprocess.run(
-        command,
-        input=input_bytes,
-        stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=timeout,
-        check=False,
-        env={"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
-    )
+    run_kwargs: dict[str, Any] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        "timeout": timeout,
+        "check": False,
+        "env": {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
+    }
+    if input_bytes is None:
+        run_kwargs["stdin"] = subprocess.DEVNULL
+    else:
+        run_kwargs["input"] = input_bytes
+    completed = subprocess.run(command, **run_kwargs)
     output = completed.stdout.decode("utf-8", errors="replace")[:4000]
     if completed.returncode != 0:
         raise RuntimeError(f"Systemhelper fejlede med kode {completed.returncode}: {output}")

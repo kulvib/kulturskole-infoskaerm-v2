@@ -942,19 +942,90 @@ def _apply_network_status_for_read(client: Client) -> None:
 
 
 def _apply_status_runtime_snapshot(client: Client, presence: ClientPresence) -> None:
-    """Use canonical Status telemetry for read-time runtime reconciliation.
-
-    The Status agent reports host uptime in its authenticated status payload.
-    Copy it only onto the in-memory response object; ClientDomainStatus remains
-    the persistence authority and no duplicate liveness timestamp is created.
-    """
+    """Project canonical Status telemetry at read time without duplicate authority."""
     payload = presence.status.status_payload or {}
+    if presence.status.agent_version:
+        _set_runtime_read_attr(client, "client_version", presence.status.agent_version)
+        _set_runtime_read_attr(client, "client_version_updated_at", presence.status.reported_at)
+
     uptime_seconds = payload.get("uptime_seconds")
     if uptime_seconds is not None:
         try:
             _set_runtime_read_attr(client, "uptime", str(max(0, int(float(uptime_seconds)))))
         except (TypeError, ValueError):
             pass
+
+    if payload.get("ubuntu_version"):
+        _set_runtime_read_attr(client, "ubuntu_version", str(payload["ubuntu_version"])[:200])
+
+    diagnostics_at = _normalise_reported_utc(payload.get("diagnostics_updated_at"))
+    client_time = _normalise_reported_utc(payload.get("client_time_utc"))
+    if diagnostics_at is not None:
+        _set_runtime_read_attr(client, "diagnostics_updated_at", diagnostics_at)
+    if client_time is not None:
+        _set_runtime_read_attr(client, "client_time_utc", client_time)
+
+    timezone_value = str(payload.get("system_timezone") or "").strip() or None
+    ntp_enabled = payload.get("ntp_enabled") if isinstance(payload.get("ntp_enabled"), bool) else None
+    ntp_synchronized = payload.get("ntp_synchronized") if isinstance(payload.get("ntp_synchronized"), bool) else None
+    drift = round(abs((utcnow() - client_time).total_seconds()), 3) if client_time is not None else None
+    time_reasons: list[str] = []
+    time_status = "ok"
+    if timezone_value != EXPECTED_CLIENT_TIMEZONE:
+        time_status = "critical"
+        time_reasons.append(f"Tidszone er {timezone_value or 'ukendt'}; forventet {EXPECTED_CLIENT_TIMEZONE}")
+    if ntp_enabled is not True:
+        time_status = "critical" if ntp_enabled is False else ("warning" if time_status == "ok" else time_status)
+        time_reasons.append("NTP er deaktiveret" if ntp_enabled is False else "NTP-status er ukendt")
+    if ntp_synchronized is not True:
+        time_status = "critical" if ntp_synchronized is False else ("warning" if time_status == "ok" else time_status)
+        time_reasons.append("Systemuret er ikke NTP-synkroniseret" if ntp_synchronized is False else "NTP-synkronisering er ukendt")
+    if drift is None:
+        if time_status == "ok":
+            time_status = "warning"
+        time_reasons.append("Klientens UTC-tid mangler")
+    elif drift > CLOCK_DRIFT_CRITICAL_SECONDS:
+        time_status = "critical"
+        time_reasons.append(f"Ur-afvigelse er {drift:.1f} sekunder")
+    elif drift > CLOCK_DRIFT_WARNING_SECONDS:
+        if time_status == "ok":
+            time_status = "warning"
+        time_reasons.append(f"Ur-afvigelse er {drift:.1f} sekunder")
+    _set_runtime_read_attr(client, "clock_drift_seconds", drift)
+    _set_runtime_read_attr(client, "time_sync_status", time_status)
+    _set_runtime_read_attr(
+        client,
+        "time_sync_message",
+        " · ".join(time_reasons) if time_reasons else "Tidszone, NTP og systemur er korrekte",
+    )
+
+    for field in (
+        "system_timezone", "active_network_type", "active_network_interface",
+        "active_network_ip", "active_network_mac", "wifi_ip_address",
+        "wifi_mac_address", "lan_ip_address", "lan_mac_address",
+    ):
+        if field in payload:
+            value = payload.get(field)
+            _set_runtime_read_attr(client, field, str(value)[:255] if value is not None else None)
+    for field in ("ntp_enabled", "ntp_synchronized"):
+        if field in payload and (payload.get(field) is None or isinstance(payload.get(field), bool)):
+            _set_runtime_read_attr(client, field, payload.get(field))
+
+    services = payload.get("services") if isinstance(payload.get("services"), dict) else {}
+    service_projection = {
+        "service_clientflow_status": "clientflow.target",
+        "service_calendar_status": "clientflow-calendar.service",
+        "service_browser_guard_status": "clientflow-display-runtime.service",
+        "service_remote_terminal_status": "clientflow-terminal-agent.service",
+        "service_admin_terminal_status": "clientflow-root-terminal-broker.socket",
+        "service_remote_desktop_status": "clientflow-remote-desktop-agent.service",
+        "service_livestream_status": "clientflow-livestream-agent.service",
+        "service_selfupdate_status": "clientflow-updater.timer",
+        "service_ubuntu_update_status": "clientflow-system-broker.socket",
+    }
+    for field, unit in service_projection.items():
+        if unit in services:
+            _set_runtime_read_attr(client, field, str(services[unit])[:40])
 
 
 def _apply_presence_for_read(client: Client, presence: ClientPresence) -> None:
@@ -991,6 +1062,7 @@ def _apply_display_projection_for_read(session, client: Client) -> None:
     _set_runtime_read_attr(client, "chrome_running", projection["chrome_running"])
     _set_runtime_read_attr(client, "browser_requested", projection["browser_requested"])
     _set_runtime_read_attr(client, "chrome_step", projection["chrome_step"])
+    _set_runtime_read_attr(client, "display_power", projection.get("display_power"))
     _set_runtime_read_attr(client, "service_calendar_status", projection["service_calendar_status"])
 
     display_pending = str(projection["pending_chrome_action"] or "none")
@@ -1322,6 +1394,7 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "chrome_step": chrome_step_value,
         "chrome_running": getattr(client, "chrome_running", None),
         "browser_requested": getattr(client, "browser_requested", None),
+        "display_power": getattr(client, "display_power", None),
         **_derive_network_status(client),
         "step": step_obj,
         "uptime": client.uptime,
@@ -1968,10 +2041,10 @@ def _validate_client_update_privileges(user, client: Client, fields: set[str]) -
                 raise HTTPException(status_code=403, detail="Skærmopløsning kan kun ændres af superadministrator eller administrator for egen organisation")
 
     if DESKTOP_LOCKDOWN_DESIRED_FIELDS & fields:
-        if principal_is_client(user):
-            raise HTTPException(status_code=403, detail="Klient-token må ikke ændre ønsket kiosk lockdown")
-        if not getattr(user, "is_superadmin", False):
-            raise HTTPException(status_code=403, detail="Kiosk lockdown må kun ændres af superadmin")
+        raise HTTPException(
+            status_code=409,
+            detail="Kiosk lockdown er ikke en understøttet canonical ClientFlow-handling",
+        )
 
 
 def _validate_client_update_command_availability(session, user, client: Client, client_update: ClientUpdate, fields: set[str]) -> None:

@@ -38,5 +38,29 @@
       "size": 140077524,
       "sha256": "878e5ab495b8a694980fca61bc09b37e651ccedce2291c73434d16e48a2646fd"
     }
-  ]
+  ],
+  "host_requirements": {
+    "os_id": "ubuntu",
+    "version_id": "26.04",
+    "architecture": "amd64",
+    "package_authority": "Ubuntu signed APT repositories",
+    "packages": [
+      {
+        "package": "gstreamer1.0-plugins-bad",
+        "minimum_version": "1.28.2-1ubuntu1.1",
+        "required_elements": [
+          "h264parse",
+          "mpegtsmux",
+          "hlssink"
+        ]
+      },
+      {
+        "package": "gir1.2-gst-plugins-base-1.0",
+        "minimum_version": "1.28.2-1",
+        "required_gi_namespaces": [
+          "GstApp-1.0"
+        ]
+      }
+    ]
+  }
 }

@@ -1,25 +1,24 @@
 [Unit]
-Description=ClientFlow fixed-function privileged system broker
+Description=ClientFlow Ubuntu 26.04 host platform preparation
+After=local-fs.target network-online.target
+Wants=network-online.target
+Before=clientflow.target clientflow-livestream-producer.service clientflow-remote-desktop-capture.service
 
 [Service]
-Type=simple
+Type=oneshot
 User=root
 Group=root
-ExecStart=/opt/clientflow/active/runtime/bin/clientflow-system-broker
-LoadCredential=system-private-key.pem:/etc/clientflow/system-private-key.pem
-StateDirectory=clientflow/system-broker
-StateDirectoryMode=0700
-UMask=0077
+ExecStart=/opt/clientflow/active/runtime/bin/clientflow-platform-prepare
+UMask=0022
 NoNewPrivileges=yes
 PrivateTmp=yes
-PrivateDevices=yes
+PrivateDevices=no
 ProtectSystem=no
 ProtectHome=read-only
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
 ProtectControlGroups=yes
-RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 RestrictRealtime=yes
