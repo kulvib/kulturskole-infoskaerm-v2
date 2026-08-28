@@ -608,7 +608,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
             install_mode=INSTALL_MODE_FRESH,
             layout=layout,
         )
-        install_staged_definitions(release_id, layout=layout, kiosk_user=kiosk_user)
+        install_staged_definitions(release_id, layout=layout, kiosk_user=kiosk_user, client_id=int(response["client_id"]))
         _ensure_cfadmin_account(layout)
         stored_ca_path = _copy_install_configuration(layout, release_id, ca_file=None, kiosk_user=kiosk_user)
         request_ca_file = layout.path(stored_ca_path) if stored_ca_path else None

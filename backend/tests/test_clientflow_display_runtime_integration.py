@@ -191,7 +191,7 @@ def test_graphical_environment_requires_exact_local_wayland_session(monkeypatch,
     assert environment["GDK_BACKEND"] == "wayland"
 
 
-def test_reset_browser_clears_profile_then_runs_legacy_eight_second_countdown(monkeypatch, tmp_path):
+def test_reset_browser_clears_profile_then_runs_ten_second_countdown(monkeypatch, tmp_path):
     state, _run = _configure_runtime_paths(monkeypatch, tmp_path)
     profile = state / "browser-profile"
     profile.mkdir()
@@ -209,8 +209,8 @@ def test_reset_browser_clears_profile_then_runs_legacy_eight_second_countdown(mo
 
     assert result["reset"] is True
     assert not profile.exists()
-    assert ("resetting", {"step": "clear_cookies"}) in seen
-    assert any(name == "countdown" and details["seconds"] == 8 for name, details in seen)
+    assert any(name == "resetting" and details.get("step") == "clear_cookies" and details.get("clear_reason") == "reset_browser" for name, details in seen)
+    assert any(name == "countdown" and details["seconds"] == 10 for name, details in seen)
 
 
 def test_boot_countdown_is_once_per_real_boot(monkeypatch, tmp_path):
@@ -220,7 +220,69 @@ def test_boot_countdown_is_once_per_real_boot(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime_module, "BOOT_ID_PATH", boot_id_path)
     runtime = runtime_module.DisplayRuntime()
     runtime.shared_group_gid = os.getgid()
-    assert runtime._first_browser_start_this_boot() is True
-    assert runtime._first_browser_start_this_boot() is False
+    assert runtime._boot_start_required() is True
+    runtime._mark_browser_start_this_boot()
+    assert runtime._boot_start_required() is False
     boot_id_path.write_text("boot-b\n", encoding="ascii")
-    assert runtime._first_browser_start_this_boot() is True
+    assert runtime._boot_start_required() is True
+
+
+def test_backend_and_gui_start_clear_profile_and_count_down_ten_seconds(monkeypatch, tmp_path):
+    state, _run = _configure_runtime_paths(monkeypatch, tmp_path)
+    profile = state / "browser-profile"
+    profile.mkdir()
+    (profile / "Cookies").write_text("session", encoding="utf-8")
+    runtime = runtime_module.DisplayRuntime()
+    runtime.configuration = {"schema_version": 1, "revision": 1, "kiosk_url": "https://example.test"}
+    seen = []
+    monkeypatch.setattr(runtime, "_status", lambda state_name, **details: seen.append((state_name, details)))
+    monkeypatch.setattr(runtime, "_countdown", lambda step, seconds, **kwargs: seen.append((step, {"seconds": seconds, **kwargs})))
+    monkeypatch.setattr(runtime, "start_browser", lambda: {"started": True, "pid": 77})
+
+    result = runtime.request_start_browser(source="backend")
+    assert result["started"] is True
+    assert not profile.exists()
+    assert any(name == "countdown" and details["seconds"] == 10 for name, details in seen)
+
+    profile.mkdir()
+    (profile / "Cookies").write_text("session", encoding="utf-8")
+    seen.clear()
+    result = runtime.request_start_browser(source="gui")
+    assert result["started"] is True
+    assert not profile.exists()
+    assert any(name == "countdown" and details["seconds"] == 10 for name, details in seen)
+
+
+def test_calendar_wake_preserves_profile_without_start_countdown(monkeypatch, tmp_path):
+    state, _run = _configure_runtime_paths(monkeypatch, tmp_path)
+    profile = state / "browser-profile"
+    profile.mkdir()
+    cookie = profile / "Cookies"
+    cookie.write_text("preserve-me", encoding="utf-8")
+    runtime = runtime_module.DisplayRuntime()
+    runtime.configuration = {"schema_version": 1, "revision": 1, "kiosk_url": "https://example.test"}
+    monkeypatch.setattr(runtime, "start_browser", lambda: {"started": True, "pid": 88})
+    monkeypatch.setattr(runtime, "_countdown", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("calendar wake must not count down")))
+
+    result = runtime.request_start_browser(source="calendar")
+    assert result["started"] is True
+    assert cookie.read_text(encoding="utf-8") == "preserve-me"
+
+
+def test_url_change_clears_profile_and_counts_down_ten_seconds(monkeypatch, tmp_path):
+    state, _run = _configure_runtime_paths(monkeypatch, tmp_path)
+    profile = state / "browser-profile"
+    profile.mkdir()
+    (profile / "Cookies").write_text("old-url-session", encoding="utf-8")
+    runtime = runtime_module.DisplayRuntime()
+    runtime.configuration = {"schema_version": 1, "revision": 1, "kiosk_url": "https://old.example.test"}
+    runtime.browser_requested = True
+    monkeypatch.setattr(runtime, "stop_browser", lambda **_kwargs: {"stopped": True})
+    monkeypatch.setattr(runtime, "start_browser", lambda: {"started": True, "pid": 99})
+    seen = []
+    monkeypatch.setattr(runtime, "_status", lambda state_name, **details: seen.append((state_name, details)))
+    monkeypatch.setattr(runtime, "_countdown", lambda step, seconds, **kwargs: seen.append((step, {"seconds": seconds, **kwargs})))
+
+    runtime.apply_configuration({"schema_version": 1, "revision": 2, "kiosk_url": "https://new.example.test"})
+    assert not profile.exists()
+    assert any(name == "countdown" and details["seconds"] == 10 for name, details in seen)

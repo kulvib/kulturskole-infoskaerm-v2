@@ -265,15 +265,15 @@ def _replace_section_keys(text: str, section: str, replacements: dict[str, str])
     return "\n".join(out).rstrip() + "\n"
 
 
-def _prepare_gdm(kiosk_user: str, gdm_config: Path = Path("/etc/gdm3/custom.conf")) -> None:
+def _prepare_gdm(kiosk_user: str, gdm_config: Path = Path("/etc/gdm3/custom.conf")) -> bool:
     if not Path("/usr/sbin/gdm3").exists():
         raise DisplayPlatformPreparationError("GDM3 mangler; Ubuntu graphical platform-baseline er ikke komplet")
     ubuntu_session = Path("/usr/share/wayland-sessions/ubuntu.desktop")
     if not ubuntu_session.is_file():
         raise DisplayPlatformPreparationError("Ubuntu Wayland-session mangler")
-    text = gdm_config.read_text(encoding="utf-8") if gdm_config.exists() else "[daemon]\n"
+    original = gdm_config.read_text(encoding="utf-8") if gdm_config.exists() else "[daemon]\n"
     text = _replace_section_keys(
-        text,
+        original,
         "daemon",
         {
             "AutomaticLoginEnable": "true",
@@ -281,7 +281,10 @@ def _prepare_gdm(kiosk_user: str, gdm_config: Path = Path("/etc/gdm3/custom.conf
             "WaylandEnable": "true",
         },
     )
+    if text == original and gdm_config.exists():
+        return False
     _atomic_write_text(gdm_config, text)
+    return True
 
 
 def _prepare_accounts_service(kiosk_user: str, accounts_root: Path = Path("/var/lib/AccountsService/users")) -> None:
@@ -341,7 +344,7 @@ def _prepare_gnome_settings(kiosk_user: str, home: Path) -> None:
         )
 
 
-def _prepare_graphical_kiosk(kiosk_user: str) -> None:
+def _prepare_graphical_kiosk(kiosk_user: str) -> bool:
     try:
         record = pwd.getpwnam(kiosk_user)
     except KeyError as exc:
@@ -351,9 +354,10 @@ def _prepare_graphical_kiosk(kiosk_user: str) -> None:
     home = Path(record.pw_dir)
     if not home.is_dir() or home.is_symlink() or home.stat().st_uid != record.pw_uid:
         raise DisplayPlatformPreparationError("Kiosk-brugerens home mangler eller har forkert ejerskab")
-    _prepare_gdm(kiosk_user)
+    gdm_changed = _prepare_gdm(kiosk_user)
     _prepare_accounts_service(kiosk_user)
     _prepare_gnome_settings(kiosk_user, home)
+    return gdm_changed
 
 
 def prepare() -> None:
@@ -379,7 +383,12 @@ def prepare() -> None:
         raise DisplayPlatformPreparationError("Google Chrome-installation etablerede uventet et aktivt APT-repository")
     if not _repo_opt_out_is_false():
         raise DisplayPlatformPreparationError("Google Chrome-installation ændrede repo opt-out")
-    _prepare_graphical_kiosk(kiosk_user)
+    gdm_changed = _prepare_graphical_kiosk(kiosk_user)
+    if gdm_changed:
+        # First activation happens on an already booted Ubuntu system. Restart
+        # (which also starts an inactive unit) makes the newly written autologin
+        # configuration effective before Display readiness can succeed.
+        _run(["/usr/bin/systemctl", "restart", "gdm3"], timeout=60)
 
 
 def main() -> int:

@@ -204,14 +204,46 @@ def _should_enforce(
     )
 
 
+def _calendar_preview(plan: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
+    current = (now or datetime.now().astimezone()).date()
+    rows: list[dict[str, str]] = []
+    for offset in range(7):
+        day = current + timedelta(days=offset)
+        key = day.isoformat()
+        entry = None
+        for days in plan.get("seasons", {}).values():
+            if key in days:
+                entry = dict(days[key])
+                break
+        if not entry:
+            rows.append({"date": key, "status": "missing"})
+        elif entry.get("status") == "off":
+            rows.append({"date": key, "status": "off"})
+        else:
+            rows.append({
+                "date": key,
+                "status": "on",
+                "onTime": str(entry.get("onTime") or "")[:5],
+                "offTime": str(entry.get("offTime") or "")[:5],
+            })
+    return {"schema_version": 1, "days": rows}
+
+
+def _publish_calendar_preview(plan: dict[str, Any], logger) -> None:
+    try:
+        runtime_action("set_calendar_preview", payload=_calendar_preview(plan))
+    except (RpcError, OSError, RuntimeError, ValueError):
+        logger.warning("calendar_preview_publish_failed", extra={"event": "local_gui"})
+
+
 def _apply_transition(state: str) -> None:
     with display_control_lock():
         if state == "on":
             set_display_power("on")
-            runtime_action("start_browser")
+            runtime_action("start_browser", payload={"source": "calendar"})
             return
         if state == "off":
-            runtime_action("stop_browser")
+            runtime_action("stop_browser", payload={"source": "calendar"})
             set_display_power("off")
             return
     raise CalendarPlanError("Ukendt calendar desired state")
@@ -257,6 +289,8 @@ def main() -> int:
     transport = DomainTransport(credential)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     plan = _read_cache(client_id=credential.client_id)
+    if plan is not None:
+        _publish_calendar_preview(plan, logger)
     last_fetch_at: float | None = None
     last_transition_at: float | None = None
     last_schedule_state: str | None = None
@@ -271,6 +305,7 @@ def main() -> int:
             if now_mono >= next_fetch:
                 try:
                     plan = _fetch_plan(transport)
+                    _publish_calendar_preview(plan, logger)
                     last_fetch_at = time.time()
                     fetch_attempt = 0
                     next_fetch = now_mono + POLL_SECONDS

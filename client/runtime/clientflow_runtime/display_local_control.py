@@ -109,20 +109,31 @@ def set_display_power(state: str) -> dict[str, Any]:
     if state not in {"on", "off"}:
         raise ValueError("Display power state skal være on eller off")
     if state == "off":
-        # Legacy parity: display sleep has a visible 5..1 pre-power countdown.
+        # Canonical product rule: display sleep has a visible 10..1 pre-power countdown.
         # V2 deliberately keeps browser and display-power as separate authorities.
         call(RUNTIME_SOCKET, {"action": "display_sleep_countdown"})
     result = call(POWER_SOCKET, {"action": "set_display_power", "state": state})
     record_power_state(state)
+    # Local GUI mirror is non-authoritative; never turn a successful physical
+    # power change into a command failure if the Display runtime is restarting.
+    try:
+        call(RUNTIME_SOCKET, {"action": "record_display_power", "payload": {"state": state}}, timeout=2.0)
+    except (OSError, RuntimeError):
+        pass
     return result
 
 
 def runtime_action(action: str, *, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    if action not in {"apply_configuration", "start_browser", "stop_browser", "reset_browser"}:
+    if action not in {
+        "apply_configuration", "start_browser", "stop_browser", "reset_browser",
+        "set_calendar_preview", "record_display_power",
+    }:
         raise ValueError(f"Understøttet Display runtime action mangler for: {action}")
     request: dict[str, Any] = {"action": action}
-    if action == "apply_configuration":
+    if action == "apply_configuration" and not isinstance(payload, dict):
+        raise ValueError("apply_configuration kræver payload")
+    if payload is not None:
         if not isinstance(payload, dict):
-            raise ValueError("apply_configuration kræver payload")
+            raise ValueError("Display runtime payload skal være et objekt")
         request["payload"] = payload
     return call(RUNTIME_SOCKET, request)

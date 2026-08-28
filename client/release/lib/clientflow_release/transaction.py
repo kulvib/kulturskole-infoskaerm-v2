@@ -624,11 +624,32 @@ def _definition_kiosk_user(layout: Layout, explicit: str | None) -> str:
         raise TransactionError("Kiosk-user kunne ikke læses fra ClientFlow identity") from exc
 
 
+def _definition_client_id(layout: Layout, explicit: int | None = None) -> int:
+    if explicit is not None:
+        try:
+            client_id = int(explicit)
+        except (TypeError, ValueError) as exc:
+            raise TransactionError("Client ID i managed definition er ugyldigt") from exc
+        if client_id <= 0:
+            raise TransactionError("Client ID i managed definition er ugyldigt")
+        return client_id
+    identity_path = layout.path("/etc/clientflow/identity.json")
+    try:
+        identity = load_secure_json(identity_path, max_bytes=64 * 1024, forbidden_mode_bits=0o077)
+        client_id = int(identity["client_id"])
+    except (KeyError, TypeError, ValueError, OSError) as exc:
+        raise TransactionError("Client ID kunne ikke læses fra ClientFlow identity") from exc
+    if client_id <= 0:
+        raise TransactionError("Client ID i managed definition er ugyldigt")
+    return client_id
+
+
 def _apply_definitions(
     layout: Layout,
     release_root: Path,
     *,
     kiosk_user: str | None = None,
+    client_id: int | None = None,
 ) -> list[str]:
     unit_source = release_root / "client-runtime/systemd"
     ensure_real_directory(layout.unit_root, mode=0o755)
@@ -640,10 +661,13 @@ def _apply_definitions(
         if not source.name.startswith("clientflow"):
             raise TransactionError("Uventet systemd unit i releasepayload")
         raw = source.read_bytes()
-        placeholder = b"@CLIENTFLOW_KIOSK_USER@"
-        if placeholder in raw:
+        kiosk_placeholder = b"@CLIENTFLOW_KIOSK_USER@"
+        if kiosk_placeholder in raw:
             resolved = _definition_kiosk_user(layout, kiosk_user).encode("ascii")
-            raw = raw.replace(placeholder, resolved)
+            raw = raw.replace(kiosk_placeholder, resolved)
+        client_id_placeholder = b"@CLIENTFLOW_CLIENT_ID@"
+        if client_id_placeholder in raw:
+            raw = raw.replace(client_id_placeholder, str(_definition_client_id(layout, client_id)).encode("ascii"))
         atomic_write_bytes(layout.unit_root / source.name, raw, mode=0o644)
         unit_names.append(source.name)
     _atomic_copy(release_root / "client-runtime/sysusers.d/clientflow.conf", layout.sysusers_file, mode=0o644)
@@ -1067,6 +1091,7 @@ def install_staged_definitions(
     *,
     layout: Layout = Layout(),
     kiosk_user: str | None = None,
+    client_id: int | None = None,
 ) -> dict[str, Any]:
     release_id = _validate_release_id(release_id)
     with TransactionLock(layout):
@@ -1076,7 +1101,7 @@ def install_staged_definitions(
         if _read_active_release_id(layout) is not None:
             raise TransactionError("Fresh install må ikke have en aktiv release før godkendelsesporten")
         release_root = layout.releases / release_id
-        units = _apply_definitions(layout, release_root, kiosk_user=kiosk_user)
+        units = _apply_definitions(layout, release_root, kiosk_user=kiosk_user, client_id=client_id)
         if layout.root == Path("/"):
             _run(["/usr/bin/systemd-sysusers", str(layout.sysusers_file)])
             _run(["/usr/bin/systemd-tmpfiles", "--create", str(layout.tmpfiles_file)])
