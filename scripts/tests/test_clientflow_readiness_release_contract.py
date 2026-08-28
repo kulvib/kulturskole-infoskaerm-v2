@@ -15,7 +15,7 @@ for item in (RELEASE_LIB, RUNTIME_ROOT, BACKEND_ROOT):
         sys.path.insert(0, str(item))
 
 from clientflow_release import builder, cli  # noqa: E402
-from clientflow_runtime import display_readiness, display_runtime, platform_prepare, system_broker  # noqa: E402
+from clientflow_runtime import display_runtime, platform_prepare, system_broker  # noqa: E402
 
 
 def test_direct_exec_payload_modes_do_not_depend_on_github_source_mode(tmp_path):
