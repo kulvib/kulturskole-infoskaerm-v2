@@ -214,6 +214,7 @@ const DEFAULT_TERMINAL_STEPS = new Set([
 ]);
 
 const DISPLAY_RESOLUTION_LIVE_FIELDS = [
+  "display_power",
   "display_resolution_preset",
   "display_resolution_mode",
   "display_resolution_width",
@@ -1490,6 +1491,7 @@ export default function ClientDetailsPage({
               <ClientDetailsActionsSection
               clientId={client?.id}
               clientState={effectiveClientState}
+              displayPower={liveClient?.display_power ?? client?.display_power ?? null}
               pendingChromeAction={effectivePendingAction}
               handleClientAction={handleClientAction}
               handleOpenTerminal={handleOpenTerminal}

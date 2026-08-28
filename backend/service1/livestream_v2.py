@@ -274,6 +274,16 @@ def _lock_client(session: Session, client_id: int) -> Client:
     return client
 
 
+def _require_livestream_start_allowed(client: Client) -> None:
+    state = str(getattr(client, "state", "") or "").strip().lower()
+    if (
+        state in {"shutdown", "rebooting", "updating"}
+        or bool(getattr(client, "pending_shutdown", False))
+        or bool(getattr(client, "pending_reboot", False))
+    ):
+        raise HTTPException(status_code=409, detail="Livestream er blokeret under aktiv System-lifecycle")
+
+
 def explicit_stop_latched(session: Session, client_id: int) -> bool:
     client = session.get(Client, client_id)
     if client is None:
@@ -333,7 +343,8 @@ def viewer_heartbeat(
     viewer_id: str,
     source: str | None,
 ) -> tuple[LivestreamV2Viewer, LivestreamV2Generation | None, LivestreamV2Command | None]:
-    _lock_client(session, client_id)
+    client = _lock_client(session, client_id)
+    _require_livestream_start_allowed(client)
     now = _now()
     viewer_id = _normalise_viewer_id(viewer_id)
     principal_key = _principal_key(principal)
@@ -449,6 +460,7 @@ def _new_generation(
     source: str | None,
 ) -> tuple[LivestreamV2Generation, LivestreamV2Command]:
     client = _lock_client(session, client_id)
+    _require_livestream_start_allowed(client)
     cancel_queued_generation_commands(session, client_id)
     now = _now()
     existing = current_generation(session, client_id)
@@ -486,7 +498,8 @@ def request_start(
 ) -> tuple[LivestreamV2Generation, LivestreamV2Command | None]:
     # Lock before checking current state so concurrent browser/manual starts
     # coalesce to one generation just like concurrent viewer heartbeats.
-    _lock_client(session, client_id)
+    client = _lock_client(session, client_id)
+    _require_livestream_start_allowed(client)
     existing = current_generation(session, client_id)
     if existing is not None:
         if existing.state in {"starting", "running"}:

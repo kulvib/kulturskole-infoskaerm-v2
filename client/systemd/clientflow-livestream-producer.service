@@ -1,7 +1,7 @@
 [Unit]
 Description=ClientFlow generation-bound GNOME Mutter livestream producer
-After=graphical.target clientflow-livestream-broker.service
-Requires=clientflow-livestream-broker.service
+After=graphical.target clientflow-platform-prepare.service clientflow-livestream-broker.service
+Requires=clientflow-platform-prepare.service clientflow-livestream-broker.service
 ConditionPathExists=/etc/clientflow/livestream.json
 
 [Service]

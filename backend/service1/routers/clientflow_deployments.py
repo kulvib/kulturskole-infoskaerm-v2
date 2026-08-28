@@ -110,6 +110,14 @@ def _canonical_runtime_version(session: Session, client: Client) -> str:
         )
     return version
 
+def _require_version_change(target_version: str, current_version: str) -> None:
+    if compare_versions(target_version, current_version) == 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"ClientFlow {target_version} er allerede installeret; same-version deployment er ikke tilladt",
+        )
+
+
 def _deployment_or_404(session: Session, deployment_id: str) -> ClientFlowDeployment:
     row = session.get(ClientFlowDeployment, deployment_id)
     if row is None:
@@ -143,6 +151,7 @@ def create_clientflow_deployment(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     target_version = str(release["version"])
+    _require_version_change(target_version, current_version)
     latest_version = str(catalog["latest_stable"])
     is_downgrade = bool(current_version and compare_versions(target_version, current_version) < 0)
     is_non_latest_without_current = bool(not current_version and target_version != latest_version)

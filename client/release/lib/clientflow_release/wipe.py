@@ -21,6 +21,7 @@ USERS = (
     "clientflow-terminal-session",
     "clientflow-system-agent",
     "clientflow-updater",
+    "cfadmin",
 )
 GROUPS = (
     "clientflow-display-control",

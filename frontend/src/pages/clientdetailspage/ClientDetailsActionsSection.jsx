@@ -191,13 +191,13 @@ const LIVESTREAM_RUNNING_STATUSES = new Set([
 const PENDING_ACTION_LABELS = {
   start: "Starter kiosk browser…",
   stop: "Stopper kiosk browser…",
-  sleep: "Sætter klient i dvale…",
-  display_sleep: "Sætter klient i dvale…",
-  system_sleep: "Sætter klient i dvale…",
-  wakeup: "Vækker klient fra dvale…",
-  wake: "Vækker klient fra dvale…",
-  display_wake: "Vækker klient fra dvale…",
-  system_wake: "Vækker klient fra dvale…",
+  sleep: "Slukker skærm…",
+  display_sleep: "Slukker skærm…",
+  system_sleep: "Slukker skærm…",
+  wakeup: "Tænder skærm…",
+  wake: "Tænder skærm…",
+  display_wake: "Tænder skærm…",
+  system_wake: "Tænder skærm…",
   reboot: "Genstarter klient…",
   restart: "Genstarter klient…",
   pending_reboot: "Genstarter klient…",
@@ -380,6 +380,7 @@ function ActionButton({ btn, isMobile, busy }) {
 export default function ClientDetailsActionsSection({
   clientId,
   clientState,
+  displayPower = null,
   pendingChromeAction,
   handleClientAction,
   handleOpenTerminal,
@@ -458,6 +459,8 @@ export default function ClientDetailsActionsSection({
   const ubuntuWasBusyRef = useRef(false);
 
   const normalizedClientState = String(clientState || "").trim().toLowerCase();
+  const normalizedDisplayPower = String(displayPower || "").trim().toLowerCase();
+  const displayPowerKnown = normalizedDisplayPower === "on" || normalizedDisplayPower === "off";
   const normalizedPendingAction = String(pendingChromeAction || "").trim().toLowerCase();
   const hasPendingAction = !!normalizedPendingAction && normalizedPendingAction !== "none";
   const clientUnavailable = clientOnline !== true;
@@ -526,15 +529,17 @@ export default function ClientDetailsActionsSection({
     !!actionLoading["wakeup"] ||
     WAKE_IN_PROGRESS_STEPS.has(liveStepNorm);
 
-  // Dvale skal ikke låse hele panelet; den skal kun efterlade "Væk fra dvale" aktiv.
-  // Når wake er i gang eller gennemført, må stale state="sleeping" ikke holde UI'et
-  // fast i dvale og aktivere Væk-knappen igen.
-  const isSleeping =
+  // Canonical Display power is primary. Legacy machine/step state is only a
+  // compatibility fallback while the Display domain has not reported power yet.
+  const legacyDisplayOff =
     !wakeInProgress &&
     !wakeCompleted &&
     (normalizedClientState.startsWith("sleep") ||
       SYSTEM_SLEEP_STEPS.has(liveStepNorm) ||
       sleepActionPending);
+  const isSleeping = displayPowerKnown
+    ? normalizedDisplayPower === "off"
+    : legacyDisplayOff;
 
   // Wake er display-only. Hvis der ligger en gammel chrome_status som
   // "Rydder cookies…" fra en tidligere browserhandling, må den ikke vises
@@ -655,7 +660,7 @@ export default function ClientDetailsActionsSection({
 
       if (isSleeping && action !== "wakeup") {
         notify({
-          message: "Klienten er i dvale — brug Væk fra dvale først",
+          message: "Skærmen er slukket — brug Tænd skærm først",
           severity: "warning",
         });
         return;
@@ -663,7 +668,7 @@ export default function ClientDetailsActionsSection({
 
       if (action === "wakeup" && (wakeInProgress || !isSleeping)) {
         notify({
-          message: wakeInProgress ? "Væk fra dvale er allerede sendt" : "Klienten er allerede vågen",
+          message: wakeInProgress ? "Tænd skærm er allerede sendt" : "Skærmen er allerede tændt",
           severity: "info",
         });
         return;
@@ -711,19 +716,19 @@ export default function ClientDetailsActionsSection({
 
 
       if (wakeInProgress && key === "wakeup") {
-        return { disabled: true, reason: "Væk fra dvale er allerede sendt" };
+        return { disabled: true, reason: "Tænd skærm er allerede sendt" };
       }
 
       if (isSleeping) {
-        if (key === "wakeup") return { disabled: false, reason: "Væk klient fra dvale" };
+        if (key === "wakeup") return { disabled: false, reason: "Tænd skærm" };
         return {
           disabled: true,
-          reason: "Klienten er i dvale — brug Væk fra dvale først",
+          reason: "Skærmen er slukket — brug Tænd skærm først",
         };
       }
 
-      if (key === "wakeup") return { disabled: true, reason: "Klienten er allerede vågen" };
-      if (key === "sleep" && sleepActionPending) return { disabled: true, reason: "Dvale er allerede sendt" };
+      if (key === "wakeup") return { disabled: true, reason: "Skærmen er allerede tændt" };
+      if (key === "sleep" && sleepActionPending) return { disabled: true, reason: "Sluk skærm er allerede sendt" };
       const browserProcessInfo = getBrowserProcessActionDisabledInfo(
         key,
         chromeIsRunning,
@@ -869,29 +874,29 @@ export default function ClientDetailsActionsSection({
     },
     {
       key: "sleep",
-      label: "Sæt i dvale",
+      label: "Sluk skærm",
       icon: <NightlightIcon />,
       color: "info",
       variant: "outlined",
       onClick: () => doAction("sleep"),
       loading: !!actionLoading["sleep"],
       disabled: isDisabledByState("sleep"),
-      disabledTooltip: getDisabledTooltip("sleep", "Sæt klient i dvale"),
+      disabledTooltip: getDisabledTooltip("sleep", "Sluk skærm"),
       lockDuringBusy: true,
-      tooltip: "Sæt klient i dvale",
+      tooltip: "Sluk skærm",
     },
     {
       key: "wakeup",
-      label: "Væk fra dvale",
+      label: "Tænd skærm",
       icon: <WbSunnyIcon />,
       color: "success",
       variant: "outlined",
       onClick: () => doAction("wakeup"),
       loading: !!actionLoading["wakeup"],
       disabled: isDisabledByState("wakeup"),
-      disabledTooltip: getDisabledTooltip("wakeup", "Væk klient fra dvale"),
+      disabledTooltip: getDisabledTooltip("wakeup", "Tænd skærm"),
       lockDuringBusy: false,
-      tooltip: "Væk klient fra dvale",
+      tooltip: "Tænd skærm",
     },
   ];
 
@@ -1150,7 +1155,7 @@ export default function ClientDetailsActionsSection({
             color="primary"
             sx={{ mt: 1.5, fontSize: isMobile ? 11 : 13 }}
           >
-            Klienten er i dvale — brug "Væk fra dvale" for at aktivere den.
+            Skærmen er slukket — brug "Tænd skærm" for at tænde den.
           </Typography>
         )}
       </CardContent>

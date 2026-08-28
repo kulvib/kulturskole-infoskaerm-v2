@@ -919,7 +919,7 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) 
           onClick={startUbuntuUpdate}
           sx={{ borderRadius: 2, fontWeight: 850, whiteSpace: "nowrap" }}
         >
-          {starting || inProgress ? "Opdaterer Ubuntu…" : "Tjek/opdater Ubuntu"}
+          {starting || inProgress ? "Opdaterer Ubuntu…" : "Installer Ubuntu-opdateringer"}
         </Button>
       </Stack>
       {showPanel && (
@@ -1924,9 +1924,6 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
         : nextOrganizationId;
     }
 
-    if (isSuperadmin && String(form.desktop_lockdown_enabled || "false") !== String(initialForm.desktop_lockdown_enabled || "false")) {
-      payload.desktop_lockdown_enabled = String(form.desktop_lockdown_enabled) === "true";
-    }
 
     return payload;
   }, [form, initialForm, canEditClientName, canEditKioskUrlAndLocality, canChangeOrganization, isSuperadmin]);
@@ -2262,8 +2259,8 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                     label="Kiosk lockdown"
                     value={form.desktop_lockdown_enabled}
                     onChange={setField("desktop_lockdown_enabled")}
-                    disabled={saving || !isSuperadmin}
-                    helperText={isSuperadmin ? "Låser kun kiosk-brugeren. cfadmin, root og ClientFlow-services bevares." : "Kun superadministratorer kan ændre kiosk lockdown"}
+                    disabled
+                    helperText="Canonical ClientFlow understøtter endnu ikke kiosk lockdown; kontrollen er fail-closed."
                     sx={textFieldSx}
                   >
                     <MenuItem value="true">Til</MenuItem>
@@ -2690,10 +2687,10 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const criticalServiceRows = [
     { label: "Backend sync", value: client?.service_clientflow_status, service: true, unit: "clientflow-status-agent.service" },
     { label: "Kalender", value: client?.service_calendar_status, service: true, unit: "clientflow-calendar.service" },
-    { label: "Browser Guard", value: client?.service_browser_guard_status, service: true, unit: "clientflow_browser_guard.service" },
-    { label: "Terminal", value: client?.service_remote_terminal_status, service: true, unit: "client_terminal_agent.service" },
-    { label: "Administrator terminal", value: client?.service_admin_terminal_status, service: true, unit: "client_admin_terminal_agent.service" },
-    { label: "Fjernskrivebord", value: client?.service_remote_desktop_status, service: true, unit: "client_remote_desktop_agent.service" },
+    { label: "Display runtime", value: client?.service_browser_guard_status, service: true, unit: "clientflow-display-runtime.service" },
+    { label: "Terminal", value: client?.service_remote_terminal_status, service: true, unit: "clientflow-terminal-agent.service" },
+    { label: "Administrator terminal", value: client?.service_admin_terminal_status, service: true, unit: "clientflow-root-terminal-broker.socket" },
+    { label: "Fjernskrivebord", value: client?.service_remote_desktop_status, service: true, unit: "clientflow-remote-desktop-agent.service" },
   ];
 
   const supportServiceRows = [
@@ -2810,8 +2807,8 @@ function DiagnosticsPanel({ client, onRefresh }) {
       rows: [
         { label: "Backend sync", value: client?.service_clientflow_status, service: true, unit: "clientflow-status-agent.service" },
         { label: "Kalender", value: client?.service_calendar_status, service: true, unit: "clientflow-calendar.service" },
-        { label: "Browser Guard", value: client?.service_browser_guard_status, service: true, unit: "clientflow_browser_guard.service" },
-        { label: "Fjernskrivebord", value: client?.service_remote_desktop_status, service: true, unit: "client_remote_desktop_agent.service" },
+        { label: "Display runtime", value: client?.service_browser_guard_status, service: true, unit: "clientflow-display-runtime.service" },
+        { label: "Fjernskrivebord", value: client?.service_remote_desktop_status, service: true, unit: "clientflow-remote-desktop-agent.service" },
         { label: "Livestream", value: client?.livestream_status || "idle", status: true, helper: `Service: ${statusText(client?.service_livestream_status, "ukendt")}` },
       ],
     },
