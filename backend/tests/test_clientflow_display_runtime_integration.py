@@ -38,6 +38,7 @@ def _configure_runtime_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.setattr(runtime_module, "SOCKET_PATH", run / "runtime.sock")
     monkeypatch.setattr(runtime_module, "PID_PATH", run / "browser.pid")
     monkeypatch.setattr(runtime_module, "PROFILE_DIR", state / "browser-profile")
+    monkeypatch.setattr(runtime_module, "BOOT_MARKER_PATH", state / "browser-boot.json")
     monkeypatch.setattr(runtime_module, "CHROME_BINARY", Path("/bin/true"))
     state.mkdir(parents=True)
     run.mkdir(parents=True)
@@ -72,6 +73,7 @@ def test_display_configuration_starts_browser_and_survives_runtime_recreation(mo
 
     monkeypatch.setattr(runtime_module.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(runtime_module.os, "killpg", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runtime_module.time, "sleep", lambda _seconds: None)
 
     kiosk_url = "https://infoskaerm.example.test/client/4242"
     runtime = runtime_module.DisplayRuntime()
@@ -187,3 +189,38 @@ def test_graphical_environment_requires_exact_local_wayland_session(monkeypatch,
     assert environment["DBUS_SESSION_BUS_ADDRESS"] == f"unix:path={xdg_runtime / 'bus'}"
     assert environment["XDG_SESSION_TYPE"] == "wayland"
     assert environment["GDK_BACKEND"] == "wayland"
+
+
+def test_reset_browser_clears_profile_then_runs_legacy_eight_second_countdown(monkeypatch, tmp_path):
+    state, _run = _configure_runtime_paths(monkeypatch, tmp_path)
+    profile = state / "browser-profile"
+    profile.mkdir()
+    (profile / "Cookies").write_text("secret", encoding="utf-8")
+    runtime = runtime_module.DisplayRuntime()
+    runtime.configuration = {"schema_version": 1, "revision": 1, "kiosk_url": "https://example.test"}
+    runtime.browser_requested = True
+    monkeypatch.setattr(runtime, "stop_browser", lambda **_kwargs: {"stopped": True})
+    seen = []
+    monkeypatch.setattr(runtime, "_status", lambda state_name, **details: seen.append((state_name, details)))
+    monkeypatch.setattr(runtime, "_countdown", lambda step, seconds, **kwargs: seen.append((step, {"seconds": seconds, **kwargs})))
+    monkeypatch.setattr(runtime, "start_browser", lambda: {"started": True, "pid": 44})
+
+    result = runtime.reset_browser()
+
+    assert result["reset"] is True
+    assert not profile.exists()
+    assert ("resetting", {"step": "clear_cookies"}) in seen
+    assert any(name == "countdown" and details["seconds"] == 8 for name, details in seen)
+
+
+def test_boot_countdown_is_once_per_real_boot(monkeypatch, tmp_path):
+    state, _run = _configure_runtime_paths(monkeypatch, tmp_path)
+    boot_id_path = tmp_path / "boot-id"
+    boot_id_path.write_text("boot-a\n", encoding="ascii")
+    monkeypatch.setattr(runtime_module, "BOOT_ID_PATH", boot_id_path)
+    runtime = runtime_module.DisplayRuntime()
+    runtime.shared_group_gid = os.getgid()
+    assert runtime._first_browser_start_this_boot() is True
+    assert runtime._first_browser_start_this_boot() is False
+    boot_id_path.write_text("boot-b\n", encoding="ascii")
+    assert runtime._first_browser_start_this_boot() is True

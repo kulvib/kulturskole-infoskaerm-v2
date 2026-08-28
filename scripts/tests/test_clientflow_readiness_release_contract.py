@@ -94,26 +94,44 @@ def test_active_same_host_chrome_singleton_is_not_stolen(monkeypatch, tmp_path):
 
 
 def test_ubuntu_2604_host_requirement_is_release_bound(monkeypatch, tmp_path):
-    lock = {
-        "schema_version": 1,
-        "host_requirements": {
-            "os_id": "ubuntu",
-            "version_id": "26.04",
-            "architecture": "amd64",
-            "packages": [
-                {"package": "gstreamer1.0-plugins-bad", "minimum_version": "1.28.2-1ubuntu1.1"},
-                {"package": "gir1.2-gst-plugins-base-1.0", "minimum_version": "1.28.2-1"},
-            ],
-        },
-    }
+    lock = json.loads((ROOT / "client/release/runtime-platform-inputs.lock.json").read_text(encoding="utf-8"))
     path = tmp_path / "runtime-platform-inputs.lock.json"
     path.write_text(json.dumps(lock), encoding="utf-8")
     monkeypatch.setattr(platform_prepare, "LOCK_PATH", path)
     rows = platform_prepare._requirements()
-    assert {row["package"] for row in rows} == {
-        "gstreamer1.0-plugins-bad",
+    packages = {row["package"] for row in rows}
+    assert {
+        "acl",
+        "python3-gi",
+        "dbus",
+        "libglib2.0-bin",
+        "gir1.2-gstreamer-1.0",
         "gir1.2-gst-plugins-base-1.0",
-    }
+        "gir1.2-gtk-4.0",
+        "gstreamer1.0-plugins-base",
+        "gstreamer1.0-plugins-good",
+        "gstreamer1.0-plugins-bad",
+        "gstreamer1.0-plugins-ugly",
+        "gstreamer1.0-pipewire",
+    } <= packages
+
+
+def test_platform_probe_uses_system_python_and_all_frozen_capture_capabilities():
+    source = (ROOT / "client/runtime/clientflow_runtime/platform_prepare.py").read_text(encoding="utf-8")
+    assert 'SYSTEM_PYTHON = Path("/usr/bin/python3")' in source
+    assert "RUNTIME_PYTHON" not in source
+    for executable in (
+        "/usr/bin/setfacl", "/usr/bin/setpriv", "/usr/bin/loginctl", "/usr/bin/gdbus",
+        "/usr/bin/gsettings", "/usr/bin/dbus-run-session",
+    ):
+        assert executable in source
+    for element in (
+        "pipewiresrc", "queue", "videoconvert", "videorate", "videoscale",
+        "jpegenc", "appsink", "x264enc", "h264parse", "mpegtsmux", "hlssink",
+    ):
+        assert f'"{element}"' in source
+    for namespace in ("Gio", "Gst", "GstApp", "Gtk", "Pango"):
+        assert f'gi.require_version("{namespace}"' in source
 
 
 def test_platform_gate_is_target_owned_and_precedes_frozen_consumers():
@@ -195,3 +213,27 @@ def test_status_diagnostics_projection_uses_canonical_existing_units():
     for field, unit in expected.items():
         assert f'"{field}": "{unit}"' in source
         assert unit in systemd_units
+
+
+def test_gui_readiness_is_part_of_display_service_start_job():
+    unit = (ROOT / "client/systemd/clientflow-display-runtime.service").read_text(encoding="utf-8")
+    runtime_prepare = (ROOT / "client/release/lib/clientflow_release/runtime_prepare.py").read_text(encoding="utf-8")
+    pyproject = (ROOT / "client/runtime/pyproject.toml").read_text(encoding="utf-8")
+    assert "ExecStartPost=/opt/clientflow/active/runtime/bin/clientflow-display-readiness" in unit
+    assert '"clientflow-display-readiness"' in runtime_prepare
+    assert 'clientflow-display-readiness = "clientflow_runtime.display_readiness:main"' in pyproject
+
+
+def test_legacy_countdown_and_cookie_contract_is_explicit_in_v2():
+    runtime = (ROOT / "client/runtime/clientflow_runtime/display_runtime.py").read_text(encoding="utf-8")
+    control = (ROOT / "client/runtime/clientflow_runtime/display_local_control.py").read_text(encoding="utf-8")
+    assert "BOOT_START_COUNTDOWN_SECONDS = 12" in runtime
+    assert "CONFIGURATION_START_COUNTDOWN_SECONDS = 12" in runtime
+    assert "RESET_BROWSER_COUNTDOWN_SECONDS = 8" in runtime
+    assert "DISPLAY_SLEEP_COUNTDOWN_SECONDS = 5" in runtime
+    assert 'step="clear_cookies"' in runtime
+    assert 'shutil.rmtree(profile' in runtime
+    assert 'if state == "off"' in control and 'display_sleep_countdown' in control
+    # Wake must remain non-destructive: profile reset is owned only by reset_browser.
+    wake_block = control[control.index("def set_display_power"):control.index("def runtime_action")]
+    assert "rmtree" not in wake_block and "clear_cookies" not in wake_block
