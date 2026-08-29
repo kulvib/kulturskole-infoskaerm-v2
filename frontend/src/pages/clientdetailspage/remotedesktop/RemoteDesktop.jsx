@@ -77,6 +77,76 @@ function sumFileSizes(files) {
   return Array.from(files || []).reduce((sum, file) => sum + Number(file?.size || 0), 0);
 }
 
+function clampProgressPercent(value) {
+  if (!Number.isFinite(Number(value))) return null;
+  return Math.max(0, Math.min(100, Math.round(Number(value))));
+}
+
+function xhrUploadFormData(url, formData, { headers = {}, onProgress } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url, true);
+    xhr.withCredentials = true;
+    Object.entries(headers || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) xhr.setRequestHeader(key, String(value));
+    });
+    xhr.upload.onprogress = (event) => {
+      if (typeof onProgress !== "function") return;
+      const percent = event.lengthComputable && event.total > 0
+        ? clampProgressPercent((event.loaded / event.total) * 100)
+        : null;
+      onProgress({ loaded: event.loaded, total: event.lengthComputable ? event.total : null, percent });
+    };
+    xhr.onerror = () => reject(new Error("Upload-forbindelsen fejlede."));
+    xhr.onabort = () => reject(new Error("Upload blev afbrudt."));
+    xhr.onload = () => {
+      let data = {};
+      try { data = xhr.responseText ? JSON.parse(xhr.responseText) : {}; } catch { data = {}; }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(data?.detail || data?.message || `Upload fejlede (${xhr.status})`));
+        return;
+      }
+      resolve(data);
+    };
+    xhr.send(formData);
+  });
+}
+
+function xhrDownloadBlob(url, { headers = {}, onProgress } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", url, true);
+    xhr.withCredentials = true;
+    xhr.responseType = "blob";
+    Object.entries(headers || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) xhr.setRequestHeader(key, String(value));
+    });
+    xhr.onprogress = (event) => {
+      if (typeof onProgress !== "function") return;
+      const percent = event.lengthComputable && event.total > 0
+        ? clampProgressPercent((event.loaded / event.total) * 100)
+        : null;
+      onProgress({ loaded: event.loaded, total: event.lengthComputable ? event.total : null, percent });
+    };
+    xhr.onerror = () => reject(new Error("Download-forbindelsen fejlede."));
+    xhr.onabort = () => reject(new Error("Download blev afbrudt."));
+    xhr.onload = async () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        let detail = `Download fejlede (${xhr.status})`;
+        try {
+          const text = await xhr.response?.text?.();
+          const data = text ? JSON.parse(text) : {};
+          detail = data?.detail || data?.message || detail;
+        } catch {}
+        reject(new Error(detail));
+        return;
+      }
+      resolve(xhr.response);
+    };
+    xhr.send();
+  });
+}
+
 export default function RemoteDesktop() {
   const { clientId } = useParams();
 
@@ -120,6 +190,7 @@ export default function RemoteDesktop() {
   const [transferFiles, setTransferFiles] = useState([]);
   const [transferUploading, setTransferUploading] = useState(false);
   const [transferStatus, setTransferStatus] = useState("");
+  const [transferProgress, setTransferProgress] = useState(null);
   const [transferError, setTransferError] = useState("");
   const [fileBrowserPath, setFileBrowserPath] = useState("");
   const [fileBrowserDisplayPath, setFileBrowserDisplayPath] = useState("");
@@ -130,6 +201,7 @@ export default function RemoteDesktop() {
   const [fileBrowserShowHidden, setFileBrowserShowHidden] = useState(false);
   const [fileBrowserError, setFileBrowserError] = useState("");
   const [fileDownloadStatus, setFileDownloadStatus] = useState("");
+  const [fileDownloadProgress, setFileDownloadProgress] = useState(null);
   const [fileDownloadingPath, setFileDownloadingPath] = useState("");
   const [fileOperationBusy, setFileOperationBusy] = useState(false);
   const [fileOperationStatus, setFileOperationStatus] = useState("");
@@ -250,6 +322,7 @@ export default function RemoteDesktop() {
     setFileBrowserShortcuts([]);
     setFileBrowserError("");
     setFileDownloadStatus("");
+    setFileDownloadProgress(null);
     setFileDownloadingPath("");
     setFileOperationBusy(false);
     setFileOperationStatus("");
@@ -439,19 +512,20 @@ export default function RemoteDesktop() {
 
         (async () => {
           try {
-            const res = await fetch(buildRemoteDesktopBrowserDownloadUrl(apiUrl, clientId, transferId), {
-              credentials: "include",
-              headers: authHeaders(),
-            });
-            if (!res.ok) {
-              let detail = "Download fejlede";
-              try {
-                const data = await res.json();
-                detail = data?.detail || data?.message || detail;
-              } catch {}
-              throw new Error(detail);
-            }
-            const blob = await res.blob();
+            setFileDownloadProgress({ loaded: 0, total: Number(msg.size_bytes || 0) || null, percent: 0 });
+            const blob = await xhrDownloadBlob(
+              buildRemoteDesktopBrowserDownloadUrl(apiUrl, clientId, transferId),
+              {
+                headers: authHeaders(),
+                onProgress: (progress) => {
+                  setFileDownloadProgress(progress);
+                  const transferred = formatBytes(progress.loaded);
+                  const total = progress.total ? formatBytes(progress.total) : "ukendt størrelse";
+                  const percentText = progress.percent !== null ? ` · ${progress.percent}%` : "";
+                  setFileDownloadStatus(`Downloader ${filename} · ${transferred} / ${total}${percentText}`);
+                },
+              }
+            );
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
@@ -461,11 +535,14 @@ export default function RemoteDesktop() {
             a.remove();
             window.URL.revokeObjectURL(url);
             setFileBrowserError("");
+            setFileDownloadProgress({ loaded: blob.size, total: blob.size, percent: 100 });
             setFileDownloadStatus("");
             setFileOperationStatus(`Download klar: ${filename}`);
+            window.setTimeout(() => setFileDownloadProgress(null), 1200);
             setSelectedFilePaths([]);
           } catch (err) {
             setFileBrowserError(err?.message || "Download fejlede");
+            setFileDownloadProgress(null);
             setFileDownloadStatus("");
           } finally {
             setFileDownloadingPath("");
@@ -738,6 +815,7 @@ export default function RemoteDesktop() {
     setTransferError("");
     setTransferStatus("");
 
+    setTransferProgress(null);
     setTransferFiles((prevFiles) => {
       const existingKeys = new Set(Array.from(prevFiles || []).map(getTransferFileKey));
       const nextFiles = [...(prevFiles || [])];
@@ -769,6 +847,7 @@ export default function RemoteDesktop() {
     setTransferFiles((prevFiles) => Array.from(prevFiles || []).filter((_, index) => index !== indexToRemove));
     setTransferError("");
     setTransferStatus("");
+    setTransferProgress(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
@@ -776,6 +855,7 @@ export default function RemoteDesktop() {
     setTransferFiles([]);
     setTransferStatus("");
     setTransferError("");
+    setTransferProgress(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
@@ -854,29 +934,28 @@ export default function RemoteDesktop() {
 
     setTransferUploading(true);
     setTransferError("");
+    setTransferProgress({ loaded: 0, total: totalSize || null, percent: 0 });
     setTransferStatus(`Uploader ${filesToUpload.length} fil(er) til aktuel mappe${fileBrowserDisplayPath ? `: ${fileBrowserDisplayPath}` : ""}...`);
 
     try {
-      const res = await fetch(buildRemoteDesktopUploadMultipleUrl(apiUrl, clientId), {
-        method: "POST",
-        credentials: "include",
-        headers: authHeaders(),
-        body: formData,
-      });
-
-      let data = {};
-      try {
-        data = await res.json();
-      } catch {
-        data = {};
-      }
-
-      if (!res.ok) {
-        throw new Error(data?.detail || data?.message || "Upload fejlede");
-      }
+      const data = await xhrUploadFormData(
+        buildRemoteDesktopUploadMultipleUrl(apiUrl, clientId),
+        formData,
+        {
+          headers: authHeaders(),
+          onProgress: (progress) => {
+            setTransferProgress(progress);
+            const transferred = formatBytes(progress.loaded);
+            const total = progress.total ? formatBytes(progress.total) : formatBytes(totalSize);
+            const percentText = progress.percent !== null ? ` · ${progress.percent}%` : "";
+            setTransferStatus(`Uploader ${filesToUpload.length} fil(er) · ${transferred} / ${total}${percentText}`);
+          },
+        }
+      );
 
       const expectedCount = Number(data?.count || filesToUpload.length || 1);
       setTransferUploading(false);
+      setTransferProgress({ loaded: totalSize, total: totalSize, percent: 100 });
       setTransferFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
       setTransferStatus("");
@@ -886,8 +965,10 @@ export default function RemoteDesktop() {
         path: data?.destination_path ?? fileBrowserPathRef.current ?? "",
         show_hidden: fileBrowserShowHiddenRef.current,
       });
+      window.setTimeout(() => setTransferProgress(null), 1200);
     } catch (err) {
       setTransferUploading(false);
+      setTransferProgress(null);
       setTransferStatus("");
       setTransferError(err?.message || "Upload fejlede");
     }
@@ -923,6 +1004,7 @@ export default function RemoteDesktop() {
     }
     setFileBrowserError("");
     setFileDownloadingPath(entry.relative_path || "");
+    setFileDownloadProgress(null);
     setFileDownloadStatus(`Forbereder download: ${entry.name}`);
     const ok = send({ type: "file_download_request", path: entry.relative_path || "" });
     if (!ok) {
@@ -1373,6 +1455,7 @@ export default function RemoteDesktop() {
             fileBrowserShowHidden={fileBrowserShowHidden}
             fileBrowserError={fileBrowserError}
             fileDownloadStatus={fileDownloadStatus}
+            fileDownloadProgress={fileDownloadProgress}
             fileDownloadingPath={fileDownloadingPath}
             fileOperationBusy={fileOperationBusy}
             fileOperationStatus={fileOperationStatus}
@@ -1380,6 +1463,7 @@ export default function RemoteDesktop() {
             selectedPathSet={selectedPathSet}
             transferFiles={transferFiles}
             transferUploading={transferUploading}
+            transferProgress={transferProgress}
             transferStatus={transferStatus}
             transferError={transferError}
             uploadLimitBytes={UPLOAD_TOTAL_LIMIT_BYTES}

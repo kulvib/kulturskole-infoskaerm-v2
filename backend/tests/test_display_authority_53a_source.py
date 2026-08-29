@@ -24,16 +24,16 @@ def test_53a_remains_reviewed_predecessor_under_53b_system_authority():
     assert 'op.drop_column("client", "kiosk_url")' in migration
     assert 'op.drop_column("client", "browser_refresh_interval_sec")' in migration
     assert 'class DisplayDesiredConfiguration(SQLModel, table=True):' in model
-    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20260823_53b_system_authority"'
-    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260823_53b_system_authority"' in runner
-    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260823_53b_system_authority"' in runner
+    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20260829_54a_display_parity"'
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260829_54a_display_parity"' in runner
+    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260829_54a_display_parity"' in runner
     assert 'REVIEWED_DISPLAY_AUTHORITY_REVISION = "20260823_53a_display_authority"' in runner
     assert 'display_authority_revision = script.get_revision(REVIEWED_DISPLAY_AUTHORITY_REVISION)' in runner
     assert 'display_authority_revision.down_revision != REVIEWED_CLIENT_LIVENESS_REVISION' in runner
     assert 'REVIEWED_SYSTEM_AUTHORITY_REVISION = "20260823_53b_system_authority"' in runner
     assert 'system_authority_revision = script.get_revision(REVIEWED_SYSTEM_AUTHORITY_REVISION)' in runner
     assert 'system_authority_revision.down_revision != REVIEWED_DISPLAY_AUTHORITY_REVISION' in runner
-    assert 'head != REVIEWED_SYSTEM_AUTHORITY_REVISION' in runner
+    assert 'head != REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION' in runner
 
 
 def test_client_aggregate_no_longer_has_display_config_storage_fields():
@@ -41,9 +41,9 @@ def test_client_aggregate_no_longer_has_display_config_storage_fields():
     client_table = models[models.index("class Client(ClientBase, table=True):"):models.index("class ClientRead", models.index("class Client(ClientBase, table=True):"))]
     assert "kiosk_url:" not in client_table
     assert "browser_refresh_interval_sec" not in client_table
-    # Response/input compatibility may still expose kiosk_url, but the fake
-    # auto-refresh contract is removed everywhere.
-    assert "browser_refresh_interval_sec" not in models
+    # Response/input compatibility may expose refresh, but storage remains
+    # outside the legacy Client table under Display desired-state authority.
+    assert "browser_refresh_interval_sec: Optional[int] = 900" in models
 
 
 def test_backend_display_producer_is_durable_version_gated_and_reconciled():
@@ -85,7 +85,7 @@ def test_display_runtime_is_google_chrome_wayland_only_with_exact_reset_boundary
     assert 'Path("/usr/bin/google-chrome-stable")' in runtime
     assert '"/var/lib/clientflow/display-runtime"' in runtime
     assert "chromium" not in runtime.lower()
-    assert "browser_refresh_interval_sec" not in runtime
+    assert "browser_refresh_interval_sec" in runtime
     assert "browser_binary" not in runtime
     assert "browser_arguments" not in runtime
     assert 'configuration["revision"] == current_revision' in runtime
@@ -100,7 +100,8 @@ def test_display_runtime_is_google_chrome_wayland_only_with_exact_reset_boundary
     assert 'and time.monotonic() >= self.next_start_attempt' in runtime
     assert '_status("waiting_session"' in runtime
     assert '"reset_browser"' in runtime
-    assert "remote-debugging" not in runtime
+    assert '"--remote-debugging-address=127.0.0.1"' in runtime
+    assert '"--remote-debugging-port=9222"' in runtime
 
     assert '"/var/lib/clientflow/display-runtime/runtime-status.json"' in agent
     assert '"set_display_power"' in agent
@@ -109,10 +110,10 @@ def test_display_runtime_is_google_chrome_wayland_only_with_exact_reset_boundary
     assert "report_status_after_command" in command_agent
 
 
-def test_frontend_has_single_transaction_kiosk_write_and_no_fake_auto_refresh():
+def test_frontend_has_single_transaction_kiosk_and_display_refresh_write():
     frontend = read("frontend/src/pages/clientdetailspage/ClientDetailsInfoSection.jsx")
-    assert "browser_refresh_interval_sec" not in frontend
-    assert "Browser auto-refresh" not in frontend
+    assert "browser_refresh_interval_sec" in frontend
+    assert "Automatisk browser refresh (sek.)" in frontend
     assert "isCanonicalKioskUrl" in frontend
     assert 'raw.length > 2048' in frontend
     assert '["localhost", "127.0.0.1"].includes(parsed.hostname.toLowerCase())' in frontend

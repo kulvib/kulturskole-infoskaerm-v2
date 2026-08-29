@@ -24,7 +24,7 @@ def test_53b_migration_extends_53a_and_retires_plaintext_secret() -> None:
     assert "pending_reboot = false" in migration
     assert "pending_shutdown = false" in migration
     assert "pending_os_update = false" in migration
-    assert 'EXPECTED_HEAD_REVISION = "20260823_53b_system_authority"' in contract
+    assert 'EXPECTED_HEAD_REVISION = "20260829_54a_display_parity"' in contract
     assert 'REVIEWED_SYSTEM_AUTHORITY_REVISION = "20260823_53b_system_authority"' in runner
     assert "system_authority_revision.down_revision != REVIEWED_DISPLAY_AUTHORITY_REVISION" in runner
     assert "local_management_secret:" not in model

@@ -1808,6 +1808,7 @@ function getConfigFormFromClient(client) {
     name: client?.name || "",
     locality: client?.locality || "",
     kiosk_url: client?.kiosk_url || "",
+    browser_refresh_interval_sec: String(client?.browser_refresh_interval_sec ?? 900),
     desktop_lockdown_enabled: client?.desktop_lockdown_enabled ? "true" : "false",
     organization_id: getOrganizationId(client) ? String(getOrganizationId(client)) : "",
   };
@@ -1876,6 +1877,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     form.name !== initialForm.name ||
     form.locality !== initialForm.locality ||
     form.kiosk_url !== initialForm.kiosk_url ||
+    String(form.browser_refresh_interval_sec || "") !== String(initialForm.browser_refresh_interval_sec || "") ||
     String(form.desktop_lockdown_enabled || "false") !== String(initialForm.desktop_lockdown_enabled || "false") ||
     String(form.organization_id || "") !== String(initialForm.organization_id || "")
   ), [form, initialForm]);
@@ -1897,6 +1899,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
 
     const nextLocality = String(form.locality || "").trim();
     const nextKioskUrl = String(form.kiosk_url || "").trim();
+    const refreshRaw = String(form.browser_refresh_interval_sec ?? "").trim();
 
     if (canEditClientName) {
       const nextName = String(form.name || "").trim();
@@ -1913,6 +1916,16 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
           throw new Error("Kiosk URL skal bruge HTTPS. HTTP er kun tilladt til localhost eller 127.0.0.1.");
         }
         payload.kiosk_url = nextKioskUrl;
+      }
+      if (refreshRaw !== String(initialForm.browser_refresh_interval_sec ?? "")) {
+        if (!/^\d+$/.test(refreshRaw)) {
+          throw new Error("Browser refresh-interval skal være et helt antal sekunder.");
+        }
+        const refreshSeconds = Number(refreshRaw);
+        if (refreshSeconds !== 0 && (refreshSeconds < 60 || refreshSeconds > 86400)) {
+          throw new Error("Browser refresh-interval skal være 0 eller mellem 60 og 86400 sekunder.");
+        }
+        payload.browser_refresh_interval_sec = refreshSeconds;
       }
     }
 
@@ -2191,6 +2204,19 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                     onChange={setField("kiosk_url")}
                     disabled={saving || !canEditKioskUrlAndLocality}
                     helperText={canEditKioskUrlAndLocality ? "HTTPS kræves. HTTP er kun tilladt til localhost eller 127.0.0.1." : "Du har kun læseadgang til kiosk URL"}
+                    sx={textFieldSx}
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    type="number"
+                    label="Automatisk browser refresh (sek.)"
+                    value={form.browser_refresh_interval_sec}
+                    onChange={setField("browser_refresh_interval_sec")}
+                    disabled={saving || !canEditBrowserMaintenance}
+                    inputProps={{ min: 0, max: 86400, step: 1 }}
+                    helperText={canEditBrowserMaintenance ? "0 = slået fra. Ellers 60–86400 sekunder." : "Du har kun læseadgang til browser refresh"}
                     sx={textFieldSx}
                   />
                 </Grid>
@@ -2687,7 +2713,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const criticalServiceRows = [
     { label: "Backend sync", value: client?.service_clientflow_status, service: true, unit: "clientflow-status-agent.service" },
     { label: "Kalender", value: client?.service_calendar_status, service: true, unit: "clientflow-calendar.service" },
-    { label: "Display runtime", value: client?.service_browser_guard_status, service: true, unit: "clientflow-display-runtime.service" },
+    { label: "Browser Guard", value: client?.service_browser_guard_status, service: true, unit: "clientflow-browser-guard.service" },
     { label: "Terminal", value: client?.service_remote_terminal_status, service: true, unit: "clientflow-terminal-agent.service" },
     { label: "Administrator terminal", value: client?.service_admin_terminal_status, service: true, unit: "clientflow-root-terminal-broker.socket" },
     { label: "Fjernskrivebord", value: client?.service_remote_desktop_status, service: true, unit: "clientflow-remote-desktop-agent.service" },
@@ -2805,7 +2831,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
       rows: [
         { label: "Backend sync", value: client?.service_clientflow_status, service: true, unit: "clientflow-status-agent.service" },
         { label: "Kalender", value: client?.service_calendar_status, service: true, unit: "clientflow-calendar.service" },
-        { label: "Display runtime", value: client?.service_browser_guard_status, service: true, unit: "clientflow-display-runtime.service" },
+        { label: "Browser Guard", value: client?.service_browser_guard_status, service: true, unit: "clientflow-browser-guard.service" },
         { label: "Fjernskrivebord", value: client?.service_remote_desktop_status, service: true, unit: "clientflow-remote-desktop-agent.service" },
         { label: "Livestream", value: client?.livestream_status || "idle", status: true, helper: `Service: ${statusText(client?.service_livestream_status, "ukendt")}` },
       ],

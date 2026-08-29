@@ -33,16 +33,17 @@ def _handle(context: CommandContext) -> dict[str, Any]:
                 result = set_display_power(state)
                 record_calendar_manual_override(context.command_type)
                 return result
-            if context.command_type in {"apply_configuration", "start_browser", "stop_browser", "reset_browser"}:
+            if context.command_type in {"apply_configuration", "start_browser", "stop_browser", "reset_browser", "detect_resolution", "apply_resolution"}:
                 result = runtime_action(
                     context.command_type,
                     payload=(
                         context.payload
-                        if context.command_type == "apply_configuration"
+                        if context.command_type in {"apply_configuration", "apply_resolution"}
+                        else context.payload if context.command_type == "detect_resolution"
                         else {"source": "backend"}
                     ),
                 )
-                if context.command_type != "apply_configuration":
+                if context.command_type in {"start_browser", "stop_browser", "reset_browser"}:
                     record_calendar_manual_override(context.command_type)
                 return result
     except RpcError as exc:

@@ -85,6 +85,10 @@ class DisplayDesiredConfiguration(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint("schema_version = 1", name="ck_display_desired_configuration_schema_version"),
         CheckConstraint("revision >= 1", name="ck_display_desired_configuration_revision"),
+        CheckConstraint(
+            "browser_refresh_interval_sec = 0 OR (browser_refresh_interval_sec >= 60 AND browser_refresh_interval_sec <= 86400)",
+            name="ck_display_desired_configuration_browser_refresh_interval",
+        ),
         Index("ix_display_desired_configuration_updated_at", "updated_at"),
     )
 
@@ -94,6 +98,10 @@ class DisplayDesiredConfiguration(SQLModel, table=True):
     schema_version: int = Field(default=1, sa_column=Column(Integer, nullable=False, server_default=text("1")))
     revision: int = Field(default=1, sa_column=Column(Integer, nullable=False, server_default=text("1")))
     kiosk_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    browser_refresh_interval_sec: int = Field(
+        default=900,
+        sa_column=Column(Integer, nullable=False, server_default=text("900")),
+    )
     updated_at: datetime
     updated_by_user_id: Optional[int] = Field(
         default=None,

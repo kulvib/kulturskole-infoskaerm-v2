@@ -126,7 +126,7 @@ def set_display_power(state: str) -> dict[str, Any]:
 def runtime_action(action: str, *, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     if action not in {
         "apply_configuration", "start_browser", "stop_browser", "reset_browser",
-        "set_calendar_preview", "record_display_power",
+        "set_calendar_preview", "record_display_power", "detect_resolution", "apply_resolution",
     }:
         raise ValueError(f"Understøttet Display runtime action mangler for: {action}")
     request: dict[str, Any] = {"action": action}

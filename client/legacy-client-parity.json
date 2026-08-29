@@ -1,0 +1,430 @@
+{
+  "schema_version": 1,
+  "legacy_baseline": {
+    "release": "1.1.19",
+    "sequence": 1119,
+    "payload_python_file_count": 46
+  },
+  "allowed_statuses": [
+    "implemented",
+    "architecturally_replaced",
+    "obsolete"
+  ],
+  "entries": [
+    {
+      "legacy_path": "opt/clientflow/api/chrome_kiosk.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/display_runtime.py",
+        "client/runtime/clientflow_runtime/browser_guard.py"
+      ],
+      "rationale": "Chrome lifecycle, profile policy, Wayland launch and browser guard are owned by the V2 Display domain."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/client_remote_desktop_agent.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/remote_desktop_agent.py"
+      ],
+      "rationale": "V2 isolated Remote Desktop agent."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/client_remote_desktop_wayland_capture.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/remote_desktop_capture.py",
+        "client/runtime/clientflow_runtime/remote_desktop_mutter_worker.py"
+      ],
+      "rationale": "V2 Wayland/Mutter capture worker and capture service."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/client_terminal_agent.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/terminal_agent.py",
+        "client/runtime/clientflow_runtime/standard_terminal_broker.py",
+        "client/runtime/clientflow_runtime/root_terminal_broker.py"
+      ],
+      "rationale": "V2 isolated terminal agent with standard/root brokers."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/clientflow_browser_guard.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/browser_guard.py",
+        "client/systemd/clientflow-browser-guard.service"
+      ],
+      "rationale": "Cookie-consent/popup hardening and backend-controlled dynamic refresh are canonical Browser Guard functions."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/clientflow_calendar.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/calendar_agent.py"
+      ],
+      "rationale": "V2 Calendar agent owns schedule reconciliation."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/clientflow_diagnostics.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/status_agent.py",
+        "client/runtime/clientflow_runtime/diagnostics.py"
+      ],
+      "rationale": "Diagnostics are split into Status-domain telemetry and runtime diagnostics."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/clientflow_display.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/display_resolution.py",
+        "client/runtime/clientflow_runtime/display_runtime.py",
+        "client/runtime/clientflow_runtime/display_power_broker.py"
+      ],
+      "rationale": "Display detection/apply, browser and physical power are separated V2 authorities."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/clientflow_gui.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/libexec/local-gui",
+        "client/runtime/clientflow_runtime/display_readiness.py"
+      ],
+      "rationale": "Native GTK4 local GUI with readiness gating."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/clientflow_service.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/systemd/clientflow.target",
+        "client/runtime/clientflow_runtime/display_input_wake.py",
+        "client/runtime/clientflow_runtime/status_agent.py",
+        "client/runtime/clientflow_runtime/system_agent.py"
+      ],
+      "rationale": "Legacy monolith is decomposed into domain agents/services; physical input wake is explicit. Legacy desktop-lockdown consumer is intentionally fail-closed/unsupported in V2."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/config_utils.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/config.py",
+        "client/runtime/clientflow_runtime/atomic.py"
+      ],
+      "rationale": "V2 config/credential loading and atomic state are domain-isolated."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/kiosk_sleep.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/display_local_control.py",
+        "client/runtime/clientflow_runtime/display_power_broker.py"
+      ],
+      "rationale": "Display OFF uses canonical Display power broker with countdown."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/kiosk_wake.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/display_local_control.py",
+        "client/runtime/clientflow_runtime/display_input_wake.py",
+        "client/runtime/clientflow_runtime/calendar_agent.py"
+      ],
+      "rationale": "Manual, calendar and physical input wake use Display power authority without implicit reboot/browser start."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/livestream.py",
+      "status": "obsolete",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/livestream_wayland_capture.py",
+        "client/runtime/clientflow_runtime/livestream_producer.py"
+      ],
+      "rationale": "Legacy X11 capture is obsolete on Ubuntu 26.04 Wayland; V2 PipeWire/Wayland Livestream supersedes it."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/livestream_uploader.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/livestream_uploader.py"
+      ],
+      "rationale": "V2 isolated Livestream uploader."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/livestream_wayland.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/livestream_wayland_capture.py",
+        "client/runtime/clientflow_runtime/livestream_producer.py"
+      ],
+      "rationale": "V2 Wayland capture/producer supersedes legacy combined implementation."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/livestream_wayland_placeholder.py",
+      "status": "obsolete",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/livestream_wayland_capture.py"
+      ],
+      "rationale": "Placeholder is historical; production Wayland capture exists in V2."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/rotate_client_secret.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/config.py",
+        "client/release/lib/clientflow_release/transaction.py"
+      ],
+      "rationale": "Single shared client-secret rotation is superseded by unique domain credentials plus separate system/update identities."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/status_map.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/status.py",
+        "client/runtime/clientflow_runtime/status_agent.py"
+      ],
+      "rationale": "V2 Status domain normalizes and reports runtime state."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/status_utils.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/status.py",
+        "client/runtime/clientflow_runtime/status_agent.py"
+      ],
+      "rationale": "V2 Status domain owns status utilities/projection input."
+    },
+    {
+      "legacy_path": "opt/clientflow/api/ubuntu_update.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/system_broker.py",
+        "client/libexec/update-os"
+      ],
+      "rationale": "Ubuntu dist-upgrade is a canonical System command/broker operation."
+    },
+    {
+      "legacy_path": "usr/local/bin/clientflow-cursor-idle-monitor.py",
+      "status": "obsolete",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/display_input_wake.py"
+      ],
+      "rationale": "Legacy idle/cursor helper was not a canonical installed service; physical input wake is now explicit without idle side effects."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/chrome_kiosk.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/display_runtime.py",
+        "client/runtime/clientflow_runtime/browser_guard.py"
+      ],
+      "rationale": "Chrome lifecycle, profile policy, Wayland launch and browser guard are owned by the V2 Display domain."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/client_remote_desktop_agent.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/remote_desktop_agent.py"
+      ],
+      "rationale": "V2 isolated Remote Desktop agent."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/client_remote_desktop_wayland_capture.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/remote_desktop_capture.py",
+        "client/runtime/clientflow_runtime/remote_desktop_mutter_worker.py"
+      ],
+      "rationale": "V2 Wayland/Mutter capture worker and capture service."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/client_terminal_agent.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/terminal_agent.py",
+        "client/runtime/clientflow_runtime/standard_terminal_broker.py",
+        "client/runtime/clientflow_runtime/root_terminal_broker.py"
+      ],
+      "rationale": "V2 isolated terminal agent with standard/root brokers."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/clientflow_browser_guard.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/browser_guard.py",
+        "client/systemd/clientflow-browser-guard.service"
+      ],
+      "rationale": "Cookie-consent/popup hardening and backend-controlled dynamic refresh are canonical Browser Guard functions."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/clientflow_calendar.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/calendar_agent.py"
+      ],
+      "rationale": "V2 Calendar agent owns schedule reconciliation."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/clientflow_diagnostics.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/status_agent.py",
+        "client/runtime/clientflow_runtime/diagnostics.py"
+      ],
+      "rationale": "Diagnostics are split into Status-domain telemetry and runtime diagnostics."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/clientflow_display.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/display_resolution.py",
+        "client/runtime/clientflow_runtime/display_runtime.py",
+        "client/runtime/clientflow_runtime/display_power_broker.py"
+      ],
+      "rationale": "Display detection/apply, browser and physical power are separated V2 authorities."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/clientflow_graphical_session.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/display_runtime.py",
+        "client/runtime/clientflow_runtime/display_platform_prepare.py"
+      ],
+      "rationale": "V2 discovers/validates the active local Wayland session and prepares GDM/Ubuntu session explicitly."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/clientflow_gui.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/libexec/local-gui",
+        "client/runtime/clientflow_runtime/display_readiness.py"
+      ],
+      "rationale": "Native GTK4 local GUI with readiness gating."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/clientflow_service.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/systemd/clientflow.target",
+        "client/runtime/clientflow_runtime/display_input_wake.py",
+        "client/runtime/clientflow_runtime/status_agent.py",
+        "client/runtime/clientflow_runtime/system_agent.py"
+      ],
+      "rationale": "Legacy monolith is decomposed into domain agents/services; physical input wake is explicit. Legacy desktop-lockdown consumer is intentionally fail-closed/unsupported in V2."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/clientflow_update_transaction.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/release/lib/clientflow_release/transaction.py",
+        "client/runtime/clientflow_runtime/system_agent.py"
+      ],
+      "rationale": "Whole-bundle transaction/controller replaces legacy update transaction helper."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/config_utils.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/config.py",
+        "client/runtime/clientflow_runtime/atomic.py"
+      ],
+      "rationale": "V2 config/credential loading and atomic state are domain-isolated."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/kiosk_sleep.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/display_local_control.py",
+        "client/runtime/clientflow_runtime/display_power_broker.py"
+      ],
+      "rationale": "Display OFF uses canonical Display power broker with countdown."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/kiosk_wake.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/display_local_control.py",
+        "client/runtime/clientflow_runtime/display_input_wake.py",
+        "client/runtime/clientflow_runtime/calendar_agent.py"
+      ],
+      "rationale": "Manual, calendar and physical input wake use Display power authority without implicit reboot/browser start."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/livestream.py",
+      "status": "obsolete",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/livestream_wayland_capture.py",
+        "client/runtime/clientflow_runtime/livestream_producer.py"
+      ],
+      "rationale": "Legacy X11 capture is obsolete on Ubuntu 26.04 Wayland; V2 PipeWire/Wayland Livestream supersedes it."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/livestream_uploader.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/livestream_uploader.py"
+      ],
+      "rationale": "V2 isolated Livestream uploader."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/livestream_wayland.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/livestream_wayland_capture.py",
+        "client/runtime/clientflow_runtime/livestream_producer.py"
+      ],
+      "rationale": "V2 Wayland capture/producer supersedes legacy combined implementation."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/livestream_wayland_placeholder.py",
+      "status": "obsolete",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/livestream_wayland_capture.py"
+      ],
+      "rationale": "Placeholder is historical; production Wayland capture exists in V2."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/rotate_client_secret.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/config.py",
+        "client/release/lib/clientflow_release/transaction.py"
+      ],
+      "rationale": "Single shared client-secret rotation is superseded by unique domain credentials plus separate system/update identities."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/status_map.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/status.py",
+        "client/runtime/clientflow_runtime/status_agent.py"
+      ],
+      "rationale": "V2 Status domain normalizes and reports runtime state."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/status_utils.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/status.py",
+        "client/runtime/clientflow_runtime/status_agent.py"
+      ],
+      "rationale": "V2 Status domain owns status utilities/projection input."
+    },
+    {
+      "legacy_path": "usr/local/lib/clientflow-root/ubuntu_update.py",
+      "status": "implemented",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/system_broker.py",
+        "client/libexec/update-os"
+      ],
+      "rationale": "Ubuntu dist-upgrade is a canonical System command/broker operation."
+    },
+    {
+      "legacy_path": "usr/local/sbin/clientflow-power-event-reporter.py",
+      "status": "architecturally_replaced",
+      "v2_replacements": [
+        "client/runtime/clientflow_runtime/status_agent.py",
+        "client/runtime/clientflow_runtime/system_agent.py"
+      ],
+      "rationale": "Boot/power lifecycle evidence is reported through canonical Status/System authorities."
+    }
+  ]
+}

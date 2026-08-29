@@ -410,6 +410,7 @@ class ClientRead(ClientBase):
     presence: ClientPresenceRead = Field(default_factory=ClientPresenceRead)
     sort_order: Optional[int] = None
     kiosk_url: Optional[str] = None
+    browser_refresh_interval_sec: Optional[int] = 900
     ubuntu_version: Optional[str] = None
     uptime: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -630,6 +631,7 @@ class ClientUpdate(SQLModel):
     locality: Optional[str] = None
     sort_order: Optional[int] = None
     kiosk_url: Optional[str] = None
+    browser_refresh_interval_sec: Optional[int] = None
     ubuntu_version: Optional[str] = None
     uptime: Optional[str] = None
     wifi_ip_address: Optional[str] = None

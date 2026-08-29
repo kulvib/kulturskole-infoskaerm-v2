@@ -33,6 +33,7 @@ def test_status_snapshot_projects_canonical_version_network_and_real_unit_health
                 "services": {
                     "clientflow-status-agent.service": "active",
                     "clientflow-display-runtime.service": "active",
+                    "clientflow-browser-guard.service": "active",
                     "clientflow-root-terminal-broker.socket": "active",
                     "clientflow-livestream-producer.service": "inactive",
                     "clientflow-updater.timer": "active",

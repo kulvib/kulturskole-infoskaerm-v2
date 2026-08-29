@@ -18,7 +18,7 @@ from sqlmodel import Session, select
 
 from .auth import SECRET_KEY, verify_password
 from .client_domain_models import ClientCommand, ClientDomainCredential, ClientDomainStatus
-from .display_control import display_agent_supports_commands
+from .display_control import apply_display_command_failure, display_agent_supports_commands
 from .models import Client
 
 SHARED_DOMAINS = frozenset({"status", "display", "system"})
@@ -266,6 +266,10 @@ def _reconcile_command_state(
             row.error_message = "Kommandoens udløbstidspunkt er passeret"
             _clear_claim(row)
             session.add(row)
+            if domain == "display" and row.command_type in {"detect_resolution", "apply_resolution"}:
+                apply_display_command_failure(
+                    session, client_id=client_id, command_id=row.id, error_message=row.error_message
+                )
             continue
         if row.status == "claimed" and row.lease_expires_at is not None and row.lease_expires_at <= now:
             if row.attempt_count >= row.max_attempts:
@@ -278,6 +282,10 @@ def _reconcile_command_state(
                 row.available_at = now
             _clear_claim(row)
             session.add(row)
+            if row.status == "failed" and domain == "display" and row.command_type in {"detect_resolution", "apply_resolution"}:
+                apply_display_command_failure(
+                    session, client_id=client_id, command_id=row.id, error_message=row.error_message
+                )
 
 
 def claim_shared_command(

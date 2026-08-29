@@ -14,8 +14,10 @@ dependencies = [
 ]
 
 [project.scripts]
+clientflow-browser-guard = "clientflow_runtime.browser_guard:main"
 clientflow-calendar = "clientflow_runtime.calendar_agent:main"
 clientflow-display-agent = "clientflow_runtime.display_agent:main"
+clientflow-display-input-wake = "clientflow_runtime.display_input_wake:main"
 clientflow-display-power-broker = "clientflow_runtime.display_power_broker:main"
 clientflow-display-platform-prepare = "clientflow_runtime.display_platform_prepare:main"
 clientflow-display-readiness = "clientflow_runtime.display_readiness:main"

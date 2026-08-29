@@ -8,7 +8,11 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from ..db import engine
-from ..display_control import reconcile_display_configuration
+from ..display_control import (
+    apply_display_command_completion,
+    apply_display_command_failure,
+    reconcile_display_configuration,
+)
 from ..calendar_control import build_display_calendar_delivery
 from ..system_control import apply_system_command_completion
 from ..shared_domain import (
@@ -120,6 +124,8 @@ def _complete(domain: str, client_id: int, command_id: str, body: CompleteBody, 
         )
         if domain == "system":
             apply_system_command_completion(session, client_id=client_id, command_id=command_id)
+        elif domain == "display":
+            apply_display_command_completion(session, client_id=client_id, command_id=command_id)
         session.commit()
         return payload
 
@@ -136,6 +142,10 @@ def _fail(domain: str, client_id: int, command_id: str, body: FailBody, authoriz
             error_message=body.error_message,
             retryable=body.retryable,
         )
+        if domain == "display" and payload.get("status") == "failed":
+            apply_display_command_failure(
+                session, client_id=client_id, command_id=command_id, error_message=body.error_message
+            )
         session.commit()
         return payload
 

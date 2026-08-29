@@ -1037,3 +1037,15 @@ for _retired_column in SYSTEM_AUTHORITY_RETIRED_CLIENT_COLUMNS:
 EXPECTED_COLUMNS["client"] = _client_columns
 # Replaced below after deterministic contract fingerprint calculation.
 EXPECTED_FINGERPRINT = "965720d95f0937ba2bc060ecb5e9f5b95b9db90c7bdc19f48454f360811fd3c1"
+# Step 54A: durable Browser Guard refresh policy under Display authority.
+from display_operational_parity_schema_contract import (
+    DISPLAY_OPERATIONAL_PARITY_COLUMNS,
+    DISPLAY_OPERATIONAL_PARITY_CONSTRAINTS,
+)
+EXPECTED_HEAD_REVISION = "20260829_54a_display_parity"
+_display_columns = dict(EXPECTED_COLUMNS["display_desired_configuration"])
+_display_columns.update(DISPLAY_OPERATIONAL_PARITY_COLUMNS)
+EXPECTED_COLUMNS["display_desired_configuration"] = _display_columns
+EXPECTED_CONSTRAINTS.update(DISPLAY_OPERATIONAL_PARITY_CONSTRAINTS)
+# Replaced below after deterministic contract fingerprint calculation.
+EXPECTED_FINGERPRINT = "32dd4f09bb97b649a1e334bd5d86236fa18757edf4145320b4cfd86ccaf03fab"
