@@ -513,7 +513,7 @@ export default function EnrollmentTokensPage() {
             {freshInstallCommand}
           </Paper>
           <Alert severity="info" sx={{ mt: 2 }}>
-            Blokken downloader kun de bytes, som den signerede authorization peger på, og verificerer hele bundle-SHA-256. Derefter fortsættes den eksisterende 51I-procedure fra <code>CLIENTFLOW_RELEASE_PROCEDURE.md</code> afsnit 4. Kiosk-bruger og manuel aktivering gættes eller udføres ikke automatisk.
+            Blokken downloader kun de bytes, som den signerede authorization peger på, og verificerer hele bundle-SHA-256. Derefter fortsættes den eksisterende 51I-procedure fra <code>CLIENTFLOW_RELEASE_PROCEDURE.md</code> afsnit 5. Kiosk-bruger og manuel aktivering gættes eller udføres ikke automatisk.
           </Alert>
         </DialogContent>
         <DialogActions>
