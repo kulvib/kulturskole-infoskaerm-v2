@@ -17,6 +17,7 @@ import {
   ListItemText,
   Breadcrumbs,
   Link,
+  LinearProgress,
   Paper,
   Stack,
   Tooltip,
@@ -172,6 +173,7 @@ export default function RemoteDesktopFileManager({
   fileBrowserShowHidden,
   fileBrowserError,
   fileDownloadStatus,
+  fileDownloadProgress,
   fileDownloadingPath,
   fileOperationBusy,
   fileOperationStatus,
@@ -179,6 +181,7 @@ export default function RemoteDesktopFileManager({
   selectedPathSet,
   transferFiles,
   transferUploading,
+  transferProgress,
   transferStatus,
   transferError,
   uploadLimitBytes,
@@ -212,6 +215,8 @@ export default function RemoteDesktopFileManager({
   const transferStatusSeverity = transferUploading ? "info" : "success";
   const fileDownloadStatusSeverity = fileDownloadingPath ? "info" : "success";
   const fileOperationStatusSeverity = fileOperationBusy ? "info" : "success";
+  const uploadProgressValue = Number.isFinite(Number(transferProgress?.percent)) ? Number(transferProgress.percent) : null;
+  const downloadProgressValue = Number.isFinite(Number(fileDownloadProgress?.percent)) ? Number(fileDownloadProgress.percent) : null;
 
   const [sortKey, setSortKey] = useState("name");
   const [sortDirection, setSortDirection] = useState("asc");
@@ -591,6 +596,45 @@ export default function RemoteDesktopFileManager({
         severity="error"
         onClose={onClearFileBrowserError}
       />
+
+      {(transferUploading || fileDownloadingPath) && (
+        <Box sx={{ px: { xs: 1.3, md: 1.8 }, pt: 1.25 }}>
+          <Stack spacing={0.75}>
+            {transferUploading && (
+              <Box>
+                <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center", mb: 0.35 }}>
+                  <Typography variant="caption" sx={{ fontWeight: 900 }}>Filupload</Typography>
+                  <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                    {uploadProgressValue !== null ? `${uploadProgressValue}%` : "I gang"}
+                  </Typography>
+                </Stack>
+                <LinearProgress
+                  variant={uploadProgressValue !== null ? "determinate" : "indeterminate"}
+                  value={uploadProgressValue ?? undefined}
+                  aria-label="Filupload progress"
+                  sx={{ height: 7, borderRadius: 999 }}
+                />
+              </Box>
+            )}
+            {fileDownloadingPath && (
+              <Box>
+                <Stack direction="row" sx={{ justifyContent: "space-between", alignItems: "center", mb: 0.35 }}>
+                  <Typography variant="caption" sx={{ fontWeight: 900 }}>Fildownload</Typography>
+                  <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                    {downloadProgressValue !== null ? `${downloadProgressValue}%` : "I gang"}
+                  </Typography>
+                </Stack>
+                <LinearProgress
+                  variant={downloadProgressValue !== null ? "determinate" : "indeterminate"}
+                  value={downloadProgressValue ?? undefined}
+                  aria-label="Fildownload progress"
+                  sx={{ height: 7, borderRadius: 999 }}
+                />
+              </Box>
+            )}
+          </Stack>
+        </Box>
+      )}
       <Box
         sx={{
           display: "grid",

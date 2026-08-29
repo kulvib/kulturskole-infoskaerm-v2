@@ -363,6 +363,10 @@ def _prepare_graphical_kiosk(kiosk_user: str) -> bool:
 def prepare() -> None:
     if os.geteuid() != 0:
         raise DisplayPlatformPreparationError("Display platform preparation kræver root")
+    # clientflow-display-input-wake.service receives this standard Linux input
+    # group only for physical keyboard/mouse event devices. Make the platform
+    # prerequisite deterministic on minimal Ubuntu installations.
+    _run(["/usr/sbin/groupadd", "--system", "--force", "input"], timeout=30)
     kiosk_user = os.getenv("CLIENTFLOW_KIOSK_USER", "").strip()
     if not kiosk_user:
         raise DisplayPlatformPreparationError("CLIENTFLOW_KIOSK_USER mangler")

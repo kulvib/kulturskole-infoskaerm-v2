@@ -18,10 +18,13 @@ from .client_domain_models import ClientCommand, ClientDomainStatus, DisplayDesi
 from .models import Client
 
 DISPLAY_DOMAIN = "display"
-DISPLAY_CONFIGURATION_SCHEMA = 1
+DISPLAY_DESIRED_SCHEMA = 1
+DISPLAY_CONFIGURATION_SCHEMA = 2
+DISPLAY_CONFIGURATION_V1_SCHEMA = 1
 DISPLAY_MIN_COMMAND_AGENT_VERSION = "1.3.5"
+DISPLAY_CONFIGURATION_V2_MIN_AGENT_VERSION = "1.3.12"
 DISPLAY_CONTROL_COMMANDS = frozenset(
-    {"start_browser", "stop_browser", "reset_browser", "set_display_power"}
+    {"start_browser", "stop_browser", "reset_browser", "set_display_power", "detect_resolution", "apply_resolution"}
 )
 DISPLAY_COMMAND_TO_LEGACY_ACTION = {
     "start_browser": "start",
@@ -45,6 +48,24 @@ def display_agent_supports_commands(agent_version: str | None) -> bool:
     actual = _version_tuple(agent_version)
     minimum = _version_tuple(DISPLAY_MIN_COMMAND_AGENT_VERSION)
     return bool(actual is not None and minimum is not None and actual >= minimum)
+
+
+def display_agent_supports_configuration_v2(agent_version: str | None) -> bool:
+    actual = _version_tuple(agent_version)
+    minimum = _version_tuple(DISPLAY_CONFIGURATION_V2_MIN_AGENT_VERSION)
+    return bool(actual is not None and minimum is not None and actual >= minimum)
+
+
+def normalize_browser_refresh_interval(value: Any) -> int:
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Browser refresh-interval skal være et helt antal sekunder") from exc
+    if seconds == 0:
+        return 0
+    if seconds < 60 or seconds > 86400:
+        raise HTTPException(status_code=400, detail="Browser refresh-interval skal være 0 eller mellem 60 og 86400 sekunder")
+    return seconds
 
 
 def normalize_kiosk_url(value: Any) -> str | None:
@@ -109,15 +130,46 @@ def set_display_desired_kiosk_url(
     if row is None:
         row = DisplayDesiredConfiguration(
             client_id=client_id,
-            schema_version=DISPLAY_CONFIGURATION_SCHEMA,
+            schema_version=DISPLAY_DESIRED_SCHEMA,
             revision=1,
             kiosk_url=normalized,
+            browser_refresh_interval_sec=900,
             updated_at=now,
             updated_by_user_id=updated_by_user_id,
         )
     elif row.kiosk_url != normalized:
         row.revision += 1
         row.kiosk_url = normalized
+        row.updated_at = now
+        row.updated_by_user_id = updated_by_user_id
+    session.add(row)
+    return row
+
+
+def set_display_desired_browser_refresh_interval(
+    session: Session,
+    *,
+    client_id: int,
+    browser_refresh_interval_sec: Any,
+    updated_by_user_id: int | None,
+) -> DisplayDesiredConfiguration:
+    normalized = normalize_browser_refresh_interval(browser_refresh_interval_sec)
+    lock_display_client(session, client_id)
+    row = get_display_desired_configuration(session, client_id, for_update=True)
+    now = utcnow()
+    if row is None:
+        row = DisplayDesiredConfiguration(
+            client_id=client_id,
+            schema_version=DISPLAY_DESIRED_SCHEMA,
+            revision=1,
+            kiosk_url=None,
+            browser_refresh_interval_sec=normalized,
+            updated_at=now,
+            updated_by_user_id=updated_by_user_id,
+        )
+    elif int(row.browser_refresh_interval_sec) != normalized:
+        row.revision += 1
+        row.browser_refresh_interval_sec = normalized
         row.updated_at = now
         row.updated_by_user_id = updated_by_user_id
     session.add(row)
@@ -224,9 +276,14 @@ def reconcile_display_configuration(
         observed_revision = int(runtime.get("configuration_revision"))
     except (TypeError, ValueError):
         observed_revision = None
+    try:
+        observed_schema = int(runtime.get("configuration_schema_version") or 1)
+    except (TypeError, ValueError):
+        observed_schema = 1
+    target_schema = DISPLAY_CONFIGURATION_SCHEMA if display_agent_supports_configuration_v2(agent_version) else DISPLAY_CONFIGURATION_V1_SCHEMA
 
     active = _active_display_commands(session, client_id)
-    if observed_revision == desired.revision:
+    if observed_revision == desired.revision and observed_schema >= target_schema:
         for row in active:
             if row.command_type == "apply_configuration" and row.status == "queued":
                 row.status = "cancelled"
@@ -256,15 +313,83 @@ def reconcile_display_configuration(
         session,
         client_id=client_id,
         command_type="apply_configuration",
-        payload={
-            "schema_version": DISPLAY_CONFIGURATION_SCHEMA,
-            "revision": desired.revision,
-            "kiosk_url": desired.kiosk_url,
-        },
+        payload=(
+            {
+                "schema_version": DISPLAY_CONFIGURATION_SCHEMA,
+                "revision": desired.revision,
+                "kiosk_url": desired.kiosk_url,
+                "browser_refresh_interval_sec": int(desired.browser_refresh_interval_sec),
+            }
+            if target_schema == DISPLAY_CONFIGURATION_SCHEMA
+            else {
+                "schema_version": DISPLAY_CONFIGURATION_V1_SCHEMA,
+                "revision": desired.revision,
+                "kiosk_url": desired.kiosk_url,
+            }
+        ),
         requested_by_user_id=desired.updated_by_user_id,
         ttl_seconds=600,
         idempotency_prefix=f"display-configuration-r{desired.revision}",
     )
+
+
+def apply_display_command_completion(session: Session, *, client_id: int, command_id: str) -> None:
+    command = session.get(ClientCommand, command_id)
+    if command is None or command.client_id != client_id or command.domain != DISPLAY_DOMAIN:
+        return
+    if command.command_type not in {"detect_resolution", "apply_resolution"}:
+        return
+    client = session.get(Client, client_id)
+    if client is None:
+        return
+    result = command.result if isinstance(command.result, dict) else {}
+    if not result.get("ok"):
+        client.display_resolution_status = "error"
+        client.display_resolution_error = str(result.get("error") or "Display resolution command gav intet gyldigt resultat")[:1000]
+        client.display_resolution_action = None
+        session.add(client)
+        return
+    client.display_resolution_current_output = str(result.get("output") or "")[:255] or None
+    try:
+        client.display_resolution_current_width = int(result.get("width")) if result.get("width") is not None else None
+        client.display_resolution_current_height = int(result.get("height")) if result.get("height") is not None else None
+        client.display_resolution_current_refresh_rate = (
+            float(result.get("refresh_rate")) if result.get("refresh_rate") is not None else None
+        )
+    except (TypeError, ValueError):
+        client.display_resolution_status = "error"
+        client.display_resolution_error = "Display resolution command returnerede ugyldige dimensionsdata"
+        client.display_resolution_action = None
+        session.add(client)
+        return
+    outputs = result.get("outputs")
+    client.display_detected_outputs = outputs if isinstance(outputs, list) else []
+    client.display_detected_updated_at = utcnow()
+    client.display_resolution_status = "applied" if command.command_type == "apply_resolution" else "detected"
+    client.display_resolution_error = None
+    client.display_resolution_action = None
+    client.display_resolution_updated_at = utcnow()
+    if command.command_type == "apply_resolution":
+        client.display_resolution_last_applied_at = utcnow()
+    session.add(client)
+
+
+def apply_display_command_failure(
+    session: Session, *, client_id: int, command_id: str, error_message: str | None
+) -> None:
+    command = session.get(ClientCommand, command_id)
+    if command is None or command.client_id != client_id or command.domain != DISPLAY_DOMAIN:
+        return
+    if command.command_type not in {"detect_resolution", "apply_resolution"}:
+        return
+    client = session.get(Client, client_id)
+    if client is None:
+        return
+    client.display_resolution_status = "error"
+    client.display_resolution_error = str(error_message or "Display resolution command fejlede")[:1000]
+    client.display_resolution_action = None
+    client.display_resolution_updated_at = utcnow()
+    session.add(client)
 
 
 def _epoch_datetime(value: Any) -> datetime | None:
@@ -362,6 +487,7 @@ def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
     pending = display_command_legacy_action(active)
     return {
         "kiosk_url": desired.kiosk_url if desired else None,
+        "browser_refresh_interval_sec": int(desired.browser_refresh_interval_sec) if desired else 900,
         "display_configuration_revision": desired.revision if desired else None,
         "chrome_status": chrome_status,
         "chrome_color": chrome_color,

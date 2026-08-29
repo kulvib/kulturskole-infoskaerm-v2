@@ -83,12 +83,22 @@ def test_display_configuration_starts_browser_and_survives_runtime_recreation(mo
     applied = runtime.apply_configuration(
         {"schema_version": 1, "revision": 1, "kiosk_url": kiosk_url}
     )
-    assert applied == {"applied": True, "revision": 1}
+    assert applied == {
+        "applied": True,
+        "revision": 1,
+        "schema_version": 1,
+        "browser_refresh_interval_sec": 900,
+    }
     assert runtime.browser_requested is True
     assert runtime.browser is not None and runtime.browser.pid == 5101
 
     persisted = json.loads((state / "configuration.json").read_text(encoding="utf-8"))
-    assert persisted == {"schema_version": 1, "revision": 1, "kiosk_url": kiosk_url}
+    assert persisted == {
+        "schema_version": 1,
+        "revision": 1,
+        "kiosk_url": kiosk_url,
+        "browser_refresh_interval_sec": 900,
+    }
     status = json.loads((state / "runtime-status.json").read_text(encoding="utf-8"))
     assert status["state"] == "running"
     assert status["configuration_revision"] == 1
@@ -286,3 +296,71 @@ def test_url_change_clears_profile_and_counts_down_ten_seconds(monkeypatch, tmp_
     runtime.apply_configuration({"schema_version": 1, "revision": 2, "kiosk_url": "https://new.example.test"})
     assert not profile.exists()
     assert any(name == "countdown" and details["seconds"] == 10 for name, details in seen)
+
+
+def test_schema_one_to_two_same_revision_can_add_refresh_without_browser_restart(monkeypatch, tmp_path):
+    state, _run = _configure_runtime_paths(monkeypatch, tmp_path)
+    profile = state / "browser-profile"
+    profile.mkdir()
+    cookie = profile / "Cookies"
+    cookie.write_text("preserve-me", encoding="utf-8")
+
+    runtime = runtime_module.DisplayRuntime()
+    runtime.configuration = {
+        "schema_version": 1,
+        "revision": 7,
+        "kiosk_url": "https://example.test",
+        "browser_refresh_interval_sec": 900,
+    }
+    runtime.browser_requested = True
+
+    monkeypatch.setattr(
+        runtime,
+        "stop_browser",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("schema-only upgrade must not stop Chrome")),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "start_browser",
+        lambda: (_ for _ in ()).throw(AssertionError("schema-only upgrade must not start Chrome")),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_clear_browser_profile",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("schema-only upgrade must not clear profile")),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_countdown",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("schema-only upgrade must not count down")),
+    )
+
+    applied = runtime.apply_configuration(
+        {
+            "schema_version": 2,
+            "revision": 7,
+            "kiosk_url": "https://example.test",
+            "browser_refresh_interval_sec": 120,
+        }
+    )
+
+    assert applied == {
+        "applied": True,
+        "revision": 7,
+        "schema_version": 2,
+        "browser_refresh_interval_sec": 120,
+    }
+    assert runtime.configuration["browser_refresh_interval_sec"] == 120
+    assert cookie.read_text(encoding="utf-8") == "preserve-me"
+    persisted = json.loads((state / "configuration.json").read_text(encoding="utf-8"))
+    assert persisted == runtime.configuration
+
+    with pytest.raises(ValueError, match="revision matcher ikke"):
+        runtime.apply_configuration(
+            {
+                "schema_version": 2,
+                "revision": 7,
+                "kiosk_url": "https://example.test",
+                "browser_refresh_interval_sec": 300,
+            }
+        )

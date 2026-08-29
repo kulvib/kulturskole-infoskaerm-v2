@@ -112,6 +112,11 @@ def _validate_graph(errors: list[str]) -> None:
     heads = script.get_heads()
     bases = script.get_bases()
     revisions = list(script.walk_revisions())
+    for revision in revisions:
+        if len(str(revision.revision)) > 32:
+            errors.append(
+                f"Alembic revision-id overskrider alembic_version VARCHAR(32): {revision.revision!r}"
+            )
     if bases != [BASELINE_REVISION] or heads != [EXPECTED_HEAD_REVISION]:
         errors.append(
             f"Alembic-kæden afviger; forventet base={BASELINE_REVISION!r}, "

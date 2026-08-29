@@ -104,3 +104,11 @@ test("backend restart recovery keeps health observation alive and recreates HLS 
   assert.match(hlsBlock, /Hls\.ErrorTypes\.NETWORK_ERROR/);
   assert.match(hlsBlock, /setLocalRefreshKey/);
 });
+
+test("livestream surfaces viewer contact immediately and keeps the in-video overlay as the single status authority", () => {
+  assert.match(source, /setViewerContactEstablished\(true\)/);
+  assert.match(source, /Kontakt til Livestream etableret/);
+  assert.match(source, /severity:\s*"success"[\s\S]*Kontakt til Livestream etableret/);
+  assert.match(source, /rgba\(6,78,59,0\.72\)/);
+  assert.doesNotMatch(source, /\? "Stream offline"[\s\S]*\? "Stream live"[\s\S]*"Afventer stream"/);
+});

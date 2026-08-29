@@ -37,8 +37,8 @@ test("orphaned kiosk lockdown control is fail-closed in the frontend", () => {
 
 test("diagnostic labels point to canonical units instead of obsolete agents", () => {
   const info = read("src/pages/clientdetailspage/ClientDetailsInfoSection.jsx");
-  assert.match(info, /Display runtime/);
-  assert.match(info, /clientflow-display-runtime\.service/);
+  assert.match(info, /Browser Guard/);
+  assert.match(info, /clientflow-browser-guard\.service/);
   assert.match(info, /clientflow-terminal-agent\.service/);
   assert.match(info, /clientflow-root-terminal-broker\.socket/);
   assert.match(info, /clientflow-remote-desktop-agent\.service/);
@@ -60,4 +60,12 @@ test("every ClientFlow systemd unit named by diagnostics exists in the canonical
   const canonicalUnits = new Set(fs.readdirSync(systemdRoot));
   const missing = [...new Set(referencedUnits)].filter((unit) => !canonicalUnits.has(unit));
   assert.deepEqual(missing, []);
+});
+
+test("Browser Guard refresh policy is dynamically editable under Display configuration", () => {
+  const info = read("src/pages/clientdetailspage/ClientDetailsInfoSection.jsx");
+  assert.match(info, /browser_refresh_interval_sec/);
+  assert.match(info, /Automatisk browser refresh \(sek\.\)/);
+  assert.match(info, /0 = slået fra\. Ellers 60–86400 sekunder\./);
+  assert.match(info, /payload\.browser_refresh_interval_sec = refreshSeconds/);
 });

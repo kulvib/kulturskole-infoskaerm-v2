@@ -102,8 +102,9 @@ def test_53a_source_uses_release_owned_chrome_and_display_only_prerequisite():
     assert '/usr/bin/google-chrome-stable' in runtime
     assert '/var/lib/clientflow/display-runtime' in runtime
     assert '/usr/bin/chromium' not in runtime
-    assert 'remote-debugging' not in runtime
-    assert 'browser_refresh_interval_sec' not in runtime
+    assert '"--remote-debugging-address=127.0.0.1"' in runtime
+    assert '"--remote-debugging-port=9222"' in runtime
+    assert 'browser_refresh_interval_sec' in runtime
     assert 'GOOGLE_REPOSITORY_MARKER = "google.com/linux/chrome"' in prepare
     assert 'repo_add_once="false"' in prepare
     assert 'Requires=clientflow-display-platform-prepare.service' in unit

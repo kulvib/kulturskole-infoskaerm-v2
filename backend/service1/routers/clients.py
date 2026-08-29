@@ -18,12 +18,14 @@ from ..client_presence import ClientPresence, load_client_presence, load_client_
 from ..display_control import (
     active_display_control_command,
     display_agent_supports_commands,
+    display_agent_supports_configuration_v2,
     display_command_legacy_action,
     display_read_projection,
     get_display_desired_configuration,
     latest_display_status,
     lock_display_client,
     queue_display_command,
+    set_display_desired_browser_refresh_interval,
     set_display_desired_kiosk_url,
 )
 from ..system_control import (
@@ -706,11 +708,11 @@ OPERATOR_USER_ROLES = {"bruger"}
 USER_CHROME_COMMANDS = {"start", "stop", "reset_browser", "sleep", "wakeup"}
 ADMIN_CHROME_COMMANDS = USER_CHROME_COMMANDS | {"reboot"}
 ADMIN_UPDATE_FIELDS = {
-    "locality", "kiosk_url",
+    "locality", "kiosk_url", "browser_refresh_interval_sec",
     "display_resolution_mode", "display_resolution_width", "display_resolution_height",
     "display_resolution_refresh_rate", "display_resolution_output", "display_resolution_action",
 }
-USER_UPDATE_FIELDS = {"locality", "kiosk_url"}
+USER_UPDATE_FIELDS = {"locality", "kiosk_url", "browser_refresh_interval_sec"}
 
 
 def _same_organization(user, client: Client) -> bool:
@@ -1015,7 +1017,7 @@ def _apply_status_runtime_snapshot(client: Client, presence: ClientPresence) -> 
     service_projection = {
         "service_clientflow_status": "clientflow-status-agent.service",
         "service_calendar_status": "clientflow-calendar.service",
-        "service_browser_guard_status": "clientflow-display-runtime.service",
+        "service_browser_guard_status": "clientflow-browser-guard.service",
         "service_remote_terminal_status": "clientflow-terminal-agent.service",
         "service_admin_terminal_status": "clientflow-root-terminal-broker.socket",
         "service_remote_desktop_status": "clientflow-remote-desktop-agent.service",
@@ -1024,8 +1026,8 @@ def _apply_status_runtime_snapshot(client: Client, presence: ClientPresence) -> 
         "service_ubuntu_update_status": "clientflow-system-broker.socket",
     }
     for field, unit in service_projection.items():
-        if unit in services:
-            _set_runtime_read_attr(client, field, str(services[unit])[:40])
+        value = str(services[unit])[:40] if unit in services else None
+        _set_runtime_read_attr(client, field, value)
 
 
 def _apply_presence_for_read(client: Client, presence: ClientPresence) -> None:
@@ -1056,6 +1058,7 @@ def _apply_display_projection_for_read(session, client: Client) -> None:
     legacy_pending = _normalize_chrome_action_name(getattr(client, "pending_chrome_action", None)) or "none"
 
     _set_runtime_read_attr(client, "kiosk_url", projection["kiosk_url"])
+    _set_runtime_read_attr(client, "browser_refresh_interval_sec", projection["browser_refresh_interval_sec"])
     _set_runtime_read_attr(client, "chrome_status", projection["chrome_status"])
     _set_runtime_read_attr(client, "chrome_color", projection["chrome_color"])
     _set_runtime_read_attr(client, "chrome_last_updated", projection["chrome_last_updated"])
@@ -2053,6 +2056,7 @@ def _validate_client_update_command_availability(session, user, client: Client, 
 
     display_action_value = str(getattr(client_update, "display_resolution_action", "") or "").strip().lower()
     wants_display_action = "display_resolution_action" in fields and display_action_value in VALID_DISPLAY_RESOLUTION_ACTIONS
+    wants_resolution_command = bool(DISPLAY_RESOLUTION_DESIRED_FIELDS & fields) or wants_display_action
     pending_action_value = _normalize_chrome_action_name(getattr(client_update, "pending_chrome_action", None))
     wants_pending_action = "pending_chrome_action" in fields and pending_action_value not in (None, "none")
 
@@ -2062,11 +2066,24 @@ def _validate_client_update_command_availability(session, user, client: Client, 
             detail="Legacy clientflow_update er fjernet. Brug canonical ClientFlow deployment-endpointet.",
         )
 
-    if not (wants_display_action or wants_pending_action):
+    if not (wants_resolution_command or wants_pending_action):
         return
 
     _require_no_active_clientflow_deployment(session, client.id)
     _require_client_online(session, client)
+    if wants_resolution_command:
+        display_status = latest_display_status(session, client.id)
+        if display_status is None or not display_agent_supports_configuration_v2(display_status.agent_version):
+            raise HTTPException(
+                status_code=409,
+                detail="Display resolution kræver ClientFlow Display-agent 1.3.12 eller nyere",
+            )
+        active = active_display_control_command(session, client.id)
+        if active is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Display-handling '{active.command_type}' er allerede i gang",
+            )
 
 
 @router.put("/clients/{id}/update", response_model=ClientRead)
@@ -2094,6 +2111,13 @@ async def update_client(
             session,
             client_id=id,
             kiosk_url=client_update.kiosk_url,
+            updated_by_user_id=getattr(user, "id", None),
+        )
+    if "browser_refresh_interval_sec" in fields:
+        set_display_desired_browser_refresh_interval(
+            session,
+            client_id=id,
+            browser_refresh_interval_sec=client_update.browser_refresh_interval_sec,
             updated_by_user_id=getattr(user, "id", None),
         )
     if "ubuntu_version" in fields: client.ubuntu_version = client_update.ubuntu_version
@@ -2157,6 +2181,29 @@ async def update_client(
     _apply_time_integrity_report(client, set(fields))
     if (DISPLAY_RESOLUTION_DESIRED_FIELDS | DISPLAY_RESOLUTION_ACTION_FIELDS | DISPLAY_RESOLUTION_CLIENT_REPORT_FIELDS) & set(fields):
         _apply_display_resolution_fields(client, client_update, fields)
+        if not principal_is_client(user):
+            resolution_action = str(getattr(client, "display_resolution_action", "") or "").strip().lower()
+            if resolution_action in VALID_DISPLAY_RESOLUTION_ACTIONS:
+                command_type = "detect_resolution" if resolution_action == "detect" else "apply_resolution"
+                payload: dict[str, Any] = {}
+                if command_type == "apply_resolution":
+                    payload = {
+                        "mode": str(getattr(client, "display_resolution_mode", "auto") or "auto"),
+                        "preset": str(getattr(client, "display_resolution_preset", "auto") or "auto"),
+                        "width": getattr(client, "display_resolution_width", None),
+                        "height": getattr(client, "display_resolution_height", None),
+                        "refresh_rate": getattr(client, "display_resolution_refresh_rate", None),
+                        "rotation": str(getattr(client, "display_resolution_rotation", "normal") or "normal"),
+                    }
+                queue_display_command(
+                    session,
+                    client_id=id,
+                    command_type=command_type,
+                    payload=payload,
+                    requested_by_user_id=getattr(user, "id", None),
+                    ttl_seconds=300,
+                    idempotency_prefix=f"display-resolution-{resolution_action}",
+                )
     if "ubuntu_updates_available" in fields:
         value = client_update.ubuntu_updates_available
         client.ubuntu_updates_available = max(0, int(value or 0))

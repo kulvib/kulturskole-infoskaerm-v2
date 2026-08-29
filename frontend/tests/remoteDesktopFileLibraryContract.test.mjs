@@ -36,3 +36,15 @@ test("hidden-file toggle is applied to mapped hidden entries", () => {
   assert.match(fileManager, /if \(!fileBrowserShowHidden && entry\?\.hidden\) return false;/);
   assert.match(remoteDesktop, /show_hidden: !!showHidden/);
 });
+
+test("file upload and browser download expose real byte progress without changing the RD agent file protocol", () => {
+  assert.match(remoteDesktop, /xhr\.upload\.onprogress/);
+  assert.match(remoteDesktop, /xhr\.onprogress/);
+  assert.match(remoteDesktop, /setTransferProgress\(progress\)/);
+  assert.match(remoteDesktop, /setFileDownloadProgress\(progress\)/);
+  assert.match(fileManager, /aria-label="Filupload progress"/);
+  assert.match(fileManager, /aria-label="Fildownload progress"/);
+  assert.match(fileManager, /LinearProgress/);
+  assert.match(remoteDesktop, /file_download_request/);
+  assert.doesNotMatch(remoteDesktop, /file_upload_chunk/);
+});

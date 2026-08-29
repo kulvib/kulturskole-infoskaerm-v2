@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 
 from .atomic import atomic_write_json
 from .display_shared_file import atomic_write_shared_json
+from . import display_resolution
 from .logging_utils import configure_logging
 from .unix_rpc import RpcError, encode_message, read_message
 
@@ -30,7 +31,7 @@ PID_PATH = RUNTIME_DIR / "browser.pid"
 PROFILE_DIR = STATE_DIR / "browser-profile"
 CHROME_BINARY = Path("/usr/bin/google-chrome-stable")
 CONTROL_GROUP_NAME = os.getenv("CLIENTFLOW_DISPLAY_CONTROL_GROUP", "clientflow-display-control")
-_ALLOWED_CONFIGURATION_KEYS = {"schema_version", "revision", "kiosk_url"}
+_ALLOWED_CONFIGURATION_KEYS = {"schema_version", "revision", "kiosk_url", "browser_refresh_interval_sec"}
 BOOT_START_COUNTDOWN_SECONDS = 10
 CONFIGURATION_START_COUNTDOWN_SECONDS = 10
 MANUAL_START_COUNTDOWN_SECONDS = 10
@@ -41,6 +42,7 @@ BOOT_MARKER_PATH = STATE_DIR / "browser-boot.json"
 CALENDAR_PREVIEW_PATH = STATE_DIR / "calendar-preview.json"
 LOCAL_GUI_STATUS_PATH = STATE_DIR / "local-gui-status.json"
 LOCAL_DISPLAY_POWER_PATH = STATE_DIR / "local-display-power.json"
+DISPLAY_RESOLUTION_PATH = STATE_DIR / "display-resolution.json"
 LOCAL_GUI_SCRIPT = Path("/opt/clientflow/active/client-runtime/libexec/local-gui")
 SYSTEM_PYTHON = Path("/usr/bin/python3")
 
@@ -54,6 +56,7 @@ class DisplayRuntime:
         self.browser_requested = bool(self.configuration.get("kiosk_url"))
         self.next_start_attempt = 0.0
         self.next_gui_start_attempt = 0.0
+        self.next_resolution_probe = 0.0
         self.boot_start_pending = False
         self.display_power = self._load_display_power()
         self.shared_group_gid: int | None = None
@@ -101,6 +104,8 @@ class DisplayRuntime:
         payload = {
             "schema_version": 1,
             "configuration_revision": self.configuration.get("revision") if self.configuration else None,
+            "configuration_schema_version": self.configuration.get("schema_version") if self.configuration else None,
+            "browser_refresh_interval_sec": self.configuration.get("browser_refresh_interval_sec", 900) if self.configuration else 900,
             "state": state,
             "browser_pid": self.browser.pid if self.browser and self.browser.poll() is None else None,
             "browser_requested": bool(self.browser_requested),
@@ -187,25 +192,41 @@ class DisplayRuntime:
             revision = int(payload.get("revision"))
         except (TypeError, ValueError) as exc:
             raise ValueError("Displaykonfiguration mangler schema_version/revision") from exc
-        if schema_version != 1 or revision < 1:
+        if schema_version not in {1, 2} or revision < 1:
             raise ValueError("Displaykonfigurationens schema_version/revision er ugyldig")
+        raw_refresh = 900 if schema_version == 1 else payload.get("browser_refresh_interval_sec", 900)
+        try:
+            refresh = int(raw_refresh)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("browser_refresh_interval_sec skal være et helt antal sekunder") from exc
+        if refresh != 0 and not (60 <= refresh <= 86400):
+            raise ValueError("browser_refresh_interval_sec skal være 0 eller mellem 60 og 86400")
         return {
-            "schema_version": 1,
+            "schema_version": schema_version,
             "revision": revision,
             "kiosk_url": self._normalize_kiosk_url(payload.get("kiosk_url")),
+            "browser_refresh_interval_sec": refresh,
         }
 
     def apply_configuration(self, payload: dict[str, Any]) -> dict[str, Any]:
         configuration = self._validate_configuration(payload)
-        current_revision = int(self.configuration.get("revision") or 0) if self.configuration else 0
+        current = dict(self.configuration or {})
+        current_revision = int(current.get("revision") or 0)
         if configuration["revision"] < current_revision:
             raise ValueError("Displaykonfigurationens revision er ældre end den aktive revision")
-        if configuration["revision"] == current_revision and self.configuration and configuration != self.configuration:
+        same_revision = configuration["revision"] == current_revision and bool(current)
+        schema_upgrade_only = (
+            same_revision
+            and int(configuration.get("schema_version") or 0) > int(current.get("schema_version") or 0)
+            and configuration.get("kiosk_url") == current.get("kiosk_url")
+        )
+        if same_revision and configuration != current and not schema_upgrade_only:
             raise ValueError("Displaykonfigurationens revision matcher ikke det allerede anvendte indhold")
-        changed = configuration != self.configuration
+        changed = configuration != current
+        kiosk_changed = configuration.get("kiosk_url") != current.get("kiosk_url")
         atomic_write_shared_json(CONFIG_PATH, configuration, mode=0o640, group_gid=self.shared_group_gid)
         self.configuration = configuration
-        if changed:
+        if changed and kiosk_changed:
             if configuration["kiosk_url"]:
                 self.browser_requested = True
                 self.stop_browser(preserve_request=True)
@@ -217,7 +238,12 @@ class DisplayRuntime:
                 self.stop_browser()
         else:
             self._status("running" if self.browser and self.browser.poll() is None else "stopped")
-        return {"applied": True, "revision": configuration["revision"]}
+        return {
+            "applied": True,
+            "revision": configuration["revision"],
+            "schema_version": configuration["schema_version"],
+            "browser_refresh_interval_sec": configuration["browser_refresh_interval_sec"],
+        }
 
     @staticmethod
     def _run_text(command: list[str]) -> str:
@@ -392,6 +418,8 @@ class DisplayRuntime:
             "--ozone-platform=wayland",
             "--start-fullscreen",
             f"--user-data-dir={PROFILE_DIR}",
+            "--remote-debugging-address=127.0.0.1",
+            "--remote-debugging-port=9222",
             "--no-first-run",
             "--no-default-browser-check",
             "--noerrdialogs",
@@ -591,6 +619,89 @@ class DisplayRuntime:
         )
         return {"stored": True, "days": len(days)}
 
+    def detect_display_resolution(self) -> dict[str, Any]:
+        environment = self._graphical_environment()
+        result = display_resolution.detect(environment=environment)
+        payload = {
+            "schema_version": 1,
+            "action": "detect",
+            "updated_at": time.time(),
+            **result,
+        }
+        atomic_write_shared_json(
+            DISPLAY_RESOLUTION_PATH, payload, mode=0o640, group_gid=self.shared_group_gid
+        )
+        if not result.get("ok"):
+            raise RuntimeError(str(result.get("error") or "Display resolution detect fejlede"))
+        return result
+
+    @staticmethod
+    def _preferred_mode_from_detection(
+        detection: dict[str, Any], *, output: str | None
+    ) -> tuple[str | None, int, int, float | None]:
+        outputs = detection.get("outputs")
+        if not isinstance(outputs, list):
+            outputs = []
+        chosen = None
+        if output:
+            chosen = next((item for item in outputs if isinstance(item, dict) and item.get("output") == output), None)
+        if chosen is None:
+            primary = detection.get("primary_output")
+            chosen = next((item for item in outputs if isinstance(item, dict) and item.get("output") == primary), None)
+        if chosen is None:
+            chosen = next((item for item in outputs if isinstance(item, dict)), None)
+        if not isinstance(chosen, dict):
+            raise RuntimeError("Ingen display-output kan bruges til auto-opløsning")
+        width = chosen.get("preferred_width") or chosen.get("width")
+        height = chosen.get("preferred_height") or chosen.get("height")
+        refresh = chosen.get("preferred_refresh_rate") or chosen.get("refresh_rate")
+        if width is None or height is None:
+            raise RuntimeError("Display-output mangler preferred/native mode")
+        return (str(chosen.get("output") or "") or None, int(width), int(height), float(refresh) if refresh is not None else None)
+
+    def apply_display_resolution(self, payload: dict[str, Any]) -> dict[str, Any]:
+        environment = self._graphical_environment()
+        mode = str(payload.get("mode") or "auto").strip().lower()
+        rotation = str(payload.get("rotation") or "normal").strip().lower()
+        output = str(payload.get("output") or "").strip() or None
+        if mode == "auto":
+            detection = display_resolution.detect(environment=environment)
+            if not detection.get("ok"):
+                raise RuntimeError(str(detection.get("error") or "Display resolution detect fejlede"))
+            output, width, height, refresh_rate = self._preferred_mode_from_detection(detection, output=output)
+        elif mode == "fixed":
+            try:
+                width = int(payload.get("width"))
+                height = int(payload.get("height"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Fast display-opløsning kræver width og height") from exc
+            raw_refresh = payload.get("refresh_rate")
+            refresh_rate = float(raw_refresh) if raw_refresh not in (None, "") else None
+        else:
+            raise ValueError("Display resolution mode skal være auto eller fixed")
+        result = display_resolution.apply(
+            environment=environment,
+            width=width,
+            height=height,
+            refresh_rate=refresh_rate,
+            rotation=rotation,
+            output=output,
+        )
+        stored = {
+            "schema_version": 1,
+            "action": "apply",
+            "mode": mode,
+            "rotation": rotation,
+            "updated_at": time.time(),
+            **result,
+        }
+        atomic_write_shared_json(
+            DISPLAY_RESOLUTION_PATH, stored, mode=0o640, group_gid=self.shared_group_gid
+        )
+        if not result.get("ok"):
+            raise RuntimeError(str(result.get("error") or "Display resolution apply fejlede"))
+        return result
+
     def record_display_power(self, state: str) -> dict[str, Any]:
         if state not in {"on", "off"}:
             raise ValueError("Display power state skal være on eller off")
@@ -620,6 +731,13 @@ class DisplayRuntime:
             return self.stop_browser()
         if action == "reset_browser":
             return self.reset_browser()
+        if action == "detect_resolution":
+            return self.detect_display_resolution()
+        if action == "apply_resolution":
+            payload = request.get("payload")
+            if not isinstance(payload, dict):
+                raise ValueError("payload skal være et objekt")
+            return self.apply_display_resolution(payload)
         if action == "set_calendar_preview":
             payload = request.get("payload")
             if not isinstance(payload, dict):
@@ -695,6 +813,12 @@ class DisplayRuntime:
                         self.start_local_gui()
                     except Exception:
                         self.next_gui_start_attempt = time.monotonic() + 2.0
+                if time.monotonic() >= self.next_resolution_probe:
+                    try:
+                        self.detect_display_resolution()
+                    except Exception:
+                        self.logger.info("display_resolution_probe_waiting")
+                    self.next_resolution_probe = time.monotonic() + 30.0
                 if (
                     self.browser_requested
                     and self.configuration.get("kiosk_url")

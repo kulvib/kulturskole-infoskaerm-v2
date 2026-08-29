@@ -68,8 +68,8 @@ def test_lifecycle_retention_migration_is_additive_and_set_null():
     assert 'revision = "20260818_48a_lifecycle"' in migration
     assert 'down_revision = "20260818_47a_client_activity"' in migration
     assert 'ondelete="SET NULL"' in migration
-    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20260823_53b_system_authority"'
-    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260823_53b_system_authority"' in runner
+    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20260829_54a_display_parity"'
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260829_54a_display_parity"' in runner
     assert 'REVIEWED_LIFECYCLE_REVISION = "20260818_48a_lifecycle"' in runner
 
 

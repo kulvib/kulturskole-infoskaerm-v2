@@ -201,7 +201,7 @@ def test_status_diagnostics_projection_uses_canonical_existing_units():
     expected = {
         "service_clientflow_status": "clientflow-status-agent.service",
         "service_calendar_status": "clientflow-calendar.service",
-        "service_browser_guard_status": "clientflow-display-runtime.service",
+        "service_browser_guard_status": "clientflow-browser-guard.service",
         "service_remote_terminal_status": "clientflow-terminal-agent.service",
         "service_admin_terminal_status": "clientflow-root-terminal-broker.socket",
         "service_remote_desktop_status": "clientflow-remote-desktop-agent.service",

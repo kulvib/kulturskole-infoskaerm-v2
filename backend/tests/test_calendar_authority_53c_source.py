@@ -123,7 +123,8 @@ def test_53c_manual_display_override_is_boot_bound_and_apply_configuration_is_no
         display_agent.index('if context.command_type in {"apply_configuration"'):
         display_agent.index('except RpcError', display_agent.index('if context.command_type in {"apply_configuration"'))
     ]
-    assert 'context.command_type != "apply_configuration"' in apply_block
+    assert 'if context.command_type in {"start_browser", "stop_browser", "reset_browser"}:' in apply_block
+    assert 'apply_configuration' not in apply_block.split('record_calendar_manual_override', 1)[0].rsplit('if context.command_type in', 1)[-1]
     assert "_calendar_boundary_since" in calendar_agent
     assert "clear_calendar_manual_override()" in calendar_agent
     assert "RECONCILE_SECONDS" in calendar_agent

@@ -721,6 +721,8 @@ export default function ClientDetailsLivestreamSection({
   const [autoStartStatus, setAutoStartStatus]   = useState("");
   const [autoStartError, setAutoStartError]     = useState("");
   const [healthInfo, setHealthInfo]             = useState(null);
+  const [viewerContactEstablished, setViewerContactEstablished] = useState(false);
+  const [viewerContactActiveViewers, setViewerContactActiveViewers] = useState(null);
   const [inactivityStopped, setInactivityStopped] = useState(false);
   const [inactivityStopMessage, setInactivityStopMessage] = useState("");
 
@@ -749,6 +751,11 @@ export default function ClientDetailsLivestreamSection({
   const displayChangeRestartInFlightRef = useRef(false);
   const lastDisplayChangeRestartAtRef = useRef(0);
   const lastDisplayRuntimeSignatureRef = useRef("");
+
+  useEffect(() => {
+    setViewerContactEstablished(false);
+    setViewerContactActiveViewers(null);
+  }, [clientId]);
 
   const theme    = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
@@ -1025,11 +1032,16 @@ export default function ClientDetailsLivestreamSection({
           throw new Error(detail || `Viewer-heartbeat fejlede (${resp.status})`);
         }
         const payload = await resp.json().catch(() => null);
+        setViewerContactEstablished(true);
+        if (Number.isFinite(Number(payload?.active_viewers))) {
+          setViewerContactActiveViewers(Number(payload.active_viewers));
+        }
         setAutoStartError("");
         if (payload?.start_enqueued) {
           setAutoStartStatus("Livestream starter automatisk — venter på segmenter …");
         }
       } catch (err) {
+        setViewerContactEstablished(false);
         // Browseren må ikke overtage lifecycle-authority, men heartbeat-fejl skal
         // være synlige; ellers ser en 401/403/500 ud som en producer-fejl.
         setAutoStartError(err?.message || "Viewer-heartbeat kunne ikke registreres.");
@@ -1855,6 +1867,17 @@ export default function ClientDetailsLivestreamSection({
     }
 
     if (!serverReady || !manifestReady) {
+      if (viewerContactEstablished) {
+        const viewerText = Number.isFinite(viewerContactActiveViewers)
+          ? `${viewerContactActiveViewers} aktiv${viewerContactActiveViewers === 1 ? "" : "e"} viewer${viewerContactActiveViewers === 1 ? "" : "e"}`
+          : null;
+        return {
+          severity: "success",
+          title: "Kontakt til Livestream etableret",
+          detail: [viewerText, healthMessage || "Afventer HLS-manifest og segmenter …"].filter(Boolean).join(" · "),
+          persistent: true,
+        };
+      }
       return {
         severity: "info",
         title: !serverReady ? "Venter på stream" : "Forbinder til stream",
@@ -1887,6 +1910,8 @@ export default function ClientDetailsLivestreamSection({
     manifestReady,
     serverReady,
     streamStale,
+    viewerContactActiveViewers,
+    viewerContactEstablished,
   ]);
 
   const streamOverlaySx = useMemo(() => {
@@ -2184,45 +2209,6 @@ export default function ClientDetailsLivestreamSection({
             background: "rgba(15,23,42,0.42)",
             border: "1px solid rgba(148,163,184,0.16)"
           }}>
-          <Stack
-            direction="row"
-            spacing={1}
-            sx={{
-              alignItems: "center",
-              minWidth: 0
-            }}>
-            <Box sx={{
-              width: isMobile ? 8 : 10,
-              height: isMobile ? 8 : 10,
-              borderRadius: "50%",
-              bgcolor: livestreamVisuallyOffline ? "#64748b"
-                : manifestReady ? "#22c55e"
-                : streamStale ? "#ef4444"
-                : serverReady ? "#f59e0b"
-                : "#64748b",
-              boxShadow: manifestReady && !livestreamVisuallyOffline ? "0 0 0 5px rgba(34,197,94,0.14)" : "none",
-              flex: "0 0 auto",
-            }} />
-            <Box sx={{
-              minWidth: 0
-            }}>
-              <Typography sx={{ fontWeight: 950, color: "#f8fafc", lineHeight: 1.05 }}>
-                {livestreamVisuallyOffline
-                  ? "Stream offline"
-                  : manifestReady
-                  ? "Stream live"
-                  : streamStale
-                  ? "Stream genstartes"
-                  : serverReady
-                  ? "Forbinder til stream"
-                  : "Afventer stream"}
-              </Typography>
-              <Typography variant="body2" sx={{ color: livestreamVisuallyOffline ? "#cbd5e1" : lagStatus.color, mt: 0.2 }}>
-                {livestreamVisuallyOffline ? "Klienten er offline — afventer Livestream v2" : lagStatus.text}
-              </Typography>
-            </Box>
-          </Stack>
-
           <Stack
             direction="row"
             spacing={0.8}
