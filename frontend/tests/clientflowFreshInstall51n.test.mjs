@@ -27,3 +27,11 @@ test("51N handoff pins backend, release, capability and whole-bundle SHA before 
 test("51N handoff is absent without the one-time signed authorization", () => {
   assert.equal(buildFreshInstallDownloadCommand({ ...created, fresh_install_authorization: "" }), "");
 });
+
+test("51N fresh-install dialog points to the canonical pinned bootstrap section", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const page = await readFile(new URL("../src/pages/adminpages/EnrollmentTokensPage.jsx", import.meta.url), "utf8");
+  assert.match(page, /CLIENTFLOW_RELEASE_PROCEDURE\.md<\/code> afsnit 5/);
+  assert.doesNotMatch(page, /CLIENTFLOW_RELEASE_PROCEDURE\.md<\/code> afsnit 4/);
+});
+
