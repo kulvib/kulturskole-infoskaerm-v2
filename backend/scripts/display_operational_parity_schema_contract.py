@@ -12,7 +12,7 @@ DISPLAY_OPERATIONAL_PARITY_COLUMNS = {
 
 DISPLAY_OPERATIONAL_PARITY_CONSTRAINTS = {
     "ck_display_desired_configuration_browser_refresh_interval": (
-        "CHECK (((browser_refresh_interval_sec = 0) OR "
-        "((browser_refresh_interval_sec >= 60) AND (browser_refresh_interval_sec <= 86400))))"
+        "CHECK (browser_refresh_interval_sec = 0 OR "
+        "browser_refresh_interval_sec >= 60 AND browser_refresh_interval_sec <= 86400)"
     ),
 }

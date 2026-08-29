@@ -1048,4 +1048,4 @@ _display_columns.update(DISPLAY_OPERATIONAL_PARITY_COLUMNS)
 EXPECTED_COLUMNS["display_desired_configuration"] = _display_columns
 EXPECTED_CONSTRAINTS.update(DISPLAY_OPERATIONAL_PARITY_CONSTRAINTS)
 # Replaced below after deterministic contract fingerprint calculation.
-EXPECTED_FINGERPRINT = "3a1b2a9d1d0b686ed5db8eea97700c7284ae82a791f2d0ec5ba16ebcde5eff25"
+EXPECTED_FINGERPRINT = "32dd4f09bb97b649a1e334bd5d86236fa18757edf4145320b4cfd86ccaf03fab"
