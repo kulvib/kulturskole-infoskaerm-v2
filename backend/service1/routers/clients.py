@@ -1058,7 +1058,7 @@ def _apply_display_projection_for_read(session, client: Client) -> None:
     legacy_pending = _normalize_chrome_action_name(getattr(client, "pending_chrome_action", None)) or "none"
 
     _set_runtime_read_attr(client, "kiosk_url", projection["kiosk_url"])
-    _set_runtime_read_attr(client, "browser_refresh_interval_sec", projection["browser_refresh_interval_sec"])
+    _set_runtime_read_attr(client, "browser_refresh_interval_sec", projection.get("browser_refresh_interval_sec", 900))
     _set_runtime_read_attr(client, "chrome_status", projection["chrome_status"])
     _set_runtime_read_attr(client, "chrome_color", projection["chrome_color"])
     _set_runtime_read_attr(client, "chrome_last_updated", projection["chrome_last_updated"])

@@ -487,7 +487,7 @@ def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
     pending = display_command_legacy_action(active)
     return {
         "kiosk_url": desired.kiosk_url if desired else None,
-        "browser_refresh_interval_sec": int(desired.browser_refresh_interval_sec) if desired else 900,
+        "browser_refresh_interval_sec": int(getattr(desired, "browser_refresh_interval_sec", 900)) if desired else 900,
         "display_configuration_revision": desired.revision if desired else None,
         "chrome_status": chrome_status,
         "chrome_color": chrome_color,

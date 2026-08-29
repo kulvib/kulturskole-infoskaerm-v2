@@ -24,6 +24,8 @@ CLIENTFLOW_ENTRYPOINTS = (
     "clientflow-display-power-broker",
     "clientflow-display-platform-prepare",
     "clientflow-display-readiness",
+    "clientflow-browser-guard",
+    "clientflow-display-input-wake",
     "clientflow-platform-prepare",
     "clientflow-livestream-agent",
     "clientflow-livestream-broker",
