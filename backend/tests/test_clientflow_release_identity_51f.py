@@ -58,7 +58,7 @@ def test_51f_promoted_1311_is_fresh_baseline_and_blocks_1310_in_place_bootstrap(
     # 1.3.11/1212 is the first release containing the corrected activation/update
     # transaction implementation. It remains selectable for fresh install, but
     # must not advertise immutable 1.3.10 as a safe in-place predecessor.
-    assert release["version"] == _version()
+    assert release["version"] == "1.3.11"
     assert release["version"] == catalog["latest_stable"]
     assert release["version"] == catalog["default_install_version"]
     assert release["min_current_version"] == "1.3.11"

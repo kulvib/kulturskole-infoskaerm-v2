@@ -62,7 +62,7 @@ def test_catalog_1212_rejects_1310_as_unsafe_in_place_source() -> None:
     )
 
 
-def test_catalog_1212_matches_promoted_source_and_keeps_byte_authority_out_of_catalog() -> None:
+def test_catalog_1212_remains_selected_while_source_1312_1213_is_unpromoted() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -70,17 +70,19 @@ def test_catalog_1212_matches_promoted_source_and_keeps_byte_authority_out_of_ca
     release_input = json.loads(
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
+    source_sequence = int(release_input["release_sequence"])
 
-    # Catalog promotion is allowed only after immutable publication and
-    # independent deep verification in the canonical store. Selector identity
-    # must now match the already-built source identity.
-    assert source_version == "1.3.11"
-    assert int(release_input["release_sequence"]) == 1212
-    assert data["catalog_sequence"] == int(release_input["release_sequence"])
-    assert data["latest_stable"] == source_version
-    assert data["default_install_version"] == source_version
-    assert release["version"] == source_version
-    assert release["release_sequence"] == int(release_input["release_sequence"])
+    # Source/build identity moves first. Runtime selection must remain pinned to
+    # the last independently verified immutable release until the separate
+    # catalog-promotion gate is reached.
+    assert source_version == "1.3.12"
+    assert source_sequence == 1213
+    assert data["catalog_sequence"] == 1212
+    assert data["catalog_sequence"] == source_sequence - 1
+    assert data["latest_stable"] == "1.3.11"
+    assert data["default_install_version"] == "1.3.11"
+    assert release["version"] == "1.3.11"
+    assert release["release_sequence"] == 1212
     assert release["release_id"] == "clientflow-1.3.11-seq-1212"
 
     # Exact approved byte identity remains authority of the immutable 51M store
