@@ -40,6 +40,7 @@ import {
   setAdminTerminalStepUp,
 } from "../../../api";
 import { compactDarkChipSx } from "../../../utils/chipStyles";
+import { shouldAutoOpenTerminalPty } from "./terminalOpenPolicy.mjs";
 
 function nowTime() {
   return new Date().toLocaleTimeString("da-DK", { hour12: false });
@@ -432,6 +433,14 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
     };
     openPtyRef.current = openPty;
 
+    const maybeAutoOpenPty = (clientConnected) => {
+      const hasAdminStepUp = mode === "admin" ? hasRecentAdminTerminalStepUp() : false;
+      if (mode === "admin") setAdminStepUpReady(hasAdminStepUp);
+      if (shouldAutoOpenTerminalPty({ mode, clientConnected, hasAdminStepUp })) {
+        openPty();
+      }
+    };
+
     inputDisposable = term.onData((data) => {
       if (!ptyReadyRef.current) {
         term.write("\x07");
@@ -532,7 +541,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
             msg.client_connected ? "forbundet" : "ikke forbundet"
           }.`
         );
-        if (msg.client_connected && mode !== "admin") openPty();
+        maybeAutoOpenPty(!!msg.client_connected);
         return;
       }
 
@@ -546,7 +555,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
           }.`
         );
         if (isConnected) {
-          if (mode !== "admin") openPty();
+          maybeAutoOpenPty(true);
         } else {
           openedRef.current = false;
           ptyReadyRef.current = false;
@@ -925,7 +934,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
                     <Box sx={{ flex: 1, minWidth: 0, pt: 0.5 }}>
                       <Chip size="small" label="Step-up godkendt · op til 10 min" sx={compactDarkChipSx("success")} />
                       <Typography variant="caption" display="block" sx={{ color: "rgba(226,232,240,0.58)", mt: 0.6 }}>
-                        Admin-terminal kan genåbnes uden ny adgangskode i den aktive grace-periode.
+                        Admin-terminal åbnes automatisk uden ny adgangskode i den aktive grace-periode.
                       </Typography>
                     </Box>
                   ) : (

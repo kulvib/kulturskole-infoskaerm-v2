@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { shouldAutoOpenTerminalPty } from "../src/pages/clientdetailspage/terminal/terminalOpenPolicy.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -32,6 +33,28 @@ test("Admin-terminal bruger 10 minutters recent step-up uden fritekst-begrundels
   assert.match(apiSource, /adminTerminalStepUpInMemory/);
   assert.match(apiSource, /hasRecentAdminTerminalStepUp/);
   assert.doesNotMatch(apiSource, /localStorage\.setItem\([^\n]*step.?up/i);
+});
+
+test("Admin-terminal autoåbner kun med gyldig recent step-up", () => {
+  assert.equal(
+    shouldAutoOpenTerminalPty({ mode: "user", clientConnected: true, hasAdminStepUp: false }),
+    true
+  );
+  assert.equal(
+    shouldAutoOpenTerminalPty({ mode: "admin", clientConnected: true, hasAdminStepUp: true }),
+    true
+  );
+  assert.equal(
+    shouldAutoOpenTerminalPty({ mode: "admin", clientConnected: true, hasAdminStepUp: false }),
+    false
+  );
+  assert.equal(
+    shouldAutoOpenTerminalPty({ mode: "admin", clientConnected: false, hasAdminStepUp: true }),
+    false
+  );
+  assert.match(source, /maybeAutoOpenPty\(!!msg\.client_connected\)/);
+  assert.match(source, /maybeAutoOpenPty\(true\)/);
+  assert.match(source, /Admin-terminal åbnes automatisk uden ny adgangskode/);
 });
 
 test("browserprotokollen forbliver open-input-resize-close", () => {
