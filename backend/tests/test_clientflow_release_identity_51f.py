@@ -51,14 +51,15 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
         assert selected_tuple < source_tuple
 
 
-def test_51f_promoted_1311_is_fresh_baseline_and_blocks_1310_in_place_bootstrap() -> None:
+def test_51f_promoted_1312_keeps_1311_safe_in_place_baseline() -> None:
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = catalog["releases"][0]
 
-    # 1.3.11/1212 is the first release containing the corrected activation/update
-    # transaction implementation. It remains selectable for fresh install, but
-    # must not advertise immutable 1.3.10 as a safe in-place predecessor.
-    assert release["version"] == "1.3.11"
+    # 1.3.11/1212 remains the first release containing the corrected
+    # activation/update transaction implementation. 1.3.12/1213 is now the
+    # selected fresh/update target while preserving 1.3.11 as the minimum
+    # safe in-place predecessor and continuing to exclude immutable 1.3.10.
+    assert release["version"] == "1.3.12"
     assert release["version"] == catalog["latest_stable"]
     assert release["version"] == catalog["default_install_version"]
     assert release["min_current_version"] == "1.3.11"
