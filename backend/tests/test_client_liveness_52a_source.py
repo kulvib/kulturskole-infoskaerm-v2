@@ -101,7 +101,7 @@ def test_os_update_no_longer_uses_legacy_staleness_mailbox():
     clients = read_backend("service1/routers/clients.py")
     assert "def _os_update_is_stale" not in clients
     assert "def _normalize_os_update_state_if_finished" not in clients
-    section = clients.split('@router.post("/clients/{id}/os-update")', 1)[1].split('@router.post("/clients/{id}/os-update/reset")', 1)[0]
+    section = clients.split("async def trigger_os_update(", 1)[1].split("async def reset_os_update(", 1)[0]
     assert "queue_system_command(" in section
     assert 'command_type="update_os"' in section
     assert "pending_os_update =" not in section
