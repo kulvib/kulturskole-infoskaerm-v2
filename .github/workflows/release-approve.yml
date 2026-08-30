@@ -205,6 +205,7 @@ jobs:
           EXPECTED_CANDIDATE_SHA256: ${{ inputs.expected_candidate_sha256 }}
           EXPECTED_INSTALLER_SHA256: ${{ inputs.expected_installer_sha256 }}
           APPROVAL_REFERENCE: ${{ inputs.approval_reference }}
+          RELEASE_BUILD_RUN_ID: ${{ steps.release_run.outputs.run_id }}
           APPROVED_SHA256: ${{ steps.approval.outputs.approved_sha256 }}
           APPROVED_SIZE: ${{ steps.approval.outputs.approved_size }}
         run: |
