@@ -11,7 +11,7 @@ ClientFlow 1.3.0 er den fysisk godkendte historiske bootstrap-baseline for den s
 ## Forudsætninger for en senere godkendt installation
 
 - Ny Ubuntu Desktop LTS 26.04 `amd64`-installation.
-- Eksisterende interaktiv, uprivilegeret kioskbruger.
+- Eksisterende normal interaktiv ikke-systembruger (UID >= 1000) som kioskbruger. Det kan være Ubuntu-installationens bootstrap-bruger. Fresh install ændrer ikke brugerens eksisterende Unix-gruppemedlemskaber; ClientFlow kiosk-policyen er den eksplicitte GDM/desktop/app/polkit-confinement nedenfor, ikke en skjult konto-/sudo-demotion.
 - Ingen eksisterende ClientFlow-filer, systemd-units, Linux-brugere eller state.
 - Godkendt keyless bundle med `deployable: true`, gyldig `release_approval`, SHA-256-integritetsmetadata og monoton release sequence.
 - Den eksakte SHA-256 for **hele** den godkendte bundle skal være kendt via den godkendte releaseproces, før nogen installer-kode køres.

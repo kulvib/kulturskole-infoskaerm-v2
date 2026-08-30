@@ -46,6 +46,70 @@
       "success_status": "200"
     },
     {
+      "name": "getClientLocalManagement",
+      "method": "GET",
+      "path": "/api/clients/{id}/local-management",
+      "example_path": "/api/clients/42/local-management",
+      "success_status": "200",
+      "response_properties": [
+        "action",
+        "request_id",
+        "desired_hostname",
+        "desired_client_name",
+        "status",
+        "message",
+        "requested_at",
+        "started_at",
+        "finished_at",
+        "error"
+      ]
+    },
+    {
+      "name": "requestCfadminPasswordChange",
+      "method": "POST",
+      "path": "/api/clients/{id}/local-management/cfadmin-password",
+      "example_path": "/api/clients/42/local-management/cfadmin-password",
+      "success_status": "200",
+      "request_properties": [
+        "password"
+      ],
+      "response_properties": [
+        "action",
+        "request_id",
+        "desired_hostname",
+        "desired_client_name",
+        "status",
+        "message",
+        "requested_at",
+        "started_at",
+        "finished_at",
+        "error"
+      ]
+    },
+    {
+      "name": "requestLocalHostnameChange",
+      "method": "POST",
+      "path": "/api/clients/{id}/local-management/hostname",
+      "example_path": "/api/clients/42/local-management/hostname",
+      "success_status": "200",
+      "request_properties": [
+        "name"
+      ],
+      "response_properties": [
+        "action",
+        "request_id",
+        "desired_hostname",
+        "desired_client_name",
+        "status",
+        "message",
+        "requested_at",
+        "started_at",
+        "finished_at",
+        "error",
+        "name"
+      ]
+    },
+    {
       "name": "updateClientKiosk",
       "method": "PUT",
       "path": "/api/clients/{id}/update",
@@ -72,6 +136,28 @@
       "path": "/api/clients/{id}/chrome-command",
       "example_path": "/api/clients/42/chrome-command",
       "success_status": "200"
+    },
+    {
+      "name": "requestOsUpdate",
+      "method": "POST",
+      "path": "/api/clients/{id}/os-update",
+      "example_path": "/api/clients/42/os-update",
+      "success_status": "200",
+      "response_properties": [
+        "ok",
+        "command_id",
+        "pending_os_update",
+        "ubuntu_update_status",
+        "ubuntu_update_step",
+        "ubuntu_update_message",
+        "ubuntu_update_error",
+        "ubuntu_update_started_at",
+        "ubuntu_update_updated_at",
+        "ubuntu_update_finished_at",
+        "ubuntu_update_progress",
+        "ubuntu_update_package_count",
+        "ubuntu_update_reboot_required"
+      ]
     },
     {
       "name": "approveClient",
