@@ -241,20 +241,24 @@ sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" verify \
 
 Installation is for a clean Ubuntu Desktop 26.04 `amd64` client with an existing unprivileged kiosk user. The **first** consuming claim requires the same one-time enrollment code and signed `FRESH_INSTALL_AUTHORIZATION` that authorized the exact approved bundle download. Both are transient capabilities and must not be written into ClientFlow install-state.
 
-When using the generated admin handoff, keep the same shell so `ENROLLMENT_CODE` and `FRESH_INSTALL_AUTHORIZATION` remain available, and require both before starting the first mutation:
+The generated admin handoff is non-secret: paste it first, then run `clientflow_fresh_install_download` and paste the separately copied enrollment code and signed authorization only at its hidden prompts. The function keeps `ENROLLMENT_CODE` and `FRESH_INSTALL_AUTHORIZATION` as transient values in the same shell for the later consuming claim, while neither capability appears in the pasted handoff command or shell history. Keep that same shell and require both before starting the first mutation:
 
 ```bash
 test -n "${ENROLLMENT_CODE:-}"
 test -n "${FRESH_INSTALL_AUTHORIZATION:-}"
 
-sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" install \
-  --bundle "$BOOTSTRAP_BUNDLE" \
-  --expected-bundle-sha256 "$APPROVED_BUNDLE_SHA256" \
-  --backend-url https://<backend-origin> \
-  --enrollment-code "$ENROLLMENT_CODE" \
-  --fresh-install-authorization "$FRESH_INSTALL_AUTHORIZATION" \
-  --kiosk-user <kiosk-user>
+printf '%s\n%s\n' "$ENROLLMENT_CODE" "$FRESH_INSTALL_AUTHORIZATION" |
+  sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" install \
+    --bundle "$BOOTSTRAP_BUNDLE" \
+    --expected-bundle-sha256 "$APPROVED_BUNDLE_SHA256" \
+    --backend-url https://<backend-origin> \
+    --fresh-install-authority-stdin \
+    --kiosk-user <kiosk-user>
+
+unset ENROLLMENT_CODE FRESH_INSTALL_AUTHORIZATION
 ```
+
+The one-time enrollment code and signed fresh-install authorization are passed only over stdin; they are never present in the privileged installer argv recorded by `sudo`/journald. The variables are unset immediately after a successful claim/install return.
 
 The installer derives a non-secret release binding from the locally verified approved bundle: release ID/version/sequence, whole-bundle SHA-256/size, immutable approval reference, candidate provenance and source commit. Backend claim verifies that complete binding against the signed authorization for the same enrollment-token **before** creating client/credential state or consuming the code. The existing enrollment receipt then commits its resume-proof hash to that exact binding, so crash recovery cannot switch release provenance without introducing a parallel release-authority table.
 
@@ -275,6 +279,10 @@ sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \
   --release-id "$BOOTSTRAP_RELEASE_ID" \
   --expected-release-approval-reference <RELEASE_APPROVAL_REFERENCE>
 ```
+
+Display platform preparation materializes the canonical GDM/autologin and kiosk host baseline but does not restart `gdm3` inside the activation transaction. The baseline keeps Chrome in normal browser mode with `--start-fullscreen` (never `--kiosk`), disables idle lock/screensaver/suspend/dim, blocks Bluetooth, suppresses kiosk-user update/crash popups, hides and ACL-blocks local Settings/Terminal/package/network/Bluetooth administration apps for the kiosk user, installs a kiosk-user-only polkit deny rule for privileged system changes, preserves logout/user-switch for `cfadmin`, and enforces Europe/Copenhagen + NTP. Session-level GDM/logind changes become authoritative at the later controlled reboot so activation cannot terminate its own operator process.
+
+After activation health is green, perform one controlled reboot before the reboot/reconnect verification gate. The reboot is part of kiosk-session materialization, not release authority.
 
 Staging has already persisted the approved bundle SHA-256/size, candidate SHA-256, source commit and immutable release-approval reference. Activation first requires the operator-provided expected release-approval reference to match that staged provenance; it is not a new free-form approval. It then switches `/opt/clientflow/active`, applies managed definitions and runs health checks. Failure triggers the transaction's rollback behavior.
 

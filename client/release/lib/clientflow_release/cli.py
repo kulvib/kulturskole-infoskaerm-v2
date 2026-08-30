@@ -12,6 +12,7 @@ import shutil
 import stat
 import secrets
 import subprocess
+import sys
 import uuid
 
 from .bundle import verify_bundle
@@ -476,6 +477,42 @@ def _state_fresh_install_binding(install_state: dict) -> dict:
         raise RuntimeError("Uafsluttet installation har ugyldig fresh-install release-binding") from exc
 
 
+MAX_FRESH_INSTALL_AUTHORITY_STDIN_BYTES = 64 * 1024
+
+
+def _fresh_install_authorities(args: argparse.Namespace) -> tuple[str | None, str | None]:
+    """Read one-time fresh-install authorities without putting secrets in argv.
+
+    A brand-new install uses exactly two newline-delimited values on stdin:
+    enrollment code, then signed fresh-install authorization. Receipt resume
+    omits the flag and therefore consumes no stdin and requires no one-time
+    authority.
+    """
+    if not bool(getattr(args, "fresh_install_authority_stdin", False)):
+        # Programmatic callers may provide authorities directly; the canonical
+        # CLI parser deliberately exposes no secret-bearing argv options.
+        return (
+            getattr(args, "enrollment_code", None),
+            getattr(args, "fresh_install_authorization", None),
+        )
+    raw = sys.stdin.buffer.read(MAX_FRESH_INSTALL_AUTHORITY_STDIN_BYTES + 1)
+    if len(raw) > MAX_FRESH_INSTALL_AUTHORITY_STDIN_BYTES:
+        raise RuntimeError("Fresh-install authority input er for stor")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("Fresh-install authority input er ikke UTF-8") from exc
+    lines = text.splitlines()
+    if len(lines) != 2:
+        raise RuntimeError("Fresh-install authority input skal indeholde præcis to linjer")
+    enrollment_code, fresh_install_authorization = (line.strip() for line in lines)
+    if not enrollment_code:
+        raise RuntimeError("Ny fresh install kræver en one-time enrollment code")
+    if not fresh_install_authorization:
+        raise RuntimeError("Ny fresh install kræver fresh-install authorization")
+    return enrollment_code, fresh_install_authorization
+
+
 def install_fresh(args: argparse.Namespace) -> dict:
     layout = _layout(args.root)
     _require_root(layout)
@@ -495,6 +532,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
     release_id = str(binding["release_id"])
     state_path = _install_state_path(layout)
     new_install = not state_path.exists()
+    enrollment_code, fresh_install_authorization = _fresh_install_authorities(args)
 
     if not new_install:
         install_state = load_secure_json(state_path)
@@ -521,10 +559,10 @@ def install_fresh(args: argparse.Namespace) -> dict:
         # A brand-new consuming transaction must have both one-time authorities
         # before any ClientFlow filesystem state is created. They are never
         # persisted locally; only the non-secret verified release binding is.
-        if not str(args.enrollment_code or "").strip():
-            raise RuntimeError("Ny fresh install kræver en one-time enrollment code")
-        if not str(args.fresh_install_authorization or "").strip():
-            raise RuntimeError("Ny fresh install kræver fresh-install authorization")
+        if not enrollment_code:
+            raise RuntimeError("Ny fresh install kræver en one-time enrollment code via stdin")
+        if not fresh_install_authorization:
+            raise RuntimeError("Ny fresh install kræver fresh-install authorization via stdin")
         conflicts = _fresh_conflicts(layout)
         if conflicts:
             raise RuntimeError(
@@ -580,8 +618,8 @@ def install_fresh(args: argparse.Namespace) -> dict:
         try:
             response = claim(
                 backend_url=backend_url,
-                enrollment_code=args.enrollment_code,
-                fresh_install_authorization=args.fresh_install_authorization,
+                enrollment_code=enrollment_code,
+                fresh_install_authorization=fresh_install_authorization,
                 fresh_install_binding=binding,
                 install_id=install_id,
                 seed=seed,
@@ -679,11 +717,10 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--bundle", type=Path, required=True)
     install.add_argument("--expected-bundle-sha256", required=True)
     install.add_argument("--backend-url", required=True)
-    # These are optional at argparse level so an ambiguous post-claim crash can
-    # resume from the receipt without a consumed/expired one-time authority.
-    # install_fresh requires both before creating state for a brand-new install.
-    install.add_argument("--enrollment-code")
-    install.add_argument("--fresh-install-authorization")
+    # A new consuming claim reads the two one-time authorities from stdin so
+    # sudo/audit process argv never persists them. Receipt resume omits this
+    # flag and therefore requires no consumed/expired one-time authority.
+    install.add_argument("--fresh-install-authority-stdin", action="store_true")
     install.add_argument("--kiosk-user", required=True)
     install.add_argument("--name")
     install.add_argument("--locality")

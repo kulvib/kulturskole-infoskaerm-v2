@@ -1,6 +1,7 @@
 [Unit]
 Description=ClientFlow Display Google Chrome and kiosk platform preparation
-After=local-fs.target
+After=local-fs.target clientflow-platform-prepare.service
+Requires=clientflow-platform-prepare.service
 Before=clientflow-display-runtime.service
 
 [Service]

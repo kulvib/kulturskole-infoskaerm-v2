@@ -99,9 +99,10 @@
         "client/systemd/clientflow.target",
         "client/runtime/clientflow_runtime/display_input_wake.py",
         "client/runtime/clientflow_runtime/status_agent.py",
-        "client/runtime/clientflow_runtime/system_agent.py"
+        "client/runtime/clientflow_runtime/system_agent.py",
+        "client/runtime/clientflow_runtime/display_platform_prepare.py"
       ],
-      "rationale": "Legacy monolith is decomposed into domain agents/services; physical input wake is explicit. Legacy desktop-lockdown consumer is intentionally fail-closed/unsupported in V2."
+      "rationale": "Legacy monolith is decomposed into domain agents/services. The physically proven kiosk session baseline is owned by V2 Display platform preparation; remote Livestream/Terminal/Remote Desktop authorities remain isolated."
     },
     {
       "legacy_path": "opt/clientflow/api/config_utils.py",
@@ -306,9 +307,10 @@
         "client/systemd/clientflow.target",
         "client/runtime/clientflow_runtime/display_input_wake.py",
         "client/runtime/clientflow_runtime/status_agent.py",
-        "client/runtime/clientflow_runtime/system_agent.py"
+        "client/runtime/clientflow_runtime/system_agent.py",
+        "client/runtime/clientflow_runtime/display_platform_prepare.py"
       ],
-      "rationale": "Legacy monolith is decomposed into domain agents/services; physical input wake is explicit. Legacy desktop-lockdown consumer is intentionally fail-closed/unsupported in V2."
+      "rationale": "Legacy monolith is decomposed into domain agents/services. The physically proven kiosk session baseline is owned by V2 Display platform preparation; remote Livestream/Terminal/Remote Desktop authorities remain isolated."
     },
     {
       "legacy_path": "usr/local/lib/clientflow-root/clientflow_update_transaction.py",

@@ -464,7 +464,7 @@ export default function EnrollmentTokensPage() {
         <DialogTitle>Canonical fresh-install handoff oprettet</DialogTitle>
         <DialogContent>
           <Alert severity="warning" sx={{ mb: 2 }}>
-            Den fulde installationskode og den signerede fresh-install authorization vises kun i dette svar. Kopiér handoff-blokken nu og opbevar den sikkert.
+            Installationskoden og den signerede fresh-install authorization er one-time capabilities og er kun tilgængelige i dette svar. Handoff-blokken indeholder dem ikke; kopiér dem separat og indsæt dem kun ved de skjulte Ubuntu-prompts.
           </Alert>
 
           <Paper variant="outlined" sx={{ p: 2, bgcolor: "rgba(15,23,42,0.42)", display: "flex", alignItems: "center", gap: 1 }}>
@@ -487,6 +487,7 @@ export default function EnrollmentTokensPage() {
           <Stack spacing={0.6} sx={{ mt: 2 }}>
             <Typography variant="body2"><strong>Release:</strong> {newCode?.release_id || "-"}</Typography>
             <Typography variant="body2" sx={{ wordBreak: "break-all" }}><strong>Approved bundle SHA-256:</strong> {newCode?.bundle_sha256 || "-"}</Typography>
+            <Typography variant="body2"><strong>Approved bundle size:</strong> {newCode?.bundle_size ?? "-"}</Typography>
             <Typography variant="body2"><strong>Approval:</strong> {newCode?.release_approval_reference || "-"}</Typography>
             <Typography variant="body2" sx={{ wordBreak: "break-all" }}><strong>Source commit:</strong> {newCode?.source_commit || "-"}</Typography>
             <Typography variant="body2" sx={{ color: "text.secondary" }}>Udløber: {formatDateTime(newCode?.expires_at)}</Typography>
@@ -513,13 +514,16 @@ export default function EnrollmentTokensPage() {
             {freshInstallCommand}
           </Paper>
           <Alert severity="info" sx={{ mt: 2 }}>
-            Blokken downloader kun de bytes, som den signerede authorization peger på, og verificerer hele bundle-SHA-256. Derefter fortsættes den eksisterende 51I-procedure fra <code>CLIENTFLOW_RELEASE_PROCEDURE.md</code> afsnit 5. Kiosk-bruger og manuel aktivering gættes eller udføres ikke automatisk.
+            Handoff-blokken er non-secret og gemmer ikke one-time capabilities i shell history. Efter blokken er indlæst køres <code>clientflow_fresh_install_download</code>; indsæt installationskoden og authorization ved de skjulte prompts. Downloaden verificerer hele bundle-SHA-256, hvorefter den eksisterende procedure fortsættes fra <code>CLIENTFLOW_RELEASE_PROCEDURE.md</code> afsnit 5. Kiosk-bruger og manuel aktivering gættes eller udføres ikke automatisk.
           </Alert>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => handleCopy(newCode?.code)} startIcon={<ContentCopyIcon />}>Kopiér kode</Button>
+          <Button onClick={() => handleCopy(newCode?.fresh_install_authorization)} startIcon={<ContentCopyIcon />} disabled={!newCode?.fresh_install_authorization}>
+            Kopiér authorization
+          </Button>
           <Button onClick={() => handleCopy(freshInstallCommand)} startIcon={<ContentCopyIcon />} disabled={!freshInstallCommand}>
-            Kopiér handoff
+            Kopiér non-secret handoff
           </Button>
           <Button variant="contained" onClick={() => setNewCode(null)}>Luk</Button>
         </DialogActions>

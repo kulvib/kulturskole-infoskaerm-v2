@@ -62,7 +62,7 @@ def test_catalog_1213_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1213_matches_source_identity_after_promotion() -> None:
+def test_catalog_1213_remains_selected_while_source_1313_1214_is_unpromoted() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -72,16 +72,17 @@ def test_catalog_1213_matches_source_identity_after_promotion() -> None:
     )
     source_sequence = int(release_input["release_sequence"])
 
-    # Publication and independent 51M reread are separate gates. Once those
-    # have passed, catalog promotion may converge runtime selection onto the
-    # exact already-published source/build identity.
-    assert source_version == "1.3.12"
-    assert source_sequence == 1213
-    assert data["catalog_sequence"] == source_sequence
-    assert data["latest_stable"] == source_version
-    assert data["default_install_version"] == source_version
-    assert release["version"] == source_version
-    assert release["release_sequence"] == source_sequence
+    # Runtime selection remains pinned to the last independently approved and
+    # published immutable release while source fixes move exactly one identity
+    # ahead. No candidate/build/publication is implied by this source bump.
+    assert source_version == "1.3.13"
+    assert source_sequence == 1214
+    assert data["catalog_sequence"] == 1213
+    assert data["catalog_sequence"] == source_sequence - 1
+    assert data["latest_stable"] == "1.3.12"
+    assert data["default_install_version"] == "1.3.12"
+    assert release["version"] == "1.3.12"
+    assert release["release_sequence"] == 1213
     assert release["release_id"] == "clientflow-1.3.12-seq-1213"
 
     # Exact approved byte identity remains authority of the immutable 51M store

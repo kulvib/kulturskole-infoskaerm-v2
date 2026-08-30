@@ -115,3 +115,58 @@ def test_activation_intent_rejects_different_release_or_approval(tmp_path):
             release_approval_reference=f"{release_id}/approval-b",
             current_release_id=previous,
         )
+
+
+def test_failed_first_activation_restores_pending_definitions_and_updater_plane(tmp_path, monkeypatch):
+    release_id = "clientflow-1.3.12-seq-1213"
+    approval = f"{release_id}/approval"
+    layout = Layout(tmp_path / "root")
+    release_root = layout.releases / release_id
+    unit_source = release_root / "client-runtime/systemd"
+    unit_source.mkdir(parents=True)
+    (unit_source / "clientflow.target").write_text("[Unit]\nDescription=target\n", encoding="utf-8")
+    (unit_source / "clientflow-updater.service").write_text("[Service]\nType=oneshot\n", encoding="utf-8")
+    (unit_source / "clientflow-updater.timer").write_text("[Timer]\nOnActiveSec=1min\n", encoding="utf-8")
+    sysusers = release_root / "client-runtime/sysusers.d/clientflow.conf"
+    sysusers.parent.mkdir(parents=True)
+    sysusers.write_text("g clientflow-updater -\n", encoding="utf-8")
+    tmpfiles = release_root / "client-runtime/tmpfiles.d/clientflow.conf"
+    tmpfiles.parent.mkdir(parents=True)
+    tmpfiles.write_text("d /var/lib/clientflow 0755 root root -\n", encoding="utf-8")
+
+    layout.install_root.mkdir(parents=True, exist_ok=True)
+    transaction.atomic_symlink(f"releases/{release_id}", layout.active)
+    transaction._restore_pending_first_activation(layout, release_root)
+
+    assert not (layout.active.exists() or layout.active.is_symlink())
+    assert (layout.unit_root / "clientflow.target").is_file()
+    assert (layout.unit_root / "clientflow-updater.service").is_file()
+    assert (layout.unit_root / "clientflow-updater.timer").is_file()
+
+
+def test_first_activation_failure_uses_pending_restore_not_definition_removal(tmp_path, monkeypatch):
+    release_id = "clientflow-1.3.12-seq-1213"
+    approval = f"{release_id}/approval"
+    layout = Layout(tmp_path / "root")
+    _release(layout, release_id)
+    state = _state(release_id, None)
+    calls = []
+
+    monkeypatch.setattr(transaction, "_read_active_release_id", lambda _layout: None)
+    monkeypatch.setattr(transaction, "save_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(transaction, "_disable_target", lambda _layout: calls.append("disable"))
+    monkeypatch.setattr(transaction, "_quiesce_runtime", lambda _layout: calls.append("quiesce"))
+    monkeypatch.setattr(transaction, "_apply_definitions", lambda *_args, **_kwargs: calls.append("definitions"))
+    monkeypatch.setattr(transaction, "_switch_active", lambda *_args, **_kwargs: calls.append("switch"))
+    monkeypatch.setattr(transaction, "_systemd_prepare", lambda _layout: calls.append("prepare"))
+    monkeypatch.setattr(transaction, "_start_target", lambda _layout: (_ for _ in ()).throw(RuntimeError("start failed")))
+    monkeypatch.setattr(transaction, "_restore_pending_first_activation", lambda *_args, **_kwargs: calls.append("restore-pending"))
+    monkeypatch.setattr(transaction, "_remove_definitions", lambda *_args, **_kwargs: pytest.fail("must not remove pending updater definitions"))
+
+    with pytest.raises(TransactionError, match="automatisk gendannet"):
+        transaction._activate_release(layout, state, release_id, approval)
+
+    assert "restore-pending" in calls
+    assert state["active_release_id"] is None
+    assert state["activation_intent"] is None
+    assert any(event["event"] == "automatic_rollback_completed" for event in state["history"])
