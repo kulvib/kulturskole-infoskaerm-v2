@@ -172,6 +172,36 @@ def test_release_build_workflow_is_manual_ci_gated_reproducible_and_non_publishi
     assert source.count("persist-credentials: false") == 4
 
 
+def test_release_approval_workflow_is_manual_exact_source_target_host_and_non_publishing():
+    path = ROOT / ".github/workflows/release-approve.yml"
+    source = path.read_text()
+    workflow = yaml.safe_load(source)
+    assert set(workflow["on"]) == {"workflow_dispatch"}
+    assert workflow["permissions"] == {}
+    inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    assert set(inputs) == {
+        "expected_source_sha",
+        "expected_candidate_sha256",
+        "expected_installer_sha256",
+        "approval_reference",
+        "approve_release",
+    }
+    assert "runs-on: ubuntu-26.04" in source
+    assert "ref: ${{ inputs.expected_source_sha }}" in source
+    assert "clientflow-reproducible-unapproved-${{ inputs.expected_source_sha }}" in source
+    assert "actions/workflows/release-build.yml/runs" in source
+    assert "run-id: ${{ steps.release_run.outputs.run_id }}" in source
+    assert "approve_clientflow_release.py" in source
+    assert "--expected-candidate-sha256" in source
+    assert "--expected-installer-sha256" in source
+    assert "--expected-source-commit" in source
+    assert "--approval-reference" in source
+    assert "--approve-release" in source
+    assert "publish_clientflow_release.py" not in source
+    assert "--publish-release" not in source
+    assert "secrets." not in source
+
+
 def test_runtime_input_transport_roundtrips_locked_platform_artifact(tmp_path: Path):
     build_module = _load_module("build_transport_53a", ROOT / "scripts/build_clientflow_runtime_input_transport.py")
     materialize_module = _load_module("materialize_53a", ROOT / "scripts/materialize_clientflow_runtime_inputs.py")
