@@ -200,6 +200,9 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   );
   const resolvedSelectedVersion = selectedVersion === "latest" ? latestVersion : selectedVersion;
   const selectedRelease = selectableReleases.find((release) => release.version === resolvedSelectedVersion) || null;
+  const selectedReleaseRequiresReboot = selectedRelease?.requires_reboot === true;
+  const deploymentRelease = selectableReleases.find((release) => release.version === deployment?.target_version) || null;
+  const deploymentRequiresReboot = deploymentRelease?.requires_reboot === true;
   const isDowngrade = Boolean(
     installedVersion && resolvedSelectedVersion && compareClientflowVersions(resolvedSelectedVersion, installedVersion) < 0
   );
@@ -361,6 +364,11 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
           </Button>
         </Stack>
       </Stack>
+      {selectedReleaseRequiresReboot && !showPanel && (
+        <Alert severity="info" sx={{ mt: 1 }}>
+          v{resolvedSelectedVersion} kræver én kontrolleret genstart efter grøn ClientFlow-activation, før reboot/reconnect-gaten er afsluttet.
+        </Alert>
+      )}
       {showPanel && (
         <Box sx={{ mt: 1, p: 1, borderRadius: 2, background: stateIsError ? "rgba(248,113,113,0.10)" : stateIsWarning ? "rgba(251,191,36,0.10)" : "rgba(56,189,248,0.10)", border: stateIsError ? "1px solid rgba(248,113,113,0.28)" : stateIsWarning ? "1px solid rgba(251,191,36,0.28)" : "1px solid rgba(56,189,248,0.24)" }}>
           <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -388,6 +396,11 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
               {updatedAt && <Typography variant="caption" sx={{ color: MUTED }}>State ændret: {updatedAt}</Typography>}
               {finishedAt && <Typography variant="caption" sx={{ color: MUTED }}>Afsluttet: {finishedAt}</Typography>}
             </Stack>
+          )}
+          {stateIsSuccess && deploymentRequiresReboot && (
+            <Alert severity="warning" sx={{ mt: 1 }}>
+              ClientFlow er aktiv, men denne release kræver nu én kontrolleret genstart via System. Verificér reconnect efter reboot, før deploymenten betragtes som operationelt afsluttet.
+            </Alert>
           )}
           {error && <Typography variant="body2" sx={{ mt: 0.75, color: "#f87171", fontWeight: 700 }}>Fejl: {error}</Typography>}
         </Box>

@@ -18,6 +18,9 @@ test("Control Room only selects stable or supported ClientFlow releases", () => 
   assert.match(infoSource, /Seneste stabile/);
   assert.match(infoSource, /Bekræft ClientFlow-nedgradering/);
   assert.match(infoSource, /Begrundelse/);
+  assert.match(infoSource, /selectedRelease\?\.requires_reboot === true/);
+  assert.match(infoSource, /kræver én kontrolleret genstart efter grøn ClientFlow-activation/);
+  assert.match(infoSource, /Verificér reconnect efter reboot/);
 });
 
 test("ClientFlow update request creates a canonical deployment", () => {
