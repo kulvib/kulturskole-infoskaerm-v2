@@ -63,7 +63,7 @@ def test_catalog_1214_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1214_matches_promoted_source_identity_without_copying_artifact_authority() -> None:
+def test_catalog_1214_remains_selected_while_source_1314_1215_is_unpromoted() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -73,13 +73,17 @@ def test_catalog_1214_matches_promoted_source_identity_without_copying_artifact_
     )
     source_sequence = int(release_input["release_sequence"])
 
-    assert source_version == "1.3.13"
-    assert source_sequence == 1214
-    assert data["catalog_sequence"] == source_sequence
-    assert data["latest_stable"] == source_version
-    assert data["default_install_version"] == source_version
-    assert release["version"] == source_version
-    assert release["release_sequence"] == source_sequence
+    # Source/build identity moves exactly one release ahead while the executable
+    # Ubuntu 26.04 gates, reproducible build, manual approval and immutable
+    # publication are pending. The approved 1.3.13/1214 catalog remains authority.
+    assert source_version == "1.3.14"
+    assert source_sequence == 1215
+    assert data["catalog_sequence"] == 1214
+    assert data["catalog_sequence"] == source_sequence - 1
+    assert data["latest_stable"] == "1.3.13"
+    assert data["default_install_version"] == "1.3.13"
+    assert release["version"] == "1.3.13"
+    assert release["release_sequence"] == 1214
     assert release["release_id"] == "clientflow-1.3.13-seq-1214"
     assert release["requires_reboot"] is True
 

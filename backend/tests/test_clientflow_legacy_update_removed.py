@@ -37,7 +37,7 @@ def test_b1_stale_legacy_command_is_neutralized_and_canonical_deployment_locks_c
     clients = read("backend/service1/routers/clients.py")
 
     chrome_command_start = clients.index('def get_chrome_command(')
-    chrome_command_end = clients.index('@router.post("/clients/{id}/os-update")', chrome_command_start)
+    chrome_command_end = clients.index('async def trigger_os_update(', chrome_command_start)
     chrome_command = clients[chrome_command_start:chrome_command_end]
     assert 'if action == "clientflow_update":' in chrome_command
     assert "client.pending_chrome_action = ChromeAction.NONE" in chrome_command
@@ -56,7 +56,7 @@ def test_b1_clientflow_and_ubuntu_updates_are_mutually_exclusive() -> None:
     deployments = read("backend/service1/routers/clientflow_deployments.py")
 
     os_update_start = clients.index('async def trigger_os_update(')
-    os_update_reset = clients.index('@router.post("/clients/{id}/os-update/reset")', os_update_start)
+    os_update_reset = clients.index('async def reset_os_update(', os_update_start)
     os_update = clients[os_update_start:os_update_reset]
     assert "_require_no_active_clientflow_deployment(session, id)" in os_update
 

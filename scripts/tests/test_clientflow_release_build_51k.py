@@ -158,6 +158,10 @@ def test_release_build_workflow_is_manual_ci_gated_reproducible_and_non_publishi
     assert 'test "$GITHUB_SHA" = "$EXPECTED_SOURCE_SHA"' in source
     assert "matrix:" in source and "replica: [a, b]" in source
     assert "verify_clientflow_reproducible_builds.py" in source
+    assert "candidate-runtime:" in source
+    assert "runs-on: ubuntu-26.04" in source
+    assert "verify_clientflow_release_candidate_runtime.py" in source
+    assert "needs: [preflight, build, candidate-runtime]" in source
     assert "runtime-platform-inputs.lock.json" not in source  # materializer owns the canonical default
     assert "--require-hashes" in source
     assert "--only-binary=:all:" in source
@@ -165,7 +169,7 @@ def test_release_build_workflow_is_manual_ci_gated_reproducible_and_non_publishi
     assert "approve_clientflow_release.py" not in source
     assert "publish_clientflow_release.py" not in source
     assert "secrets." not in source
-    assert source.count("persist-credentials: false") == 3
+    assert source.count("persist-credentials: false") == 4
 
 
 def test_runtime_input_transport_roundtrips_locked_platform_artifact(tmp_path: Path):

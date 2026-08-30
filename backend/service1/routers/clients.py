@@ -194,6 +194,40 @@ class LocalManagementStatusRequest(BaseModel):
     error: Optional[str] = None
 
 
+class LocalManagementRead(BaseModel):
+    action: Optional[str] = None
+    request_id: Optional[str] = None
+    desired_hostname: Optional[str] = None
+    desired_client_name: Optional[str] = None
+    status: str
+    message: str
+    requested_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    error: Optional[str] = None
+
+
+class LocalManagementHostnameRead(LocalManagementRead):
+    name: str
+
+
+class OsUpdateRead(BaseModel):
+    ok: bool
+    command_id: str
+    already_requested: Optional[bool] = None
+    pending_os_update: bool
+    ubuntu_update_status: str
+    ubuntu_update_step: Optional[str] = None
+    ubuntu_update_message: Optional[str] = None
+    ubuntu_update_error: Optional[str] = None
+    ubuntu_update_started_at: Optional[datetime] = None
+    ubuntu_update_updated_at: Optional[datetime] = None
+    ubuntu_update_finished_at: Optional[datetime] = None
+    ubuntu_update_progress: Optional[int] = None
+    ubuntu_update_package_count: Optional[int] = None
+    ubuntu_update_reboot_required: Optional[bool] = None
+
+
 class ClientOrganizationChangeRequest(BaseModel):
     organization_id: Optional[int] = None
     season: Optional[str] = None
@@ -1230,7 +1264,7 @@ def get_client(id: int, include_deleted: bool = False, session=Depends(get_sessi
     return _prepare_full_client_read(session, client)
 
 
-@router.get("/clients/{id}/local-management")
+@router.get("/clients/{id}/local-management", response_model=LocalManagementRead)
 def get_client_local_management(
     id: int,
     session=Depends(get_session),
@@ -1245,7 +1279,7 @@ def get_client_local_management(
     return local_management_projection(session, id)
 
 
-@router.post("/clients/{id}/local-management/cfadmin-password")
+@router.post("/clients/{id}/local-management/cfadmin-password", response_model=LocalManagementRead)
 def request_cfadmin_password_change(
     id: int,
     data: LocalCfadminPasswordRequest,
@@ -1292,7 +1326,7 @@ def request_cfadmin_password_change(
     return local_management_projection(session, id)
 
 
-@router.post("/clients/{id}/local-management/hostname")
+@router.post("/clients/{id}/local-management/hostname", response_model=LocalManagementHostnameRead)
 def request_local_hostname_change(
     id: int,
     data: LocalHostnameRequest,
@@ -1742,7 +1776,7 @@ def get_chrome_command(id: int, session=Depends(get_session), user=Depends(get_c
     return {"action": action, "source": source}
 
 
-@router.post("/clients/{id}/os-update")
+@router.post("/clients/{id}/os-update", response_model=OsUpdateRead, response_model_exclude_unset=True)
 async def trigger_os_update(
     id: int,
     session=Depends(get_session),

@@ -59,6 +59,40 @@ function enrollmentFixture() {
   };
 }
 
+function localManagementFixture(overrides = {}) {
+  return {
+    action: null,
+    request_id: null,
+    desired_hostname: null,
+    desired_client_name: null,
+    status: "ready",
+    message: "Ingen lokal klienthandling i gang",
+    requested_at: null,
+    started_at: null,
+    finished_at: null,
+    error: null,
+    ...overrides,
+  };
+}
+
+function osUpdateFixture() {
+  return {
+    ok: true,
+    command_id: "system-command-os-update-1",
+    pending_os_update: true,
+    ubuntu_update_status: "requested",
+    ubuntu_update_step: "os_update_requested",
+    ubuntu_update_message: "Ubuntu-opdatering afventer System-agent",
+    ubuntu_update_error: null,
+    ubuntu_update_started_at: null,
+    ubuntu_update_updated_at: "2026-08-30T14:00:00Z",
+    ubuntu_update_finished_at: null,
+    ubuntu_update_progress: null,
+    ubuntu_update_package_count: null,
+    ubuntu_update_reboot_required: null,
+  };
+}
+
 const responseByOperation = {
   getClients: [{ id: 42, status: "approved", presence: { is_online: true } }],
   getClient: { id: 42, status: "approved", presence: { is_online: true } },
@@ -69,9 +103,13 @@ const responseByOperation = {
     system: { domain: "system", is_online: true },
   },
   getChromeStatus: { client_id: 42, state: "normal", pending_reboot: false, pending_shutdown: false },
+  getClientLocalManagement: localManagementFixture(),
+  requestCfadminPasswordChange: localManagementFixture({ action: "cfadmin_password", request_id: "system-command-password-1", status: "pending" }),
+  requestLocalHostnameChange: localManagementFixture({ action: "hostname", request_id: "system-command-hostname-1", desired_hostname: "viborg2-client", desired_client_name: "Viborg2 Client", status: "pending", name: "Viborg2 Client" }),
   updateClientKiosk: { id: 42, status: "approved", kiosk_url: "https://infoskaerm.example.test/client/42" },
   clientActionReboot: { ok: true, command_id: "system-command-1", action: "reboot" },
   clientActionStopBrowser: { ok: true, pending_chrome_action: "stop" },
+  requestOsUpdate: osUpdateFixture(),
   approveClient: { id: 42, status: "approved", presence: { is_online: false } },
   getClientflowReleases: {
     catalog_sequence: 6543,
@@ -94,9 +132,13 @@ const invoke = {
   getClient: (api) => api.getClient(42),
   getClientPresence: (api) => api.getClientPresence(42),
   getChromeStatus: (api) => api.getChromeStatus(42),
+  getClientLocalManagement: (api) => api.getClientLocalManagement(42),
+  requestCfadminPasswordChange: (api) => api.requestCfadminPasswordChange(42, "Contract-Passphrase-42!"),
+  requestLocalHostnameChange: (api) => api.requestLocalHostnameChange(42, "Viborg2 Client"),
   updateClientKiosk: (api) => api.updateClient(42, { kiosk_url: "https://infoskaerm.example.test/client/42" }),
   clientActionReboot: (api) => api.clientAction(42, "reboot"),
   clientActionStopBrowser: (api) => api.clientAction(42, "stop"),
+  requestOsUpdate: (api) => api.requestOsUpdate(42),
   approveClient: (api) => api.approveClient(42, 7),
   getClientflowReleases: (api) => api.getClientflowReleases(),
   getClientflowDeployments: (api) => api.getClientflowDeployments(42),
@@ -208,6 +250,31 @@ test("ClientFlow frontend API functions execute the shared backend contract", as
     calls.length = 0;
     await invoke.updateClientKiosk(api);
     assert.deepEqual(parsedBody(calls[0]), { kiosk_url: "https://infoskaerm.example.test/client/42" });
+
+    currentOperation = "requestCfadminPasswordChange";
+    calls.length = 0;
+    await invoke.requestCfadminPasswordChange(api);
+    assert.deepEqual(parsedBody(calls[0]), { password: "Contract-Passphrase-42!" });
+
+    currentOperation = "requestLocalHostnameChange";
+    calls.length = 0;
+    await invoke.requestLocalHostnameChange(api);
+    assert.deepEqual(parsedBody(calls[0]), { name: "Viborg2 Client" });
+
+    for (const [action, expectedEndpoint, expectedAction] of [
+      ["start", "/api/clients/42/chrome-command", "start"],
+      ["sleep", "/api/clients/42/chrome-command", "sleep"],
+      ["wakeup", "/api/clients/42/chrome-command", "wakeup"],
+      ["reset_browser", "/api/clients/42/chrome-command", "reset_browser"],
+      ["restart", "/api/clients/42/system-command", "reboot"],
+      ["shutdown", "/api/clients/42/system-command", "shutdown"],
+    ]) {
+      currentOperation = action === "shutdown" || action === "restart" ? "clientActionReboot" : "clientActionStopBrowser";
+      calls.length = 0;
+      await api.clientAction(42, action);
+      assert.equal(pathAndQuery(calls[0].input), expectedEndpoint);
+      assert.deepEqual(parsedBody(calls[0]), { action: expectedAction, source: "actionbutton" });
+    }
 
     currentOperation = "requestClientflowDeployment";
     calls.length = 0;

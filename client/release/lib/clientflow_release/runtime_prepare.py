@@ -9,6 +9,7 @@ import subprocess
 from .archive import inspect_payload_tar, safe_extract_payload
 from .crypto import sha256_file
 from .filesystem import atomic_write_bytes, atomic_write_json, fsync_directory
+from .systemd_contract import SystemdContractError, validate_release_systemd_contract
 
 
 class RuntimePreparationError(RuntimeError):
@@ -123,6 +124,26 @@ def _rewrite_clientflow_entrypoints(runtime: Path) -> None:
         )
 
 
+
+
+def _validate_clientflow_console_scripts(runtime_python: Path) -> None:
+    expected = repr(sorted(CLIENTFLOW_ENTRYPOINTS))
+    probe = f"""
+import importlib.metadata as metadata
+expected = {expected}
+dist = metadata.distribution('clientflow-runtime')
+entries = {{ep.name: ep for ep in dist.entry_points if ep.group == 'console_scripts' and ep.name.startswith('clientflow-')}}
+observed = sorted(entries)
+if observed != expected:
+    raise SystemExit('entrypoint_inventory_mismatch:' + repr((expected, observed)))
+for name in observed:
+    target = entries[name].load()
+    if not callable(target):
+        raise SystemExit('entrypoint_not_callable:' + name)
+print('CLIENTFLOW_RUNTIME_ENTRYPOINT_IMPORTS_OK')
+"""
+    _run([str(runtime_python), "-c", probe], timeout=60)
+
 def prepare_runtime(release_root: Path, manifest: dict) -> None:
     runtime = manifest["runtime"]
     if runtime.get("offline_wheelhouse_complete") is not True:
@@ -203,6 +224,11 @@ def prepare_runtime(release_root: Path, manifest: dict) -> None:
         raise RuntimePreparationError(result.stdout[-4000:])
     _validate_systemd_entrypoint_inventory(release_root)
     _rewrite_clientflow_entrypoints(runtime_root)
+    _validate_clientflow_console_scripts(runtime_python)
+    try:
+        validate_release_systemd_contract(release_root)
+    except SystemdContractError as exc:
+        raise RuntimePreparationError(f"Release systemd/runtime-kontrakt fejlede: {exc}") from exc
     _run(
         [
             str(runtime_python),

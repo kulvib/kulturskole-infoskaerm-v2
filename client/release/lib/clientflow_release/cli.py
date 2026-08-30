@@ -226,7 +226,7 @@ def _validate_kiosk_user(name: str, layout: Layout) -> str:
         except KeyError as exc:
             raise RuntimeError("kiosk-user findes ikke på systemet") from exc
         if account.pw_uid < 1000 or account.pw_uid == 0:
-            raise RuntimeError("kiosk-user skal være en uprivilegeret interaktiv bruger")
+            raise RuntimeError("kiosk-user skal være en normal interaktiv ikke-systembruger")
     return name
 
 
