@@ -191,6 +191,11 @@ def test_release_approval_workflow_is_manual_exact_source_target_host_and_non_pu
     assert "clientflow-reproducible-unapproved-${{ inputs.expected_source_sha }}" in source
     assert "actions/workflows/release-build.yml/runs" in source
     assert "run-id: ${{ steps.release_run.outputs.run_id }}" in source
+    approval_job = workflow["jobs"]["approve"]
+    steps_by_name = {step["name"]: step for step in approval_job["steps"]}
+    record_step = steps_by_name["Write immutable approval record"]
+    assert record_step["env"]["RELEASE_BUILD_RUN_ID"] == "${{ steps.release_run.outputs.run_id }}"
+    assert 'int(os.environ["RELEASE_BUILD_RUN_ID"])' in record_step["run"]
     assert "approve_clientflow_release.py" in source
     assert "--expected-candidate-sha256" in source
     assert "--expected-installer-sha256" in source
