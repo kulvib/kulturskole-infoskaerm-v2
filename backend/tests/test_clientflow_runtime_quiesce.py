@@ -130,7 +130,7 @@ def test_activation_quiesces_before_definition_and_active_symlink_swap(tmp_path,
     assert order == ["disable", "quiesce", "definitions", "switch", "prepare", "start", "health"]
 
 
-def test_failed_first_activation_quiesces_again_before_definition_removal(tmp_path, monkeypatch):
+def test_failed_first_activation_restores_pending_definitions_and_updater_plane(tmp_path, monkeypatch):
     release_id = "clientflow-1.3.11-seq-1212"
     approval = f"{release_id}/test-approval"
     layout = Layout(tmp_path / "root")
@@ -157,14 +157,30 @@ def test_failed_first_activation_quiesces_again_before_definition_removal(tmp_pa
     monkeypatch.setattr(transaction, "_start_target", lambda _layout: order.append("start"))
     monkeypatch.setattr(transaction, "_health_check", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(transaction, "_disable_target", lambda _layout: order.append("disable"))
-    monkeypatch.setattr(transaction, "_remove_definitions", lambda _layout: order.append("remove"))
+    monkeypatch.setattr(transaction, "_enable_stable_updater_timer", lambda _layout: order.append("updater"))
+    monkeypatch.setattr(
+        transaction,
+        "_remove_definitions",
+        lambda _layout: (_ for _ in ()).throw(AssertionError("pending rollback må ikke fjerne managed definitions")),
+    )
     monkeypatch.setattr(transaction, "save_state", lambda *_args, **_kwargs: None)
 
     with pytest.raises(TransactionError, match="tidligere release blev automatisk gendannet"):
         transaction._activate_release(layout, state, release_id, approval)
 
-    assert order[:7] == ["disable", "quiesce", "definitions", "switch", "prepare", "start", "quiesce"]
-    assert order[7:9] == ["disable", "remove"]
+    assert order == [
+        "disable",
+        "quiesce",
+        "definitions",
+        "switch",
+        "prepare",
+        "start",
+        "quiesce",
+        "definitions",
+        "prepare",
+        "disable",
+        "updater",
+    ]
 
 
 def test_activation_disable_failure_prevents_any_runtime_mutation(tmp_path, monkeypatch):
