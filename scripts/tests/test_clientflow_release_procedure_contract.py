@@ -59,9 +59,13 @@ def test_fresh_install_consuming_command_carries_same_handoff_authorization():
 
     assert 'test -n "${ENROLLMENT_CODE:-}"' in install
     assert 'test -n "${FRESH_INSTALL_AUTHORIZATION:-}"' in install
-    assert '--enrollment-code "$ENROLLMENT_CODE"' in install
-    assert '--fresh-install-authorization "$FRESH_INSTALL_AUTHORIZATION"' in install
+    assert "printf '%s\\n%s\\n' \"$ENROLLMENT_CODE\" \"$FRESH_INSTALL_AUTHORIZATION\" |" in install
+    assert '--fresh-install-authority-stdin' in install
+    assert '--enrollment-code' not in install
+    assert '--fresh-install-authorization' not in install
+    assert 'unset ENROLLMENT_CODE FRESH_INSTALL_AUTHORIZATION' in install
     assert "must not be written into ClientFlow install-state" in install
+    assert "sudo`/journald" in install
     assert "receipt" in install.lower()
 
 

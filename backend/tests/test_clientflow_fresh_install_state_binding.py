@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import io
 import sys
 
 import pytest
@@ -69,8 +70,38 @@ def test_install_parser_allows_receipt_resume_without_one_time_authorities():
             "--kiosk-user", "kiosk",
         ]
     )
-    assert args.enrollment_code is None
-    assert args.fresh_install_authorization is None
+    assert args.fresh_install_authority_stdin is False
+    assert not hasattr(args, "enrollment_code")
+    assert not hasattr(args, "fresh_install_authorization")
+
+
+
+
+def test_install_parser_rejects_secret_bearing_legacy_argv():
+    with pytest.raises(SystemExit):
+        installer_cli.build_parser().parse_args(
+            [
+                "install",
+                "--bundle", "/tmp/bundle.tar",
+                "--expected-bundle-sha256", "a" * 64,
+                "--backend-url", "https://display.example.invalid",
+                "--kiosk-user", "kiosk",
+                "--enrollment-code", "CF-SECRET",
+            ]
+        )
+
+
+def test_new_install_authorities_are_read_from_bounded_stdin(monkeypatch):
+    fake_stdin = io.TextIOWrapper(
+        io.BytesIO(b"CF-TEST-TEST-TEST\nsigned-authorization\n"),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(installer_cli.sys, "stdin", fake_stdin)
+    args = SimpleNamespace(fresh_install_authority_stdin=True)
+    assert installer_cli._fresh_install_authorities(args) == (
+        "CF-TEST-TEST-TEST",
+        "signed-authorization",
+    )
 
 
 def test_new_install_requires_code_and_authorization_before_clientflow_state_mutation():
@@ -80,8 +111,8 @@ def test_new_install_requires_code_and_authorization_before_clientflow_state_mut
     install = source[start:end]
 
     new_state = install.index("else:\n        # A brand-new consuming transaction")
-    code_gate = install.index("Ny fresh install kræver en one-time enrollment code", new_state)
-    auth_gate = install.index("Ny fresh install kræver fresh-install authorization", new_state)
+    code_gate = install.index("Ny fresh install kræver en one-time enrollment code via stdin", new_state)
+    auth_gate = install.index("Ny fresh install kræver fresh-install authorization via stdin", new_state)
     state_root = install.index("ensure_real_directory(layout.state_root", new_state)
     assert new_state < code_gate < auth_gate < state_root
 

@@ -110,6 +110,8 @@ def test_53a_source_uses_release_owned_chrome_and_display_only_prerequisite():
     assert 'Requires=clientflow-display-platform-prepare.service' in unit
     assert 'StateDirectory=clientflow/display-runtime' in unit
     assert 'CLIENTFLOW_KIOSK_USER=@CLIENTFLOW_KIOSK_USER@' in prep_unit
+    assert 'Requires=clientflow-platform-prepare.service' in prep_unit
+    assert 'clientflow-platform-prepare.service' in next(line for line in prep_unit.splitlines() if line.startswith('After='))
     assert 'clientflow-display-platform-prepare = "clientflow_runtime.display_platform_prepare:main"' in pyproject
     assert '"clientflow-display-platform-prepare"' in runtime_prepare
     for frozen in ("livestream", "remote-desktop", "terminal"):
@@ -135,3 +137,163 @@ def test_prepare_gdm_reports_only_real_configuration_changes(monkeypatch, tmp_pa
     assert "AutomaticLoginEnable=true" in first and "AutomaticLogin=kiosk" in first
     assert module._prepare_gdm("kiosk", gdm) is False
     assert gdm.read_text(encoding="utf-8") == first
+
+
+def test_display_platform_prepare_does_not_restart_gdm_inside_activation(monkeypatch, tmp_path):
+    module = _load_module()
+    calls = []
+    monkeypatch.setattr(module.os, "geteuid", lambda: 0)
+    monkeypatch.setenv("CLIENTFLOW_KIOSK_USER", "kiosk")
+    monkeypatch.setenv("CLIENTFLOW_RELEASE_ROOT", str(tmp_path))
+    monkeypatch.setattr(module, "_load_chrome_artifact", lambda _root: (tmp_path / "chrome.deb", {"package": "google-chrome-stable"}))
+    monkeypatch.setattr(module, "_verify_deb_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "_active_google_repo_files", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(module, "_preconfigure_google_repo_opt_out", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "_repo_opt_out_is_false", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(module, "_ensure_exact_chrome", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "_prepare_graphical_kiosk", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(module, "_prepare_system_kiosk_policy", lambda: None)
+    monkeypatch.setattr(module, "_run", lambda command, **_kwargs: calls.append(command) or "")
+
+    module.prepare()
+
+    assert ["/usr/sbin/groupadd", "--system", "--force", "input"] in calls
+    assert ["/usr/bin/systemctl", "restart", "gdm3"] not in calls
+
+
+
+def test_v2_kiosk_baseline_ports_legacy_golden_behaviour_without_chrome_kiosk_mode():
+    module = _load_module()
+    settings = set(module._gsettings_commands())
+    expected = {
+        ("org.gnome.desktop.screensaver", "lock-enabled", "false"),
+        ("org.gnome.desktop.screensaver", "idle-activation-enabled", "false"),
+        ("org.gnome.desktop.session", "idle-delay", "uint32 0"),
+        ("org.gnome.desktop.lockdown", "disable-lock-screen", "true"),
+        ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
+        ("org.gnome.desktop.lockdown", "disable-user-switching", "false"),
+        ("org.gnome.desktop.lockdown", "disable-log-out", "false"),
+        ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
+        ("org.gnome.settings-daemon.plugins.power", "idle-dim", "false"),
+        ("org.gnome.settings-daemon.plugins.power", "power-button-action", "'nothing'"),
+        ("org.gnome.desktop.notifications", "show-banners", "false"),
+    }
+    assert expected <= settings
+
+    runtime = (ROOT / "client/runtime/clientflow_runtime/display_runtime.py").read_text(encoding="utf-8")
+    assert '"--start-fullscreen"' in runtime
+    assert '"--kiosk"' not in runtime
+
+
+def test_kiosk_logind_policy_is_always_on_and_preserves_technician_switching(tmp_path):
+    module = _load_module()
+    path = tmp_path / "90-clientflow-kiosk.conf"
+    module._prepare_logind_kiosk_policy(path)
+    text = path.read_text(encoding="utf-8")
+    for line in (
+        "IdleAction=ignore",
+        "IdleActionSec=0",
+        "HandlePowerKey=ignore",
+        "HandleSuspendKey=ignore",
+        "HandleHibernateKey=ignore",
+        "HandleLidSwitch=ignore",
+    ):
+        assert line in text
+    settings = set(module._gsettings_commands())
+    assert ("org.gnome.desktop.lockdown", "disable-user-switching", "false") in settings
+    assert ("org.gnome.desktop.lockdown", "disable-log-out", "false") in settings
+
+
+def test_kiosk_autostart_suppression_is_scoped_to_kiosk_home(monkeypatch, tmp_path):
+    module = _load_module()
+    chowns = []
+    monkeypatch.setattr(module.os, "chown", lambda path, uid, gid: chowns.append((Path(path), uid, gid)))
+    module._prepare_kiosk_autostarts(tmp_path, uid=1000, gid=1000)
+    autostart = tmp_path / ".config/autostart"
+    assert len(list(autostart.glob("*.desktop"))) == len(module.KIOSK_DISABLED_AUTOSTARTS)
+    for name in module.KIOSK_DISABLED_AUTOSTARTS:
+        text = (autostart / name).read_text(encoding="utf-8")
+        assert "Hidden=true" in text
+        assert "X-GNOME-Autostart-enabled=false" in text
+    assert all(uid == 1000 and gid == 1000 for _, uid, gid in chowns)
+
+
+def test_system_kiosk_policy_blocks_bluetooth_and_masks_sleep(monkeypatch, tmp_path):
+    module = _load_module()
+    calls = []
+    fake_rfkill = tmp_path / "rfkill"
+    fake_rfkill.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_rfkill.chmod(0o755)
+    monkeypatch.setattr(module, "RFKILL_EXECUTABLE", fake_rfkill)
+    monkeypatch.setattr(module, "LOGIND_KIOSK_DROPIN", tmp_path / "logind.conf")
+    monkeypatch.setattr(module, "_run", lambda command, **_kwargs: calls.append(command) or "")
+    module._prepare_system_kiosk_policy()
+    assert [str(fake_rfkill), "block", "bluetooth"] in calls
+    assert ["/usr/bin/systemctl", "mask", *module.SLEEP_TARGETS] in calls
+    assert (tmp_path / "logind.conf").is_file()
+
+
+def test_display_chrome_local_deb_install_uses_apt_lock_timeout(monkeypatch, tmp_path):
+    module = _load_module()
+    calls = []
+    package = tmp_path / "chrome.deb"
+    package.write_bytes(b"deb")
+    states = iter([None, ("install ok installed", "151.0.7922.173-1", "amd64")])
+    monkeypatch.setattr(module, "_installed_chrome", lambda: next(states))
+    monkeypatch.setattr(module, "_simulate_local_deb_install", lambda _path: None)
+    monkeypatch.setattr(module, "_run", lambda command, **_kwargs: calls.append(command) or "")
+    monkeypatch.setattr(module, "CHROME_EXECUTABLE", tmp_path / "google-chrome-stable")
+    module.CHROME_EXECUTABLE.write_text("#!/bin/sh\n", encoding="utf-8")
+    module.CHROME_EXECUTABLE.chmod(0o755)
+    module._ensure_exact_chrome(package, {"version": "151.0.7922.173-1", "architecture": "amd64"})
+    assert [
+        "/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "-y", "--no-download", "install", str(package)
+    ] in calls
+
+
+def test_kiosk_application_lockdown_is_user_scoped(monkeypatch, tmp_path):
+    module = _load_module()
+    chowns = []
+    monkeypatch.setattr(module.os, "chown", lambda path, uid, gid: chowns.append((Path(path), uid, gid)))
+    module._prepare_kiosk_application_lockdown(tmp_path, uid=1000, gid=1000)
+    applications = tmp_path / ".local/share/applications"
+    assert len(list(applications.glob("*.desktop"))) == len(module.KIOSK_BLOCKED_DESKTOP_IDS)
+    for desktop_id in module.KIOSK_BLOCKED_DESKTOP_IDS:
+        text = (applications / desktop_id).read_text(encoding="utf-8")
+        assert "Hidden=true" in text
+        assert "X-ClientFlow-Kiosk-Lockdown=true" in text
+    assert all(uid == 1000 and gid == 1000 for _, uid, gid in chowns)
+
+
+def test_kiosk_polkit_lockdown_denies_admin_domains_but_not_generic_login1(tmp_path):
+    module = _load_module()
+    path = tmp_path / "90-clientflow-kiosk.rules"
+    module._prepare_kiosk_polkit_policy("kiosk", path)
+    text = path.read_text(encoding="utf-8")
+    assert 'subject.user !== "kiosk"' in text
+    for denied in (
+        "org.freedesktop.packagekit.",
+        "org.freedesktop.NetworkManager.",
+        "org.bluez.",
+        "org.freedesktop.systemd1.",
+        "org.freedesktop.login1.power-off",
+        "org.freedesktop.login1.reboot",
+    ):
+        assert denied in text
+    assert '"org.freedesktop.login1."' not in text
+    assert "polkit.Result.NOT_HANDLED" in text
+
+
+def test_kiosk_binary_acl_is_only_applied_to_existing_non_symlink_targets(monkeypatch, tmp_path):
+    module = _load_module()
+    binary = tmp_path / "gnome-control-center"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    symlink = tmp_path / "symlink"
+    symlink.symlink_to(binary)
+    missing = tmp_path / "missing"
+    monkeypatch.setattr(module, "KIOSK_BLOCKED_BINARIES", (str(binary), str(symlink), str(missing)))
+    calls = []
+    monkeypatch.setattr(module, "_run", lambda command, **_kwargs: calls.append(command) or "")
+    module._prepare_kiosk_binary_acl("kiosk")
+    assert calls == [["/usr/bin/setfacl", "-m", "u:kiosk:---", str(binary)]]

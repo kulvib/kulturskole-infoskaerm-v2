@@ -755,6 +755,25 @@ def _disable_target(layout: Layout) -> None:
         _run(["/usr/bin/systemctl", "disable", "clientflow.target"])
 
 
+def _enable_stable_updater_timer(layout: Layout) -> None:
+    if layout.root == Path("/"):
+        _run(["/usr/bin/systemctl", "enable", "--now", "clientflow-updater.timer"])
+
+
+def _restore_pending_first_activation(layout: Layout, release_root: Path) -> None:
+    """Restore the exact pre-activation fresh-install operating state.
+
+    Failed first activation must return to staged/pending with no active release,
+    runtime target disabled, complete managed definitions present, and the stable
+    updater plane still enabled.
+    """
+    layout.active.unlink(missing_ok=True)
+    _apply_definitions(layout, release_root)
+    _systemd_prepare(layout)
+    _disable_target(layout)
+    _enable_stable_updater_timer(layout)
+
+
 def _expected_active_units(release_root: Path) -> tuple[list[str], list[str]]:
     services: list[str] = []
     sockets: list[str] = []
@@ -914,11 +933,7 @@ def _activate_release(
                 _start_target(layout)
                 _health_check(layout, previous, timeout=120)
             else:
-                _disable_target(layout)
-                layout.active.unlink(missing_ok=True)
-                _remove_definitions(layout)
-                if layout.root == Path("/"):
-                    _run(["/usr/bin/systemctl", "daemon-reload"])
+                _restore_pending_first_activation(layout, release_root)
         except Exception as rollback_error:
             _append_history(
                 state,
@@ -1069,7 +1084,7 @@ def install_stable_updater_host(
             if installed_meta.st_uid != 0 or installed_meta.st_gid != 0:
                 raise TransactionError("Stable updater-PYZ skal være root-owned")
             _run(["/usr/bin/systemctl", "daemon-reload"])
-            _run(["/usr/bin/systemctl", "enable", "--now", "clientflow-updater.timer"])
+            _enable_stable_updater_timer(layout)
 
         _append_history(
             state,

@@ -53,6 +53,17 @@
         ]
       },
       {
+        "package": "rfkill",
+        "minimum_version": "2.41.3-3ubuntu2",
+        "required_binaries": [
+          "/usr/sbin/rfkill"
+        ]
+      },
+      {
+        "package": "polkitd",
+        "minimum_version": "127-2ubuntu1"
+      },
+      {
         "package": "python3-gi",
         "minimum_version": "3.56.2-1",
         "required_python": "/usr/bin/python3"

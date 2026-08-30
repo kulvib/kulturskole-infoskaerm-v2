@@ -14,6 +14,7 @@ import subprocess
 RELEASE_ROOT = Path(os.getenv("CLIENTFLOW_RELEASE_ROOT", "/opt/clientflow/active"))
 LOCK_PATH = RELEASE_ROOT / "runtime-inputs/platform/runtime-platform-inputs.lock.json"
 SYSTEM_PYTHON = Path("/usr/bin/python3")
+EXPECTED_TIMEZONE = "Europe/Copenhagen"
 
 
 class PlatformPreparationError(RuntimeError):
@@ -102,14 +103,25 @@ def _ensure_packages(packages: list[dict]) -> None:
         if observed is None or not _version_at_least(observed, minimum):
             missing.append(package)
     if missing:
-        _run(["/usr/bin/apt-get", "update"], timeout=600)
-        _run(["/usr/bin/apt-get", "-y", "--no-install-recommends", "install", *missing], timeout=1200)
+        _run(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "update"], timeout=600)
+        _run(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "-y", "--no-install-recommends", "install", *missing], timeout=1200)
     for row in packages:
         observed = _installed_version(str(row["package"]))
         if observed is None or not _version_at_least(observed, str(row["minimum_version"])):
             raise PlatformPreparationError(
                 f"{row['package']}={observed!r} opfylder ikke minimum {row['minimum_version']}"
             )
+
+
+def _prepare_time_integrity() -> None:
+    timedatectl = "/usr/bin/timedatectl"
+    current = _run([timedatectl, "show", "--property=Timezone", "--value"], timeout=30).strip()
+    if current != EXPECTED_TIMEZONE:
+        _run([timedatectl, "set-timezone", EXPECTED_TIMEZONE], timeout=30)
+    _run([timedatectl, "set-ntp", "true"], timeout=30)
+    enabled = _run([timedatectl, "show", "--property=NTP", "--value"], timeout=30).strip().lower()
+    if enabled not in {"yes", "true", "1", "on"}:
+        raise PlatformPreparationError("Ubuntu host-platform kunne ikke aktivere NTP")
 
 
 def _verify_capabilities() -> None:
@@ -120,6 +132,8 @@ def _verify_capabilities() -> None:
         Path("/usr/bin/gdbus"),
         Path("/usr/bin/gsettings"),
         Path("/usr/bin/dbus-run-session"),
+        Path("/usr/sbin/rfkill"),
+        Path("/usr/bin/timedatectl"),
         SYSTEM_PYTHON,
     )
     missing_binaries = [str(path) for path in required_binaries if not path.exists() or not os.access(path, os.X_OK)]
@@ -170,6 +184,7 @@ def prepare() -> None:
     if platform.machine() != "x86_64":
         raise PlatformPreparationError(f"Uunderstøttet arkitektur: {platform.machine()}")
     _ensure_packages(_requirements())
+    _prepare_time_integrity()
     _verify_capabilities()
 
 

@@ -18,6 +18,72 @@ DEFAULT_RELEASE_ROOT = Path("/opt/clientflow/active")
 PLATFORM_RELATIVE = Path("runtime-inputs/platform")
 LOCK_NAME = "runtime-platform-inputs.lock.json"
 GOOGLE_REPOSITORY_MARKER = "google.com/linux/chrome"
+RFKILL_EXECUTABLE = Path("/usr/sbin/rfkill")
+LOGIND_KIOSK_DROPIN = Path("/etc/systemd/logind.conf.d/90-clientflow-kiosk.conf")
+POLKIT_KIOSK_RULE = Path("/etc/polkit-1/rules.d/90-clientflow-kiosk.rules")
+SLEEP_TARGETS = ("sleep.target", "suspend.target", "hibernate.target", "hybrid-sleep.target")
+KIOSK_DISABLED_AUTOSTARTS = (
+    "update-notifier.desktop",
+    "update-manager.desktop",
+    "org.gnome.Software.desktop",
+    "gnome-software-service.desktop",
+    "snap-store_ubuntu-software.desktop",
+    "snap-store.desktop",
+    "apport-gtk.desktop",
+    "ubuntu-report-on-upgrade.desktop",
+    "update-notifier-crash.desktop",
+    "software-properties-gtk.desktop",
+)
+KIOSK_BLOCKED_DESKTOP_IDS = (
+    "org.gnome.Settings.desktop",
+    "gnome-control-center.desktop",
+    "org.gnome.Nautilus.desktop",
+    "nautilus.desktop",
+    "org.gnome.Terminal.desktop",
+    "gnome-terminal.desktop",
+    "org.gnome.Console.desktop",
+    "kgx.desktop",
+    "firefox.desktop",
+    "firefox_firefox.desktop",
+    "org.mozilla.firefox.desktop",
+    "org.gnome.Software.desktop",
+    "gnome-software.desktop",
+    "snap-store_ubuntu-software.desktop",
+    "snap-store_snap-store.desktop",
+    "ubuntu-app-center.desktop",
+    "org.gnome.UpdateManager.desktop",
+    "update-manager.desktop",
+    "software-properties-gtk.desktop",
+    "org.gnome.SystemMonitor.desktop",
+    "gnome-system-monitor.desktop",
+    "org.gnome.DiskUtility.desktop",
+    "gnome-disks.desktop",
+    "nm-connection-editor.desktop",
+    "bluetooth-sendto.desktop",
+    "system-config-printer.desktop",
+)
+KIOSK_BLOCKED_BINARIES = (
+    "/usr/bin/gnome-control-center",
+    "/usr/bin/nautilus",
+    "/usr/bin/gnome-terminal",
+    "/usr/bin/kgx",
+    "/usr/bin/firefox",
+    "/snap/bin/firefox",
+    "/usr/bin/gnome-software",
+    "/usr/bin/update-manager",
+    "/usr/bin/software-updater",
+    "/usr/bin/update-notifier",
+    "/usr/bin/software-properties-gtk",
+    "/usr/bin/ubuntu-app-center",
+    "/snap/bin/ubuntu-app-center",
+    "/snap/bin/snap-store",
+    "/usr/bin/snap-store",
+    "/usr/bin/gnome-system-monitor",
+    "/usr/bin/gnome-disks",
+    "/usr/bin/nm-connection-editor",
+    "/usr/bin/bluetooth-sendto",
+    "/usr/bin/system-config-printer",
+)
 
 
 class DisplayPlatformPreparationError(RuntimeError):
@@ -204,7 +270,7 @@ def _installed_chrome() -> tuple[str, str, str] | None:
 
 
 def _simulate_local_deb_install(package_path: Path) -> None:
-    output = _run(["/usr/bin/apt-get", "-s", "--no-download", "install", str(package_path)])
+    output = _run(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "-s", "--no-download", "install", str(package_path)])
     installs = []
     for line in output.splitlines():
         match = re.match(r"^Inst\s+(\S+)", line)
@@ -224,7 +290,7 @@ def _ensure_exact_chrome(package_path: Path, artifact: dict[str, object]) -> Non
     installed = _installed_chrome()
     if not installed or installed[1] != expected_version or installed[2] != expected_arch:
         _simulate_local_deb_install(package_path)
-        _run(["/usr/bin/dpkg", "--install", str(package_path)])
+        _run(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "-y", "--no-download", "install", str(package_path)])
     installed = _installed_chrome()
     if not installed or installed[1] != expected_version or installed[2] != expected_arch:
         raise DisplayPlatformPreparationError("Installeret Google Chrome matcher ikke release-lock")
@@ -303,17 +369,30 @@ def _prepare_accounts_service(kiosk_user: str, accounts_root: Path = Path("/var/
 
 
 def _gsettings_commands() -> Iterable[tuple[str, str, str]]:
+    # Port the physically proven legacy Golden kiosk behaviour into the V2
+    # Display/platform authority.  These settings are scoped to the kiosk user;
+    # cfadmin/root and the frozen remote-management domains are untouched.
     return (
         ("org.gnome.desktop.screensaver", "lock-enabled", "false"),
         ("org.gnome.desktop.screensaver", "idle-activation-enabled", "false"),
         ("org.gnome.desktop.screensaver", "ubuntu-lock-on-suspend", "false"),
         ("org.gnome.desktop.session", "idle-delay", "uint32 0"),
         ("org.gnome.desktop.lockdown", "disable-lock-screen", "true"),
+        ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
+        # Preserve the legacy technician escape hatch: the kiosk user may log
+        # out/switch user so cfadmin can be selected at GDM.
+        ("org.gnome.desktop.lockdown", "disable-user-switching", "false"),
+        ("org.gnome.desktop.lockdown", "disable-log-out", "false"),
+        ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
+        ("org.gnome.shell", "favorite-apps", "[]"),
+        ("org.gnome.settings-daemon.plugins.color", "night-light-enabled", "false"),
+        ("org.gnome.desktop.interface", "color-scheme", "'default'"),
         ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type", "'nothing'"),
         ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-timeout", "0"),
         ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-type", "'nothing'"),
         ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-timeout", "0"),
         ("org.gnome.settings-daemon.plugins.power", "idle-dim", "false"),
+        ("org.gnome.settings-daemon.plugins.power", "power-button-action", "'nothing'"),
         ("org.gnome.desktop.notifications", "show-banners", "false"),
         ("org.gnome.desktop.notifications", "show-in-lock-screen", "false"),
     )
@@ -344,6 +423,123 @@ def _prepare_gnome_settings(kiosk_user: str, home: Path) -> None:
         )
 
 
+def _prepare_kiosk_autostarts(home: Path, *, uid: int, gid: int) -> None:
+    """Suppress stock Ubuntu desktop popups for the kiosk user only."""
+    autostart = home / ".config/autostart"
+    autostart.mkdir(parents=True, exist_ok=True)
+    os.chown(autostart, uid, gid)
+    for name in KIOSK_DISABLED_AUTOSTARTS:
+        path = autostart / name
+        _atomic_write_text(
+            path,
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            f"Name=ClientFlow disabled {name}\n"
+            "Hidden=true\n"
+            "X-GNOME-Autostart-enabled=false\n"
+            "NoDisplay=true\n",
+            mode=0o644,
+        )
+        os.chown(path, uid, gid)
+
+
+def _prepare_kiosk_application_lockdown(home: Path, *, uid: int, gid: int) -> None:
+    """Hide local admin/desktop applications from the kiosk user only."""
+    applications = home / ".local/share/applications"
+    applications.mkdir(parents=True, exist_ok=True)
+    os.chown(applications, uid, gid)
+    for desktop_id in KIOSK_BLOCKED_DESKTOP_IDS:
+        path = applications / desktop_id
+        _atomic_write_text(
+            path,
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            f"Name=ClientFlow blocked {desktop_id}\n"
+            "Hidden=true\n"
+            "NoDisplay=true\n"
+            "X-ClientFlow-Kiosk-Lockdown=true\n",
+            mode=0o644,
+        )
+        os.chown(path, uid, gid)
+
+
+def _prepare_kiosk_binary_acl(kiosk_user: str) -> None:
+    """Deny direct execution of local administration apps for the kiosk user."""
+    for raw in KIOSK_BLOCKED_BINARIES:
+        path = Path(raw)
+        if path.exists() and not path.is_symlink():
+            _run(["/usr/bin/setfacl", "-m", f"u:{kiosk_user}:---", str(path)], timeout=30)
+
+
+def _prepare_kiosk_polkit_policy(kiosk_user: str, path: Path | None = None) -> None:
+    """Deny kiosk-user privilege elevation while preserving logout/user switch."""
+    target = path or POLKIT_KIOSK_RULE
+    target.parent.mkdir(parents=True, exist_ok=True)
+    user_literal = json.dumps(kiosk_user)
+    text = f'''// ClientFlow V2 kiosk lockdown. Generated by display platform preparation.
+polkit.addRule(function(action, subject) {{
+  if (subject.user !== {user_literal}) {{
+    return polkit.Result.NOT_HANDLED;
+  }}
+  var id = action.id || "";
+  var deniedPrefixes = [
+    "org.freedesktop.packagekit.",
+    "org.debian.apt.",
+    "org.freedesktop.systemd1.",
+    "org.freedesktop.NetworkManager.",
+    "org.freedesktop.udisks2.",
+    "org.freedesktop.accounts.",
+    "org.freedesktop.UPower.",
+    "org.bluez.",
+    "net.hadess.PowerProfiles.",
+    "com.ubuntu.",
+    "io.snapcraft."
+  ];
+  var deniedExact = [
+    "org.freedesktop.login1.power-off",
+    "org.freedesktop.login1.power-off-multiple-sessions",
+    "org.freedesktop.login1.reboot",
+    "org.freedesktop.login1.reboot-multiple-sessions",
+    "org.freedesktop.login1.suspend",
+    "org.freedesktop.login1.hibernate"
+  ];
+  for (var i = 0; i < deniedPrefixes.length; i++) {{
+    if (id.indexOf(deniedPrefixes[i]) === 0) return polkit.Result.NO;
+  }}
+  for (var j = 0; j < deniedExact.length; j++) {{
+    if (id === deniedExact[j]) return polkit.Result.NO;
+  }}
+  return polkit.Result.NOT_HANDLED;
+}});
+'''
+    _atomic_write_text(target, text, mode=0o644)
+
+
+def _prepare_logind_kiosk_policy(path: Path | None = None) -> None:
+    target = path or LOGIND_KIOSK_DROPIN
+    _atomic_write_text(
+        target,
+        "[Login]\n"
+        "IdleAction=ignore\n"
+        "IdleActionSec=0\n"
+        "HandlePowerKey=ignore\n"
+        "HandleSuspendKey=ignore\n"
+        "HandleHibernateKey=ignore\n"
+        "HandleLidSwitch=ignore\n"
+        "HandleLidSwitchExternalPower=ignore\n"
+        "HandleLidSwitchDocked=ignore\n",
+        mode=0o644,
+    )
+
+
+def _prepare_system_kiosk_policy() -> None:
+    if not RFKILL_EXECUTABLE.is_file() or not os.access(RFKILL_EXECUTABLE, os.X_OK):
+        raise DisplayPlatformPreparationError("Ubuntu kiosk-baseline mangler /usr/sbin/rfkill")
+    _run([str(RFKILL_EXECUTABLE), "block", "bluetooth"], timeout=30)
+    _run(["/usr/bin/systemctl", "mask", *SLEEP_TARGETS], timeout=30)
+    _prepare_logind_kiosk_policy()
+
+
 def _prepare_graphical_kiosk(kiosk_user: str) -> bool:
     try:
         record = pwd.getpwnam(kiosk_user)
@@ -357,6 +553,10 @@ def _prepare_graphical_kiosk(kiosk_user: str) -> bool:
     gdm_changed = _prepare_gdm(kiosk_user)
     _prepare_accounts_service(kiosk_user)
     _prepare_gnome_settings(kiosk_user, home)
+    _prepare_kiosk_autostarts(home, uid=record.pw_uid, gid=record.pw_gid)
+    _prepare_kiosk_application_lockdown(home, uid=record.pw_uid, gid=record.pw_gid)
+    _prepare_kiosk_binary_acl(kiosk_user)
+    _prepare_kiosk_polkit_policy(kiosk_user)
     return gdm_changed
 
 
@@ -387,12 +587,14 @@ def prepare() -> None:
         raise DisplayPlatformPreparationError("Google Chrome-installation etablerede uventet et aktivt APT-repository")
     if not _repo_opt_out_is_false():
         raise DisplayPlatformPreparationError("Google Chrome-installation ændrede repo opt-out")
-    gdm_changed = _prepare_graphical_kiosk(kiosk_user)
-    if gdm_changed:
-        # First activation happens on an already booted Ubuntu system. Restart
-        # (which also starts an inactive unit) makes the newly written autologin
-        # configuration effective before Display readiness can succeed.
-        _run(["/usr/bin/systemctl", "restart", "gdm3"], timeout=60)
+    # Materialize the canonical GDM/autologin configuration without restarting
+    # the display manager inside the activation transaction. Restarting gdm3
+    # would terminate the interactive kiosk session that may be running the
+    # installer itself. The configuration becomes authoritative on the next
+    # controlled reboot, while the current approved kiosk session can complete
+    # activation and runtime health checks without self-termination.
+    _prepare_graphical_kiosk(kiosk_user)
+    _prepare_system_kiosk_policy()
 
 
 def main() -> int:

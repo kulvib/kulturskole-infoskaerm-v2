@@ -34,12 +34,13 @@ ClientFlow 1.3.0 er den fysisk godkendte historiske bootstrap-baseline for den s
 3. Kør `install` som root med **samme private bootstrap-filer**, bundle-SHA-256, backend-origin, enrollmentkode og kioskbruger:
 
    ```bash
-   sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" install \
-     --bundle "$BOOTSTRAP_BUNDLE" \
-     --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
-     --backend-url https://<backend-origin> \
-     --enrollment-code <one-time-code> \
-     --kiosk-user <kiosk-user>
+   printf '%s\n%s\n' "$ENROLLMENT_CODE" "$FRESH_INSTALL_AUTHORIZATION" |
+     sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" install \
+       --bundle "$BOOTSTRAP_BUNDLE" \
+       --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
+       --backend-url https://<backend-origin> \
+       --fresh-install-authority-stdin \
+       --kiosk-user <kiosk-user>
    ```
 
 4. Installeren afviser alle eksisterende ClientFlow-spor. En geninstallation kræver den separate wipe-procedure med eksakt destruktiv bekræftelse.
@@ -67,6 +68,8 @@ sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \
 ```
 
 Staging gemmer bundle SHA-256/size, candidate SHA-256, source commit og release-approval reference i root-ejet release-state. Aktivering afvises, hvis state, staged manifest og den eksplicit forventede release-approval ikke matcher. Først derefter opdateres systemd-definitioner, det atomiske `active`-symlink skiftes, `clientflow.target` startes og health checks gennemføres. Fejl udløser automatisk rollback.
+
+Den canonical kiosk-baseline bruger Google Chrome `--start-fullscreen` og aldrig Chrome `--kiosk`. Den håndhæver GDM autologin/Wayland, ingen idle-lock/screensaver/suspend/dim, Bluetooth off, ingen kiosk-user update/crash popups samt Europe/Copenhagen + NTP. For kiosk-brugeren skjules og ACL-blokeres lokale Settings/Terminal/package/network/Bluetooth-administrationsapps, og en kiosk-user-only polkit-regel afviser privilegerede systemændringer. `cfadmin`, root og ClientFlow-domænebrugere rammes ikke; logout/user-switch bevares, så `cfadmin` fortsat kan vælges. GDM/logind skiftes ikke live under activation; efter grøn activation udføres én kontrolleret reboot før reconnect-validering.
 
 ## Eksplicit wipe
 

@@ -102,6 +102,8 @@ def test_ubuntu_2604_host_requirement_is_release_bound(monkeypatch, tmp_path):
     packages = {row["package"] for row in rows}
     assert {
         "acl",
+        "rfkill",
+        "polkitd",
         "python3-gi",
         "dbus",
         "libglib2.0-bin",
@@ -122,7 +124,7 @@ def test_platform_probe_uses_system_python_and_all_frozen_capture_capabilities()
     assert "RUNTIME_PYTHON" not in source
     for executable in (
         "/usr/bin/setfacl", "/usr/bin/setpriv", "/usr/bin/loginctl", "/usr/bin/gdbus",
-        "/usr/bin/gsettings", "/usr/bin/dbus-run-session",
+        "/usr/bin/gsettings", "/usr/bin/dbus-run-session", "/usr/sbin/rfkill", "/usr/bin/timedatectl",
     ):
         assert executable in source
     for element in (
@@ -269,5 +271,21 @@ def test_local_clientflow_gui_is_release_owned_and_readiness_gated():
 def test_first_activation_restarts_gdm_only_when_autologin_config_changes():
     prepare = (ROOT / "client/runtime/clientflow_runtime/display_platform_prepare.py").read_text(encoding="utf-8")
     assert 'def _prepare_gdm' in prepare and '-> bool' in prepare
-    assert 'if gdm_changed:' in prepare
-    assert '["/usr/bin/systemctl", "restart", "gdm3"]' in prepare
+    assert '["/usr/bin/systemctl", "restart", "gdm3"]' not in prepare
+    assert 'activation transaction' in prepare
+
+
+def test_platform_prepare_enforces_backend_time_integrity_contract(monkeypatch):
+    calls = []
+    responses = iter(["UTC\n", "yes\n"])
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if command[-3:] == ["show", "--property=Timezone", "--value"]:
+            return next(responses)
+        if command[-3:] == ["show", "--property=NTP", "--value"]:
+            return next(responses)
+        return ""
+    monkeypatch.setattr(platform_prepare, "_run", fake_run)
+    platform_prepare._prepare_time_integrity()
+    assert ["/usr/bin/timedatectl", "set-timezone", "Europe/Copenhagen"] in calls
+    assert ["/usr/bin/timedatectl", "set-ntp", "true"] in calls
