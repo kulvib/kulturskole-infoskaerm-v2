@@ -21,14 +21,14 @@ ClientFlow 1.3.0 er den fysisk godkendte historiske bootstrap-baseline for den s
 
 ## Fresh-install flow
 
-1. Åbn approved bundle-pathen én gang i den canonical host-bootstrap, verificér den åbne filidentitet mod den eksternt kendte whole-bundle SHA-256, og udtræk installer-memberen fra **samme åbne bundle**. Materialisér både bundle og installer som root-owned private copies under `/run`. Se `CLIENTFLOW_RELEASE_PROCEDURE.md` for den canonical blok.
+1. Kør den canonical host-bootstrap i **samme shell** som den genererede fresh-install download-handoff. Genbrug handoffens allerede eksporterede `BUNDLE` og `APPROVED_BUNDLE_SHA256`; de må ikke indtastes manuelt igen. Bootstrap åbner approved bundle-pathen én gang, verificerer den åbne filidentitet mod den pinned whole-bundle SHA-256 og udtrækker installer-memberen fra **samme åbne bundle**. Materialisér både bundle og installer som root-owned private copies under `/run`. En bootstrap-fejl må ikke lukke den interaktive shell, fordi de transient enrollment-authorities skal bevares til exact retry/diagnose. Se `CLIENTFLOW_RELEASE_PROCEDURE.md` for den canonical blok.
 
 2. Kør derefter kun den private root-owned installer-copy i Python isolated mode og verificér den private bundle-copy gennem installerens egen release-parser:
 
    ```bash
    sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" verify \
      --bundle "$BOOTSTRAP_BUNDLE" \
-     --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256>
+     --expected-bundle-sha256 "$APPROVED_BUNDLE_SHA256"
    ```
 
 3. Kør `install` som root med **samme private bootstrap-filer**, bundle-SHA-256, backend-origin, enrollmentkode og kioskbruger:
@@ -37,7 +37,7 @@ ClientFlow 1.3.0 er den fysisk godkendte historiske bootstrap-baseline for den s
    printf '%s\n%s\n' "$ENROLLMENT_CODE" "$FRESH_INSTALL_AUTHORIZATION" |
      sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" install \
        --bundle "$BOOTSTRAP_BUNDLE" \
-       --expected-bundle-sha256 <APPROVED_BUNDLE_SHA256> \
+       --expected-bundle-sha256 "$APPROVED_BUNDLE_SHA256" \
        --backend-url https://<backend-origin> \
        --fresh-install-authority-stdin \
        --kiosk-user <kiosk-user>

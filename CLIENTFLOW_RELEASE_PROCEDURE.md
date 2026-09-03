@@ -118,23 +118,30 @@ The approved bundle SHA-256 is the external trust anchor. The fresh installer is
 
 The physical handoff must therefore keep one concrete bundle file identity open while it hashes that file, reads `manifest.json`, and extracts the embedded installer. The extracted installer and an exact copy of the approved bundle are materialized into a new root-owned private directory under `/run`; installer code is first executed from that private copy, never from a user-writable build/download pathname.
 
-Run the following as one uninterrupted Bash block. `BUNDLE` is the exact artifact obtained through the approved fresh-install download handoff, and `APPROVED_BUNDLE_SHA256` is the whole-bundle trust anchor carried by that authorization. No ClientFlow installer code runs inside the bootstrap block; it uses only host `bash`, `sha256sum`, `tar`, `python3`, `stat`, `cmp`, and filesystem primitives:
+Run the following as one uninterrupted Bash block in the **same shell** that successfully ran `clientflow_fresh_install_download`. The block reuses the already-exported `BUNDLE` and `APPROVED_BUNDLE_SHA256`; do not retype either value. A bootstrap validation failure returns from the helper instead of exiting the interactive shell, so the transient enrollment authorities remain available for an exact retry/diagnosis. No ClientFlow installer code runs inside the bootstrap block; it uses only host `bash`, `sha256sum`, `tar`, `python3`, `stat`, `cmp`, and filesystem primitives:
 
 ```bash
-BUNDLE="/path/to/downloaded-approved-bundle.tar"
-APPROVED_BUNDLE_SHA256='<APPROVED_BUNDLE_SHA256>'
+clientflow_materialize_fresh_bootstrap() {
+  # These values were already pinned by clientflow_fresh_install_download in
+  # this same shell. Do not retype or replace either trust value here.
+  test -n "${BUNDLE:-}" || { echo "BUNDLE mangler fra fresh-install handoff" >&2; return 1; }
+  test -n "${APPROVED_BUNDLE_SHA256:-}" || {
+    echo "APPROVED_BUNDLE_SHA256 mangler fra fresh-install handoff" >&2
+    return 1
+  }
 
-BOOTSTRAP_DIR="$(
-  sudo /usr/bin/mktemp -d /run/clientflow-fresh-install.XXXXXXXX
-)"
-sudo /usr/bin/chown root:root "$BOOTSTRAP_DIR"
-sudo /usr/bin/chmod 0700 "$BOOTSTRAP_DIR"
+  BOOTSTRAP_DIR="$(
+    sudo /usr/bin/mktemp -d /run/clientflow-fresh-install.XXXXXXXX
+  )" || return 1
+  sudo /usr/bin/chown root:root "$BOOTSTRAP_DIR" || return 1
+  sudo /usr/bin/chmod 0700 "$BOOTSTRAP_DIR" || return 1
 
-mapfile -t BOOTSTRAP_RESULT < <(
-  sudo /usr/bin/bash -s -- \
-    "$BUNDLE" \
-    "$APPROVED_BUNDLE_SHA256" \
-    "$BOOTSTRAP_DIR" <<'CLIENTFLOW_BOOTSTRAP'
+  BOOTSTRAP_RESULT=()
+  mapfile -t BOOTSTRAP_RESULT < <(
+    sudo /usr/bin/bash -s -- \
+      "$BUNDLE" \
+      "$APPROVED_BUNDLE_SHA256" \
+      "$BOOTSTRAP_DIR" <<'CLIENTFLOW_BOOTSTRAP'
 set -euo pipefail
 
 BUNDLE_PATH=$1
@@ -207,18 +214,28 @@ printf '%s\n' "$RELEASE_ID"
 printf '%s\n' "$PRIVATE_BUNDLE"
 printf '%s\n' "$PRIVATE_INSTALLER"
 CLIENTFLOW_BOOTSTRAP
-)
+  )
 
-test "${#BOOTSTRAP_RESULT[@]}" -eq 3
-BOOTSTRAP_RELEASE_ID="${BOOTSTRAP_RESULT[0]}"
-BOOTSTRAP_BUNDLE="${BOOTSTRAP_RESULT[1]}"
-BOOTSTRAP_INSTALLER="${BOOTSTRAP_RESULT[2]}"
+  test "${#BOOTSTRAP_RESULT[@]}" -eq 3 || return 1
+  BOOTSTRAP_RELEASE_ID="${BOOTSTRAP_RESULT[0]}"
+  BOOTSTRAP_BUNDLE="${BOOTSTRAP_RESULT[1]}"
+  BOOTSTRAP_INSTALLER="${BOOTSTRAP_RESULT[2]}"
 
-test "$BOOTSTRAP_BUNDLE" = "$BOOTSTRAP_DIR/clientflow-approved.tar"
-case "$BOOTSTRAP_INSTALLER" in
-  "$BOOTSTRAP_DIR"/clientflow-installer-*.pyz) ;;
-  *) echo "Ugyldig materialiseret installersti" >&2; exit 1 ;;
-esac
+  test "$BOOTSTRAP_BUNDLE" = "$BOOTSTRAP_DIR/clientflow-approved.tar" || return 1
+  case "$BOOTSTRAP_INSTALLER" in
+    "$BOOTSTRAP_DIR"/clientflow-installer-*.pyz) ;;
+    *) echo "Ugyldig materialiseret installersti" >&2; return 1 ;;
+  esac
+}
+
+if clientflow_materialize_fresh_bootstrap; then
+  unset -f clientflow_materialize_fresh_bootstrap
+  printf '%s\n' 'Fresh-install bootstrap materialized from the pinned handoff.'
+else
+  BOOTSTRAP_RC=$?
+  unset -f clientflow_materialize_fresh_bootstrap
+  printf '%s\n' 'STOP: fresh-install bootstrap failed; keep this shell open and clean the private bootstrap directory.' >&2
+fi
 ```
 
 If any check fails, remove the private bootstrap directory and do not run installer code:
