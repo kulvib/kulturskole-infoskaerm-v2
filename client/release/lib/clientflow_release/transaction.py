@@ -1031,7 +1031,14 @@ def activate_release(
             release_id,
             expected_approval_reference=expected_release_approval_reference,
         )
-        if _read_active_release_id(layout) is None:
+        # Fresh first-activation authorization is a durable lifecycle property,
+        # not a filesystem-symlink property.  During crash recovery the target
+        # symlink may already point at the staged release while active_release_id
+        # is still uncommitted.  Re-prove backend approval on every such resume
+        # before any further local activation mutation.  In-place updates retain
+        # their separate update authorization plane because they start with a
+        # durably active previous release.
+        if state.get("active_release_id") is None:
             if first_activation_authorizer is None:
                 raise TransactionError(
                     "Fresh first activation kræver et backend-approved client proof før lokal mutation"
