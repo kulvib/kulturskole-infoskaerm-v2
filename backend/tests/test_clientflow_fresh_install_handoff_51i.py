@@ -4,6 +4,8 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
+import subprocess
 import sys
 import tarfile
 
@@ -127,3 +129,37 @@ def test_51i_canonical_handoff_uses_pinned_bundle_and_private_root_bootstrap():
 
     assert 'parser.add_argument("--installer"' not in approval
     assert "read_bundle_artifact_regions_fd" in approval
+
+
+def _section5_bootstrap_block(procedure: str) -> str:
+    section = procedure.split("## 5. Materialize a pinned fresh-install bootstrap before executing installer code", 1)[1]
+    section = section.split("## 6. Fresh installation", 1)[0]
+    match = re.search(r"```bash\n(.*?)\n```", section, re.DOTALL)
+    assert match is not None
+    return match.group(1)
+
+
+def test_51i_bootstrap_reuses_handoff_trust_values_and_preserves_interactive_shell():
+    procedure = (ROOT / "CLIENTFLOW_RELEASE_PROCEDURE.md").read_text(encoding="utf-8")
+    block = _section5_bootstrap_block(procedure)
+
+    assert 'BUNDLE="/path/to/downloaded-approved-bundle.tar"' not in block
+    assert "APPROVED_BUNDLE_SHA256='<APPROVED_BUNDLE_SHA256>'" not in block
+    assert 'test -n "${BUNDLE:-}"' in block
+    assert 'test -n "${APPROVED_BUNDLE_SHA256:-}"' in block
+    assert "clientflow_materialize_fresh_bootstrap() {" in block
+    assert '*) echo "Ugyldig materialiseret installersti" >&2; return 1 ;;' in block
+
+    # exit(1) is valid only inside the deliberately isolated root child shell.
+    outer = block.split("<<'CLIENTFLOW_BOOTSTRAP'", 1)[0] + block.split("CLIENTFLOW_BOOTSTRAP", 2)[-1]
+    assert "exit 1" not in outer
+
+    result = subprocess.run(
+        ["/usr/bin/bash", "-n"],
+        input=block,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
