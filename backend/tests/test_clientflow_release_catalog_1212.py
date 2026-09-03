@@ -63,7 +63,7 @@ def test_catalog_1215_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1215_matches_promoted_source_1314_1215() -> None:
+def test_catalog_1215_allows_source_build_1315_1216_before_promotion() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -73,13 +73,14 @@ def test_catalog_1215_matches_promoted_source_1314_1215() -> None:
     )
     source_sequence = int(release_input["release_sequence"])
 
-    # Promotion happens only after executable Ubuntu 26.04 gates, reproducible
-    # build, manual approval, immutable publication and independent 51M
-    # verification. Source/build and runtime catalog now share one identity.
-    assert source_version == "1.3.14"
-    assert source_sequence == 1215
+    # A new source/build identity is allowed to move exactly one release ahead
+    # while candidate build, manual approval, immutable publication and 51M
+    # verification are still pending. The runtime catalog remains on the last
+    # approved immutable release until explicit promotion.
+    assert source_version == "1.3.15"
+    assert source_sequence == 1216
     assert data["catalog_sequence"] == 1215
-    assert data["catalog_sequence"] == source_sequence
+    assert source_sequence == data["catalog_sequence"] + 1
     assert data["latest_stable"] == "1.3.14"
     assert data["default_install_version"] == "1.3.14"
     assert release["version"] == "1.3.14"
