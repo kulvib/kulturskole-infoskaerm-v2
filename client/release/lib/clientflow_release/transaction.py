@@ -446,6 +446,10 @@ def stage_bundle(
         # reopen or payload-sized memory copy participates in staging.
         with TransactionLock(layout):
             state = load_state(layout)
+            if state.get("activation_intent") is not None:
+                raise TransactionError(
+                    "Ny release kan ikke stages, mens en activation transaction er uafsluttet"
+                )
             sequence = int(manifest["release_sequence"])
             highest = int(state.get("highest_release_sequence") or 0)
             installed = state.setdefault("installed", {})
