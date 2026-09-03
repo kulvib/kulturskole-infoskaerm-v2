@@ -60,6 +60,11 @@ def test_first_activation_requires_backend_approval_proof_before_local_activatio
         "_activate_release",
         lambda *_args, **_kwargs: pytest.fail("local activation must not start without backend approval proof"),
     )
+    monkeypatch.setattr(
+        transaction,
+        "_enable_stable_updater_timer",
+        lambda *_args, **_kwargs: pytest.fail("updater timer must not start before backend approval proof"),
+    )
 
     with pytest.raises(TransactionError, match="backend-approved"):
         transaction.activate_release(
@@ -102,6 +107,35 @@ def test_first_activation_runs_proof_before_mutation_and_updates_skip_fresh_gate
     )
     assert result["status"] == "active"
     assert calls == ["activate"]
+
+
+def test_pending_updater_timer_requires_exact_disabled_inactive(monkeypatch):
+    states = {
+        "is-enabled": ("disabled\n", 1),
+        "is-active": ("inactive\n", 3),
+    }
+
+    def fake_run(command, **_kwargs):
+        action = command[1]
+        stdout, returncode = states[action]
+        return installer_cli.subprocess.CompletedProcess(
+            command,
+            returncode,
+            stdout=stdout,
+        )
+
+    monkeypatch.setattr(installer_cli.subprocess, "run", fake_run)
+
+    installer_cli._validate_pending_updater_timer_state()
+
+    states["is-enabled"] = ("enabled\n", 0)
+    with pytest.raises(RuntimeError, match="disabled og inactive"):
+        installer_cli._validate_pending_updater_timer_state()
+
+    states["is-enabled"] = ("disabled\n", 1)
+    states["is-active"] = ("failed\n", 3)
+    with pytest.raises(RuntimeError, match="disabled og inactive"):
+        installer_cli._validate_pending_updater_timer_state()
 
 
 def test_systemd_runtime_entrypoints_are_all_in_relocation_inventory(tmp_path):

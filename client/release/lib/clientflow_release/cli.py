@@ -377,16 +377,30 @@ def _validate_stable_updater_install(layout: Layout, release_id: str) -> None:
             raise RuntimeError("clientflow-updater systembruger mangler") from exc
         if account.pw_uid == 0:
             raise RuntimeError("clientflow-updater må ikke være root")
-        enabled = subprocess.run(
-            ["/usr/bin/systemctl", "is-enabled", "--quiet", "clientflow-updater.timer"],
-            check=False,
+        _validate_pending_updater_timer_state()
+
+
+def _validate_pending_updater_timer_state() -> None:
+    enabled = subprocess.run(
+        ["/usr/bin/systemctl", "is-enabled", "clientflow-updater.timer"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    active = subprocess.run(
+        ["/usr/bin/systemctl", "is-active", "clientflow-updater.timer"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    enabled_state = enabled.stdout.strip()
+    active_state = active.stdout.strip()
+    if enabled_state != "disabled" or active_state != "inactive":
+        raise RuntimeError(
+            "Stable updater-timer skal være disabled og inactive før backend-godkendt first activation"
         )
-        active = subprocess.run(
-            ["/usr/bin/systemctl", "is-active", "--quiet", "clientflow-updater.timer"],
-            check=False,
-        )
-        if enabled.returncode != 0 or active.returncode != 0:
-            raise RuntimeError("Stable updater-timer er ikke enabled og aktiv")
 
 
 def _prove_backend_client_approved(layout: Layout) -> None:
