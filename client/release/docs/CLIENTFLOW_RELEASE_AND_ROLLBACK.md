@@ -143,7 +143,7 @@ sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" verify \
 
 `/opt/clientflow/active` er et atomisk active-symlink til den valgte immutable release. Staging bruger én pinned bundle-identitet og persisterer whole-bundle SHA-256/size, candidate SHA-256, source commit og immutable release-approval reference i release-state. Under fresh-install `pending_manual_activation` er updater-hostens bytes og definitionsfiler materialiseret, men `clientflow-updater.timer` er eksplicit disabled/inactive, så en backend-pending update credential ikke poll'es som en systemd-fejl.
 
-Aktivering kræver `--expected-release-approval-reference`, som skal matche artifactets allerede bundne approval-reference; operatøren kan ikke omskrive provenance ved activation. First activation kræver desuden eksisterende backend approval-proof før lokal mutation. Derefter opdateres managed systemd/sysusers/tmpfiles-definitioner, target startes og health checks køres. Kun når first activation har bestået runtime health, aktiveres den stabile updater-timer. Dermed åbnes update-chain efter backend approval og efter en sund lokal runtime, mens in-place updates fortsat bruger den allerede aktive stabile updater-plane.
+Aktivering kræver `--expected-release-approval-reference`, som skal matche artifactets allerede bundne approval-reference; operatøren kan ikke omskrive provenance ved activation. First activation kræver desuden eksisterende backend approval-proof før lokal mutation. Derefter opdateres managed systemd/sysusers/tmpfiles-definitioner, og target startes midlertidigt **uden boot-enablement** til health checks. Først når health-resultatet er gemt durably under den eksakte `activation_intent`, må `clientflow.target` enable's for næste boot. Et abrupt crash/power-loss før den durable health-grænse kan derfor ikke autostarte en uverificeret target-release. Kun når first activation har bestået denne runtime-health-grænse, aktiveres den stabile updater-timer. Dermed åbnes update-chain efter backend approval og efter en sund lokal runtime, mens in-place updates fortsat bruger den allerede aktive stabile updater-plane.
 
 ## Automatisk rollback
 
@@ -152,8 +152,8 @@ Hvis en ny aktivering fejler:
 1. Target stoppes.
 2. Tidligere definitionssæt gendannes.
 3. `active`-symlink skiftes tilbage.
-4. Tidligere target startes.
-5. Health checks køres på den gendannede release.
+4. Tidligere target startes midlertidigt uden boot-enablement.
+5. Health checks køres på den gendannede release og gemmes durably, før target igen må enable's til reboot.
 6. Ved fejlet first activation uden tidligere aktiv release gendannes staged/pending-state med updater-timeren disabled/inactive.
 7. Resultatet skrives i det root-ejede transaktionsstate.
 

@@ -746,8 +746,15 @@ def _quiesce_runtime(layout: Layout, *, require_target: bool = True) -> None:
 
 def _start_target(layout: Layout) -> None:
     if layout.root == Path("/"):
-        _run(["/usr/bin/systemctl", "enable", "clientflow.target"])
+        # Activation health must run without making the target persistent across
+        # reboot.  Boot enablement is a later lifecycle step after health has
+        # been durably recorded in activation_intent/history.
         _run(["/usr/bin/systemctl", "start", "clientflow.target"])
+
+
+def _enable_target(layout: Layout) -> None:
+    if layout.root == Path("/"):
+        _run(["/usr/bin/systemctl", "enable", "clientflow.target"])
 
 
 def _disable_target(layout: Layout) -> None:
@@ -927,12 +934,42 @@ def _activate_release(
         _start_target(layout)
         manifest = json.loads((release_root / "release-manifest.json").read_text())
         _health_check(layout, release_id, timeout=int(manifest["activation"]["health_timeout_seconds"]))
+
+        # A power-loss after systemctl enable but before activation commit must
+        # never make an unverified target boot automatically.  Persist the
+        # successful health boundary first while activation_intent still binds
+        # the exact release/approval/previous state.  Only then may boot wiring
+        # become persistent.
+        intent["health_verified_at"] = _now()
+        _append_history(
+            state,
+            "activation_health_verified",
+            release_id=release_id,
+            previous_release_id=previous,
+            release_approval_reference=release_approval_reference,
+        )
+        save_state(layout, state)
+        _enable_target(layout)
         if previous is None:
             # First activation is the lifecycle boundary that opens update auth.
             # Keep the stable updater stopped through backend approval proof,
             # release swap and runtime health; only a healthy first activation
             # may begin polling the canonical update control plane.
             _enable_stable_updater_timer(layout)
+
+        state["previous_release_id"] = previous
+        state["active_release_id"] = release_id
+        state["staged_release_id"] = None
+        state["activation_intent"] = None
+        installed[release_id]["activated_at"] = _now()
+        _append_history(
+            state,
+            "activated",
+            release_id=release_id,
+            previous_release_id=previous,
+            release_approval_reference=release_approval_reference,
+        )
+        save_state(layout, state)
     except Exception as activation_error:
         _quiesce_runtime(layout)
         try:
@@ -943,6 +980,14 @@ def _activate_release(
                 _systemd_prepare(layout)
                 _start_target(layout)
                 _health_check(layout, previous, timeout=120)
+                _append_history(
+                    state,
+                    "rollback_health_verified",
+                    failed_release_id=release_id,
+                    restored_release_id=previous,
+                )
+                save_state(layout, state)
+                _enable_target(layout)
             else:
                 _restore_pending_first_activation(layout, release_root)
         except Exception as rollback_error:
@@ -967,19 +1012,6 @@ def _activate_release(
         )
         save_state(layout, state)
         raise TransactionError("Aktivering fejlede; tidligere release blev automatisk gendannet") from activation_error
-    state["previous_release_id"] = previous
-    state["active_release_id"] = release_id
-    state["staged_release_id"] = None
-    state["activation_intent"] = None
-    installed[release_id]["activated_at"] = _now()
-    _append_history(
-        state,
-        "activated",
-        release_id=release_id,
-        previous_release_id=previous,
-        release_approval_reference=release_approval_reference,
-    )
-    save_state(layout, state)
     return {"status": "active", "release_id": release_id, "previous_release_id": previous}
 
 
