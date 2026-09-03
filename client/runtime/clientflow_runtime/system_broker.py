@@ -30,6 +30,8 @@ STATE_DIR = Path(os.getenv("CLIENTFLOW_SYSTEM_BROKER_STATE_DIR", "/var/lib/clien
 JOURNAL_PATH = STATE_DIR / "command-journal.json"
 JOURNAL_LOCK_PATH = STATE_DIR / "command-journal.lock"
 JOURNAL_RETENTION_SECONDS = 90 * 24 * 60 * 60
+BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
+BOOT_BOUNDARY_ACTIONS = frozenset({"reboot", "shutdown"})
 
 ALLOWED_ACTIONS = frozenset({
     "update_os",
@@ -203,6 +205,14 @@ def _ensure_state_dir() -> None:
     os.chmod(STATE_DIR, 0o700)
 
 
+def _current_boot_id() -> str:
+    try:
+        raw = BOOT_ID_PATH.read_text(encoding="ascii").strip()
+        return str(uuid.UUID(raw))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise SystemCommandInDoubt("system_boot_id_unavailable") from exc
+
+
 def _journal_begin(client_id: int, command_id: str, action: str) -> tuple[int, dict[str, Any] | None]:
     _ensure_state_dir()
     lock_fd = os.open(JOURNAL_LOCK_PATH, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
@@ -217,6 +227,26 @@ def _journal_begin(client_id: int, command_id: str, action: str) -> tuple[int, d
                 raise SystemCommandInDoubt("system_command_binding_mismatch")
             if existing.get("state") == "completed" and isinstance(existing.get("result"), dict):
                 return lock_fd, dict(existing["result"])
+            if existing.get("state") == "started" and action in BOOT_BOUNDARY_ACTIONS:
+                previous_boot_id = str(existing.get("boot_id") or "")
+                current_boot_id = _current_boot_id()
+                if previous_boot_id and previous_boot_id != current_boot_id:
+                    result = {
+                        "exit_code": 0,
+                        "recovered_after_boot_change": True,
+                        "previous_boot_id": previous_boot_id,
+                        "observed_boot_id": current_boot_id,
+                    }
+                    existing.update(
+                        {
+                            "state": "completed",
+                            "result": result,
+                            "updated_at": now,
+                        }
+                    )
+                    journal[key] = existing
+                    atomic_write_json(JOURNAL_PATH, journal, mode=0o600)
+                    return lock_fd, dict(result)
             raise SystemCommandInDoubt("system_command_in_doubt")
         journal[key] = {
             "client_id": client_id,
@@ -224,6 +254,7 @@ def _journal_begin(client_id: int, command_id: str, action: str) -> tuple[int, d
             "action": action,
             "state": "started",
             "updated_at": now,
+            **({"boot_id": _current_boot_id()} if action in BOOT_BOUNDARY_ACTIONS else {}),
         }
         atomic_write_json(JOURNAL_PATH, journal, mode=0o600)
         return lock_fd, None
