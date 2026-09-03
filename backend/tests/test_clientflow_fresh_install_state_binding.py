@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 import io
+import json
 import sys
 
 import pytest
@@ -243,3 +244,130 @@ def test_first_claim_precedes_release_staging_and_managed_definitions():
     assert claim_index < install.index("install_staged_definitions(", claim_index)
     assert "except EnrollmentHTTPError as exc:" in install
     assert "_cleanup_new_install_preclaim_state(layout, install_id=install_id)" in install
+
+
+def _write_pending_install_state(tmp_path: Path) -> None:
+    state_path = tmp_path / "var/lib/clientflow/release/install-state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": installer_cli.INSTALL_STATE_SCHEMA,
+                "fresh_install_binding": BINDING,
+                "install_id": "pending-resume-install-id",
+                "backend_url": "https://display.example.invalid",
+                "kiosk_user": "kiosk",
+                "status": "pending_manual_activation",
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_path.chmod(0o600)
+
+
+def _patch_existing_install_bundle(monkeypatch) -> None:
+    manifest = {
+        "release_id": BINDING["release_id"],
+        "version": BINDING["version"],
+        "release_sequence": BINDING["release_sequence"],
+        "release_approval": {
+            "reference": BINDING["release_approval_reference"],
+            "candidate_sha256": BINDING["release_candidate_sha256"],
+        },
+        "source": {"commit": BINDING["source_commit"], "dirty": False},
+    }
+    monkeypatch.setattr(
+        installer_cli,
+        "_verify_expected_bundle_identity",
+        lambda *_args, **_kwargs: (BINDING["bundle_size"], BINDING["bundle_sha256"]),
+    )
+    monkeypatch.setattr(
+        installer_cli,
+        "verify_bundle",
+        lambda *_args, **_kwargs: (manifest, BINDING["bundle_size"], BINDING["bundle_sha256"]),
+    )
+
+
+def test_pending_install_resume_rejects_active_release_before_updater_mutation(monkeypatch, tmp_path):
+    _write_pending_install_state(tmp_path)
+    _patch_existing_install_bundle(monkeypatch)
+    monkeypatch.setattr(
+        installer_cli,
+        "status",
+        lambda _layout: {
+            "active_release_id": BINDING["release_id"],
+            "active_symlink_release_id": BINDING["release_id"],
+            "activation_intent": None,
+        },
+    )
+    monkeypatch.setattr(
+        installer_cli,
+        "install_stable_updater_host",
+        lambda *_args, **_kwargs: pytest.fail(
+            "post-activation install resume must reject before updater mutation"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="allerede aktiveret eller igangværende activation"):
+        installer_cli.install_fresh(_fresh_install_args(tmp_path))
+
+
+def test_pending_install_resume_rejects_committed_activation_intent_before_updater_mutation(
+    monkeypatch, tmp_path
+):
+    _write_pending_install_state(tmp_path)
+    _patch_existing_install_bundle(monkeypatch)
+    monkeypatch.setattr(
+        installer_cli,
+        "status",
+        lambda _layout: {
+            "active_release_id": None,
+            "active_symlink_release_id": None,
+            "activation_intent": {
+                "release_id": BINDING["release_id"],
+                "previous_release_id": None,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        installer_cli,
+        "install_stable_updater_host",
+        lambda *_args, **_kwargs: pytest.fail(
+            "activation-intent recovery must reject before updater mutation"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="allerede aktiveret eller igangværende activation"):
+        installer_cli.install_fresh(_fresh_install_args(tmp_path))
+
+
+def test_pending_install_resume_still_repairs_updater_host_when_release_is_inactive(
+    monkeypatch, tmp_path
+):
+    _write_pending_install_state(tmp_path)
+    _patch_existing_install_bundle(monkeypatch)
+    monkeypatch.setattr(
+        installer_cli,
+        "status",
+        lambda _layout: {
+            "active_release_id": None,
+            "active_symlink_release_id": None,
+            "activation_intent": None,
+        },
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        installer_cli,
+        "install_stable_updater_host",
+        lambda *_args, **_kwargs: calls.append("updater-host"),
+    )
+    monkeypatch.setattr(
+        installer_cli,
+        "_validate_inactive_install",
+        lambda *_args, **_kwargs: calls.append("validate-inactive"),
+    )
+
+    result = installer_cli.install_fresh(_fresh_install_args(tmp_path))
+
+    assert result["status"] == "pending_manual_activation"
+    assert calls == ["updater-host", "validate-inactive"]

@@ -56,6 +56,8 @@ ClientFlow 1.3.0 er den fysisk godkendte historiske bootstrap-baseline for den s
 
 Der er **ingen automatisk reboot**, ingen automatisk aktivering, ingen åbning af Terminal eller Remote Desktop, ingen start af en livestream og ingen updater-polling i `pending_manual_activation`.
 
+Hvis `install` genkøres som recovery, er det kun gyldigt så længe release-state stadig er pre-activation. En committed `activation_intent`, et aktivt release-ID eller et active-symlink afviser fresh-install resume før updater/systemd-mutation; derefter bruges activation/update-recovery i stedet.
+
 ## Manuel aktivering
 
 Aktivering er et separat trin. Efter claim står den nye klient fortsat som backend-`pending`; en superadmin skal først godkende præcis denne klient via den eksisterende backend approval-flow. First activation beviser derefter fail-closed backend-godkendelsen med installationens allerede provisionerede `status` credential, før active-symlink, systemd-definitioner eller services må ændres.

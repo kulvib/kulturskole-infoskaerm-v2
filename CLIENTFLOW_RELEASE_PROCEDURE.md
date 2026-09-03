@@ -266,6 +266,8 @@ Before the first claim request, the installer may persist only the minimum crash
 
 If the install command is interrupted after local install-state exists, rerun against the **same** bundle, backend and kiosk user. If the original one-time code/authorization are no longer available, those two options may be omitted only for recovery: the backend will resume without them **only if** the first claim had already committed a receipt whose resume-proof commitment matches the same install ID and exact release binding, while the original system/update keys still match. If consumption never committed, the retry is rejected instead of silently authorizing a different release.
 
+That `install` recovery applies only while the local release transaction is still pre-activation. Once an activation intent exists or an active release/symlink is present, rerunning fresh `install` is rejected **before** updater/systemd mutation; continue with the canonical activation/update recovery instead. This prevents a stale `pending_manual_activation` install-state from disabling or otherwise mutating the update plane of an already activated client.
+
 The fresh installer provisions the canonical domain/update credentials, immutable release files and rendered systemd definitions. It also materializes the stable updater host, but `clientflow-updater.timer` is explicitly kept `disabled` and `inactive`. It stops at `pending_manual_activation`. At this point the newly claimed client is still backend-pending, so its update credential is expected to remain backend-rejected and the client must not poll the update plane. A superadmin must approve that exact client through the existing canonical backend approval flow before local activation is attempted.
 
 ## 7. Manual activation
