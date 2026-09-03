@@ -5,6 +5,7 @@ Wants=network-online.target
 OnSuccess=clientflow-update-controller.service
 ConditionPathExists=/etc/clientflow/update/credential.json
 ConditionPathExists=/etc/clientflow/update/private-key.pem
+ConditionPathExists=/opt/clientflow/active
 
 [Service]
 Type=oneshot
