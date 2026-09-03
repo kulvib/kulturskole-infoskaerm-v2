@@ -560,6 +560,23 @@ def install_fresh(args: argparse.Namespace) -> dict:
             raise RuntimeError("Resume kræver præcis samme godkendte fresh-install release-binding")
         if install_state.get("backend_url") != backend_url or install_state.get("kiosk_user") != kiosk_user:
             raise RuntimeError("Resume kræver samme backend_url og kiosk-user som den oprindelige installation")
+
+        # Fresh-install resume owns only the pre-activation lifecycle.  The
+        # durable release transaction + active symlink become authoritative as
+        # soon as local activation starts.  Reject that state before
+        # install_stable_updater_host() can touch the updater timer or any other
+        # managed host state.
+        release_state = status(layout)
+        if (
+            release_state.get("active_release_id") is not None
+            or release_state.get("active_symlink_release_id") is not None
+            or release_state.get("activation_intent") is not None
+        ):
+            raise RuntimeError(
+                "Fresh install resume afviste en allerede aktiveret eller igangværende activation; "
+                "brug den canonical activation/update-recovery i stedet"
+            )
+
         if install_state.get("status") == "pending_manual_activation":
             install_stable_updater_host(release_id, layout=layout)
             _validate_inactive_install(layout, release_id)
