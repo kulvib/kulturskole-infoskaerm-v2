@@ -95,6 +95,94 @@ def test_exact_activation_intent_resumes_when_symlink_already_points_to_target(t
     assert state["active_release_id"] == release_id
 
 
+def test_target_boot_enablement_occurs_only_after_durable_health_boundary(tmp_path, monkeypatch):
+    release_id = "clientflow-1.3.12-seq-1213"
+    approval = f"{release_id}/approval"
+    layout = Layout(tmp_path / "root")
+    _release(layout, release_id)
+    state = _state(release_id, None)
+    order: list[str] = []
+
+    monkeypatch.setattr(transaction, "_read_active_release_id", lambda _layout: None)
+
+    def record_save(_layout, current_state):
+        intent = current_state.get("activation_intent")
+        if isinstance(intent, dict) and intent.get("health_verified_at"):
+            order.append("save-health-verified")
+        else:
+            order.append("save")
+
+    monkeypatch.setattr(transaction, "save_state", record_save)
+    monkeypatch.setattr(transaction, "_disable_target", lambda _layout: order.append("disable-target"))
+    monkeypatch.setattr(transaction, "_quiesce_runtime", lambda _layout: order.append("quiesce"))
+    monkeypatch.setattr(transaction, "_apply_definitions", lambda *_args, **_kwargs: order.append("definitions"))
+    monkeypatch.setattr(transaction, "_switch_active", lambda *_args, **_kwargs: order.append("switch"))
+    monkeypatch.setattr(transaction, "_systemd_prepare", lambda _layout: order.append("prepare"))
+    monkeypatch.setattr(transaction, "_start_target", lambda _layout: order.append("start-transient"))
+    monkeypatch.setattr(transaction, "_health_check", lambda *_args, **_kwargs: order.append("health"))
+    monkeypatch.setattr(transaction, "_enable_target", lambda _layout: order.append("enable-boot"))
+    monkeypatch.setattr(transaction, "_enable_stable_updater_timer", lambda _layout: order.append("updater"))
+
+    transaction._activate_release(layout, state, release_id, approval)
+
+    assert order.index("health") < order.index("save-health-verified") < order.index("enable-boot")
+    assert order.index("enable-boot") < order.index("updater")
+    assert state["activation_intent"] is None
+    assert state["active_release_id"] == release_id
+    assert any(event["event"] == "activation_health_verified" for event in state["history"])
+
+
+def test_abrupt_loss_before_health_commit_never_boot_enables_target(tmp_path, monkeypatch):
+    release_id = "clientflow-1.3.12-seq-1213"
+    approval = f"{release_id}/approval"
+    layout = Layout(tmp_path / "root")
+    _release(layout, release_id)
+    state = _state(release_id, None)
+    calls: list[str] = []
+
+    monkeypatch.setattr(transaction, "_read_active_release_id", lambda _layout: None)
+    monkeypatch.setattr(transaction, "save_state", lambda *_args, **_kwargs: calls.append("save"))
+    monkeypatch.setattr(transaction, "_disable_target", lambda _layout: calls.append("disable-target"))
+    monkeypatch.setattr(transaction, "_quiesce_runtime", lambda _layout: calls.append("quiesce"))
+    monkeypatch.setattr(transaction, "_apply_definitions", lambda *_args, **_kwargs: calls.append("definitions"))
+    monkeypatch.setattr(transaction, "_switch_active", lambda *_args, **_kwargs: calls.append("switch"))
+    monkeypatch.setattr(transaction, "_systemd_prepare", lambda _layout: calls.append("prepare"))
+    monkeypatch.setattr(transaction, "_start_target", lambda _layout: calls.append("start-transient"))
+    monkeypatch.setattr(transaction, "_enable_target", lambda _layout: calls.append("enable-boot"))
+
+    def abrupt_loss(*_args, **_kwargs):
+        calls.append("health-entered")
+        raise SystemExit("synthetic abrupt power/process loss")
+
+    monkeypatch.setattr(transaction, "_health_check", abrupt_loss)
+
+    with pytest.raises(SystemExit, match="abrupt"):
+        transaction._activate_release(layout, state, release_id, approval)
+
+    assert "start-transient" in calls
+    assert "health-entered" in calls
+    assert "enable-boot" not in calls
+    assert state["activation_intent"] is not None
+    assert state["active_release_id"] is None
+
+
+def test_start_and_boot_enable_are_separate_systemd_operations(monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        transaction,
+        "_run",
+        lambda command, **_kwargs: calls.append(list(command)),
+    )
+
+    transaction._start_target(Layout())
+    transaction._enable_target(Layout())
+
+    assert calls == [
+        ["/usr/bin/systemctl", "start", "clientflow.target"],
+        ["/usr/bin/systemctl", "enable", "clientflow.target"],
+    ]
+
+
 def test_first_activation_enables_updater_only_after_runtime_health(tmp_path, monkeypatch):
     release_id = "clientflow-1.3.12-seq-1213"
     approval = f"{release_id}/approval"
@@ -112,6 +200,7 @@ def test_first_activation_enables_updater_only_after_runtime_health(tmp_path, mo
     monkeypatch.setattr(transaction, "_systemd_prepare", lambda _layout: order.append("prepare"))
     monkeypatch.setattr(transaction, "_start_target", lambda _layout: order.append("start"))
     monkeypatch.setattr(transaction, "_health_check", lambda *_args, **_kwargs: order.append("health"))
+    monkeypatch.setattr(transaction, "_enable_target", lambda _layout: order.append("enable-target"))
     monkeypatch.setattr(transaction, "_enable_stable_updater_timer", lambda _layout: order.append("updater"))
 
     result = transaction._activate_release(layout, state, release_id, approval)
@@ -125,6 +214,7 @@ def test_first_activation_enables_updater_only_after_runtime_health(tmp_path, mo
         "prepare",
         "start",
         "health",
+        "enable-target",
         "updater",
     ]
 
