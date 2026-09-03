@@ -95,6 +95,40 @@ def test_exact_activation_intent_resumes_when_symlink_already_points_to_target(t
     assert state["active_release_id"] == release_id
 
 
+def test_first_activation_enables_updater_only_after_runtime_health(tmp_path, monkeypatch):
+    release_id = "clientflow-1.3.12-seq-1213"
+    approval = f"{release_id}/approval"
+    layout = Layout(tmp_path / "root")
+    _release(layout, release_id)
+    state = _state(release_id, None)
+    order: list[str] = []
+
+    monkeypatch.setattr(transaction, "_read_active_release_id", lambda _layout: None)
+    monkeypatch.setattr(transaction, "save_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(transaction, "_disable_target", lambda _layout: order.append("disable-target"))
+    monkeypatch.setattr(transaction, "_quiesce_runtime", lambda _layout: order.append("quiesce"))
+    monkeypatch.setattr(transaction, "_apply_definitions", lambda *_args, **_kwargs: order.append("definitions"))
+    monkeypatch.setattr(transaction, "_switch_active", lambda *_args, **_kwargs: order.append("switch"))
+    monkeypatch.setattr(transaction, "_systemd_prepare", lambda _layout: order.append("prepare"))
+    monkeypatch.setattr(transaction, "_start_target", lambda _layout: order.append("start"))
+    monkeypatch.setattr(transaction, "_health_check", lambda *_args, **_kwargs: order.append("health"))
+    monkeypatch.setattr(transaction, "_enable_stable_updater_timer", lambda _layout: order.append("updater"))
+
+    result = transaction._activate_release(layout, state, release_id, approval)
+
+    assert result["status"] == "active"
+    assert order == [
+        "disable-target",
+        "quiesce",
+        "definitions",
+        "switch",
+        "prepare",
+        "start",
+        "health",
+        "updater",
+    ]
+
+
 def test_activation_intent_rejects_different_release_or_approval(tmp_path):
     layout = Layout(tmp_path / "root")
     release_id = "clientflow-1.3.11-seq-1212"
@@ -117,7 +151,46 @@ def test_activation_intent_rejects_different_release_or_approval(tmp_path):
         )
 
 
-def test_failed_first_activation_restores_pending_definitions_and_updater_plane(tmp_path, monkeypatch):
+def test_stable_updater_host_materializes_but_disables_pending_timer(tmp_path, monkeypatch):
+    release_id = "clientflow-1.3.12-seq-1213"
+    layout = Layout(tmp_path / "root")
+    source = layout.releases / release_id / "release/updater/clientflow-updater.pyz"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"stable-updater-test")
+    source.chmod(0o555)
+    transaction.save_state(
+        layout,
+        {
+            "schema_version": transaction.STATE_SCHEMA,
+            "highest_release_sequence": 1213,
+            "active_release_id": None,
+            "previous_release_id": None,
+            "staged_release_id": release_id,
+            "activation_intent": None,
+            "installed": {release_id: {}},
+            "history": [],
+        },
+    )
+    timer_calls: list[str] = []
+    monkeypatch.setattr(
+        transaction,
+        "_disable_stable_updater_timer",
+        lambda _layout: timer_calls.append("disabled"),
+    )
+    monkeypatch.setattr(
+        transaction,
+        "_enable_stable_updater_timer",
+        lambda _layout: pytest.fail("pending updater host must not enable timer"),
+    )
+
+    result = transaction.install_stable_updater_host(release_id, layout=layout)
+
+    assert result["status"] == "stable_updater_host_installed"
+    assert layout.stable_updater_pyz.read_bytes() == b"stable-updater-test"
+    assert timer_calls == ["disabled"]
+
+
+def test_failed_first_activation_restores_pending_definitions_and_disables_updater_plane(tmp_path, monkeypatch):
     release_id = "clientflow-1.3.12-seq-1213"
     approval = f"{release_id}/approval"
     layout = Layout(tmp_path / "root")
@@ -134,10 +207,23 @@ def test_failed_first_activation_restores_pending_definitions_and_updater_plane(
     tmpfiles.parent.mkdir(parents=True)
     tmpfiles.write_text("d /var/lib/clientflow 0755 root root -\n", encoding="utf-8")
 
+    timer_calls: list[str] = []
+    monkeypatch.setattr(
+        transaction,
+        "_disable_stable_updater_timer",
+        lambda _layout: timer_calls.append("disabled"),
+    )
+    monkeypatch.setattr(
+        transaction,
+        "_enable_stable_updater_timer",
+        lambda _layout: pytest.fail("pending rollback must not enable updater timer"),
+    )
+
     layout.install_root.mkdir(parents=True, exist_ok=True)
     transaction.atomic_symlink(f"releases/{release_id}", layout.active)
     transaction._restore_pending_first_activation(layout, release_root)
 
+    assert timer_calls == ["disabled"]
     assert not (layout.active.exists() or layout.active.is_symlink())
     assert (layout.unit_root / "clientflow.target").is_file()
     assert (layout.unit_root / "clientflow-updater.service").is_file()

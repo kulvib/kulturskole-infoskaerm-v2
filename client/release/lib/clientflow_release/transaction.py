@@ -760,18 +760,23 @@ def _enable_stable_updater_timer(layout: Layout) -> None:
         _run(["/usr/bin/systemctl", "enable", "--now", "clientflow-updater.timer"])
 
 
+def _disable_stable_updater_timer(layout: Layout) -> None:
+    if layout.root == Path("/"):
+        _run(["/usr/bin/systemctl", "disable", "--now", "clientflow-updater.timer"])
+
+
 def _restore_pending_first_activation(layout: Layout, release_root: Path) -> None:
     """Restore the exact pre-activation fresh-install operating state.
 
     Failed first activation must return to staged/pending with no active release,
     runtime target disabled, complete managed definitions present, and the stable
-    updater plane still enabled.
+    updater plane disabled and inactive until a later backend-approved activation.
     """
     layout.active.unlink(missing_ok=True)
     _apply_definitions(layout, release_root)
     _systemd_prepare(layout)
     _disable_target(layout)
-    _enable_stable_updater_timer(layout)
+    _disable_stable_updater_timer(layout)
 
 
 def _expected_active_units(release_root: Path) -> tuple[list[str], list[str]]:
@@ -922,6 +927,12 @@ def _activate_release(
         _start_target(layout)
         manifest = json.loads((release_root / "release-manifest.json").read_text())
         _health_check(layout, release_id, timeout=int(manifest["activation"]["health_timeout_seconds"]))
+        if previous is None:
+            # First activation is the lifecycle boundary that opens update auth.
+            # Keep the stable updater stopped through backend approval proof,
+            # release swap and runtime health; only a healthy first activation
+            # may begin polling the canonical update control plane.
+            _enable_stable_updater_timer(layout)
     except Exception as activation_error:
         _quiesce_runtime(layout)
         try:
@@ -1054,7 +1065,7 @@ def install_stable_updater_host(
     *,
     layout: Layout = Layout(),
 ) -> dict[str, Any]:
-    """Materialize and enable the unprivileged updater bootstrap plane only."""
+    """Materialize the unprivileged updater bootstrap plane without starting it."""
     release_id = _validate_release_id(release_id)
     with TransactionLock(layout):
         state = load_state(layout)
@@ -1084,7 +1095,11 @@ def install_stable_updater_host(
             if installed_meta.st_uid != 0 or installed_meta.st_gid != 0:
                 raise TransactionError("Stable updater-PYZ skal være root-owned")
             _run(["/usr/bin/systemctl", "daemon-reload"])
-            _enable_stable_updater_timer(layout)
+
+        # A freshly claimed client is backend-pending.  Enforce the pending
+        # lifecycle locally so the updater cannot poll with credentials that
+        # backend auth must still reject.  The helper is a no-op for test roots.
+        _disable_stable_updater_timer(layout)
 
         _append_history(
             state,

@@ -52,8 +52,9 @@ ClientFlow 1.3.0 er den fysisk godkendte historiske bootstrap-baseline for den s
 10. En eventuel privat CA kopieres til den root-ejede ClientFlow-konfiguration og genbruges ved resume; installationen er ikke afhængig af den oprindelige inputfil efter første sikre kopi.
 11. Standardkonfiguration, root-grant-verifikation og credentials valideres med sikre filrettigheder.
 12. Installationen stopper ved status `pending_manual_activation`.
+13. Den stabile updater-PYZ og dens systemd-definitioner er materialiseret, men `clientflow-updater.timer` skal være eksplicit `disabled` og `inactive` gennem hele pending-fasen. Backend update-auth forbliver fail-closed for den pending klient, og klienten må derfor ikke poll'e update-plane før godkendt first activation.
 
-Der er **ingen automatisk reboot**, ingen automatisk aktivering, ingen åbning af Terminal eller Remote Desktop og ingen start af en livestream.
+Der er **ingen automatisk reboot**, ingen automatisk aktivering, ingen åbning af Terminal eller Remote Desktop, ingen start af en livestream og ingen updater-polling i `pending_manual_activation`.
 
 ## Manuel aktivering
 
@@ -67,7 +68,7 @@ sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \
   --expected-release-approval-reference <RELEASE_APPROVAL_REFERENCE>
 ```
 
-Staging gemmer bundle SHA-256/size, candidate SHA-256, source commit og release-approval reference i root-ejet release-state. Aktivering afvises, hvis state, staged manifest og den eksplicit forventede release-approval ikke matcher. Først derefter opdateres systemd-definitioner, det atomiske `active`-symlink skiftes, `clientflow.target` startes og health checks gennemføres. Fejl udløser automatisk rollback.
+Staging gemmer bundle SHA-256/size, candidate SHA-256, source commit og release-approval reference i root-ejet release-state. Aktivering afvises, hvis state, staged manifest og den eksplicit forventede release-approval ikke matcher. Updater-timeren forbliver disabled gennem backend approval-proof, release-swap og runtime health. Først efter grøn first-activation health aktiveres `clientflow-updater.timer`, så update-plane åbnes efter den lokale runtime er operationel. Fejl før dette punkt udløser automatisk rollback til staged/pending med updater-timeren disabled og inactive.
 
 Den canonical kiosk-baseline bruger Google Chrome `--start-fullscreen` og aldrig Chrome `--kiosk`. Den håndhæver GDM autologin/Wayland, ingen idle-lock/screensaver/suspend/dim, Bluetooth off, ingen kiosk-user update/crash popups samt Europe/Copenhagen + NTP. For kiosk-brugeren skjules og ACL-blokeres lokale Settings/Terminal/package/network/Bluetooth-administrationsapps, og en kiosk-user-only polkit-regel afviser privilegerede systemændringer. `cfadmin`, root og ClientFlow-domænebrugere rammes ikke; logout/user-switch bevares, så `cfadmin` fortsat kan vælges. GDM/logind skiftes ikke live under activation; efter grøn activation udføres én kontrolleret reboot før reconnect-validering.
 

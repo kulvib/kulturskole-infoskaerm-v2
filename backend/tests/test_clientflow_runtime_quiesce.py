@@ -130,7 +130,7 @@ def test_activation_quiesces_before_definition_and_active_symlink_swap(tmp_path,
     assert order == ["disable", "quiesce", "definitions", "switch", "prepare", "start", "health"]
 
 
-def test_failed_first_activation_restores_pending_definitions_and_updater_plane(tmp_path, monkeypatch):
+def test_failed_first_activation_restores_pending_definitions_and_keeps_updater_disabled(tmp_path, monkeypatch):
     release_id = "clientflow-1.3.11-seq-1212"
     approval = f"{release_id}/test-approval"
     layout = Layout(tmp_path / "root")
@@ -157,7 +157,11 @@ def test_failed_first_activation_restores_pending_definitions_and_updater_plane(
     monkeypatch.setattr(transaction, "_start_target", lambda _layout: order.append("start"))
     monkeypatch.setattr(transaction, "_health_check", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(transaction, "_disable_target", lambda _layout: order.append("disable"))
-    monkeypatch.setattr(transaction, "_enable_stable_updater_timer", lambda _layout: order.append("updater"))
+    monkeypatch.setattr(
+        transaction,
+        "_disable_stable_updater_timer",
+        lambda _layout: order.append("updater-disabled"),
+    )
     monkeypatch.setattr(
         transaction,
         "_remove_definitions",
@@ -179,7 +183,7 @@ def test_failed_first_activation_restores_pending_definitions_and_updater_plane(
         "definitions",
         "prepare",
         "disable",
-        "updater",
+        "updater-disabled",
     ]
 
 
