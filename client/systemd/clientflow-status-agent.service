@@ -30,7 +30,7 @@ LockPersonality=yes
 MemoryDenyWriteExecute=yes
 RestrictRealtime=yes
 SystemCallArchitectures=native
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
 
 [Install]
 WantedBy=clientflow.target

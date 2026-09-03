@@ -212,6 +212,120 @@ def _platform_capabilities(repo: Path) -> dict[str, object]:
     return {"platform_packages": len(packages), "capabilities": "ok"}
 
 
+_SANDBOX_PROPERTIES = (
+    "CapabilityBoundingSet",
+    "AmbientCapabilities",
+    "NoNewPrivileges",
+    "PrivateTmp",
+    "PrivateDevices",
+    "ProtectSystem",
+    "ProtectHome",
+    "ProtectKernelTunables",
+    "ProtectKernelModules",
+    "ProtectKernelLogs",
+    "ProtectControlGroups",
+    "RestrictSUIDSGID",
+    "LockPersonality",
+    "MemoryDenyWriteExecute",
+    "RestrictRealtime",
+    "SystemCallArchitectures",
+    "RestrictAddressFamilies",
+)
+
+
+def _service_sandbox_properties(path: Path) -> dict[str, str]:
+    section = ""
+    values: dict[str, str] = {}
+    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section != "Service" or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in _SANDBOX_PROPERTIES:
+            continue
+        if key in values:
+            raise HostGateError(f"Duplikeret sandbox-property i {path.name}:{line_number}: {key}")
+        values[key] = value.strip()
+    return values
+
+
+def _systemd_probe(repo: Path, unit_name: str, probe_name: str, command: list[str]) -> str:
+    source = repo / "client/systemd" / unit_name
+    properties = _service_sandbox_properties(source)
+    if "NoNewPrivileges" not in properties:
+        raise HostGateError(f"Executable sandbox-probe kræver eksplicit NoNewPrivileges i {unit_name}")
+    transient = f"clientflow-ci-{probe_name}-{os.getpid()}"
+    invocation = [
+        "/usr/bin/systemd-run",
+        "--wait",
+        "--pipe",
+        "--collect",
+        f"--unit={transient}",
+        "--property=Type=oneshot",
+        "--property=User=root",
+        "--property=Group=root",
+    ]
+    invocation.extend(f"--property={key}={value}" for key, value in properties.items())
+    invocation.extend(command)
+    return _run(invocation, timeout=90)
+
+
+def _uid_transition_command() -> list[str]:
+    probe = r'''
+import os
+import pwd
+account = pwd.getpwnam("_apt")
+os.setgroups([])
+os.setresgid(account.pw_gid, account.pw_gid, account.pw_gid)
+os.setresuid(account.pw_uid, account.pw_uid, account.pw_uid)
+print("CLIENTFLOW_UID_TRANSITION_OK")
+'''
+    return ["/usr/bin/python3", "-c", probe]
+
+
+def _systemd_runtime_capabilities(repo: Path) -> dict[str, str]:
+    if os.geteuid() != 0:
+        raise HostGateError("Executable systemd sandbox-gate kræver root på ephemeral CI host")
+    if not Path("/run/systemd/system").is_dir():
+        raise HostGateError("Ubuntu target-host kører ikke med systemd som runtime manager")
+    if not Path("/usr/sbin/ip").is_file():
+        raise HostGateError("Ubuntu target-host mangler /usr/sbin/ip")
+
+    for unit, name in (
+        ("clientflow-platform-prepare.service", "platform-uid"),
+        ("clientflow-system-broker.service", "system-uid"),
+        ("clientflow-livestream-producer.service", "livestream-uid"),
+    ):
+        output = _systemd_probe(repo, unit, name, _uid_transition_command())
+        if "CLIENTFLOW_UID_TRANSITION_OK" not in output:
+            raise HostGateError(f"UID-transition probe gav ikke success-marker for {unit}")
+
+    for unit, name in (
+        ("clientflow-status-agent.service", "status-netlink"),
+        ("clientflow-display-runtime.service", "display-netlink"),
+    ):
+        _systemd_probe(
+            repo,
+            unit,
+            name,
+            ["/usr/sbin/ip", "-j", "route", "show", "default"],
+        )
+
+    return {
+        "platform_prepare_uid_transition": "ok",
+        "system_broker_uid_transition": "ok",
+        "frozen_livestream_uid_transition": "ok",
+        "status_netlink": "ok",
+        "display_netlink": "ok",
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=REPO)
@@ -222,6 +336,7 @@ def main() -> int:
         result: dict[str, object] = {"host": _host_identity(), "source": _source_contract(repo)}
         if args.install_platform_requirements:
             result["platform"] = _platform_capabilities(repo)
+            result["systemd_runtime"] = _systemd_runtime_capabilities(repo)
     except Exception as exc:
         print(f"CLIENTFLOW_UBUNTU2604_HOST_GATE_FAILED: {exc}", file=sys.stderr)
         return 1

@@ -151,11 +151,40 @@ def test_platform_gate_is_target_owned_and_precedes_frozen_consumers():
 def test_service_specific_confinement_contracts():
     display = (ROOT / "client/systemd/clientflow-display-runtime.service").read_text(encoding="utf-8")
     power = (ROOT / "client/systemd/clientflow-display-power-broker.service").read_text(encoding="utf-8")
+    platform = (ROOT / "client/systemd/clientflow-platform-prepare.service").read_text(encoding="utf-8")
+    status = (ROOT / "client/systemd/clientflow-status-agent.service").read_text(encoding="utf-8")
     system = (ROOT / "client/systemd/clientflow-system-broker.service").read_text(encoding="utf-8")
+    livestream = (ROOT / "client/systemd/clientflow-livestream-producer.service").read_text(encoding="utf-8")
     assert "MemoryDenyWriteExecute=no" in display
     assert "NoNewPrivileges=no" in power
-    families = next(line for line in system.splitlines() if line.startswith("RestrictAddressFamilies="))
-    assert {"AF_UNIX", "AF_NETLINK", "AF_INET", "AF_INET6"} <= set(families.split("=", 1)[1].split())
+    assert "NoNewPrivileges=no" in platform
+    assert "NoNewPrivileges=no" in system
+    for source in (display, status):
+        families = next(line for line in source.splitlines() if line.startswith("RestrictAddressFamilies="))
+        assert {"AF_UNIX", "AF_NETLINK", "AF_INET", "AF_INET6"} <= set(families.split("=", 1)[1].split())
+    assert "NoNewPrivileges=yes" in livestream
+    for key in ("CapabilityBoundingSet=", "AmbientCapabilities="):
+        caps = next(line for line in livestream.splitlines() if line.startswith(key)).split("=", 1)[1].split()
+        assert {"CAP_SETUID", "CAP_SETGID"} <= set(caps)
+
+
+def test_target_services_do_not_depend_on_obsolete_parallel_activation_marker():
+    marker = "/etc/clientflow/activated"
+    for path in (ROOT / "client/systemd").iterdir():
+        if path.is_file() and path.suffix in {".service", ".socket", ".target", ".timer"}:
+            assert marker not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_ubuntu_2604_host_gate_executes_real_service_sandbox_probes():
+    source = (ROOT / "scripts/verify_clientflow_ubuntu2604_host.py").read_text(encoding="utf-8")
+    assert '"/usr/bin/systemd-run"' in source
+    assert '"clientflow-platform-prepare.service", "platform-uid"' in source
+    assert '"clientflow-system-broker.service", "system-uid"' in source
+    assert '"clientflow-livestream-producer.service", "livestream-uid"' in source
+    assert '"clientflow-status-agent.service", "status-netlink"' in source
+    assert '"clientflow-display-runtime.service", "display-netlink"' in source
+    assert 'os.setresuid(account.pw_uid, account.pw_uid, account.pw_uid)' in source
+    assert '["/usr/sbin/ip", "-j", "route", "show", "default"]' in source
 
 
 def test_cfadmin_is_created_locked_without_privileged_groups(monkeypatch):
