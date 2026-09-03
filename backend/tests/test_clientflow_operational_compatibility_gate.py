@@ -74,7 +74,7 @@ def test_first_activation_requires_backend_approval_proof_before_local_activatio
         )
 
 
-def test_first_activation_runs_proof_before_mutation_and_updates_skip_fresh_gate(tmp_path, monkeypatch):
+def test_first_activation_runs_proof_before_mutation(tmp_path, monkeypatch):
     layout = Layout(tmp_path / "root")
     _activation_state(layout)
     calls: list[str] = []
@@ -96,17 +96,74 @@ def test_first_activation_runs_proof_before_mutation_and_updates_skip_fresh_gate
     assert result["status"] == "active"
     assert calls == ["proof", "activate"]
 
-    # Existing active release means in-place update semantics: the fresh-install
-    # approval proof must not become a second update authorization plane.
-    calls.clear()
+
+def test_first_activation_crash_resume_reproves_backend_approval_with_target_symlink(
+    tmp_path,
+    monkeypatch,
+):
+    layout = Layout(tmp_path / "root")
+    _activation_state(layout)
+    state = transaction.load_state(layout)
+    state["activation_intent"] = {
+        "release_id": RELEASE_ID,
+        "previous_release_id": None,
+        "release_approval_reference": APPROVAL,
+        "started_at": "2026-09-03T18:00:00Z",
+    }
+    transaction.save_state(layout, state)
     transaction.atomic_symlink(f"releases/{RELEASE_ID}", layout.active)
+
+    monkeypatch.setattr(
+        transaction,
+        "_activate_release",
+        lambda *_args, **_kwargs: pytest.fail(
+            "crash-resume must not continue before backend approval is re-proven"
+        ),
+    )
+
+    with pytest.raises(TransactionError, match="backend-approved"):
+        transaction.activate_release(
+            RELEASE_ID,
+            expected_release_approval_reference=APPROVAL,
+            layout=layout,
+        )
+
+    calls: list[str] = []
+
+    def proof(_layout: Layout) -> None:
+        calls.append("proof")
+
+    def activate(_layout, _state, _release_id, _approval, **_kwargs):
+        calls.append("activate")
+        return {"status": "active", "release_id": RELEASE_ID}
+
+    monkeypatch.setattr(transaction, "_activate_release", activate)
+    result = transaction.activate_release(
+        RELEASE_ID,
+        expected_release_approval_reference=APPROVAL,
+        layout=layout,
+        first_activation_authorizer=proof,
+    )
+    assert result["status"] == "active"
+    assert calls == ["proof", "activate"]
+
+
+def test_durably_active_release_skips_fresh_first_activation_gate(tmp_path, monkeypatch):
+    layout = Layout(tmp_path / "root")
+    _activation_state(layout)
+    state = transaction.load_state(layout)
+    state["active_release_id"] = RELEASE_ID
+    state["staged_release_id"] = None
+    state["installed"][RELEASE_ID]["activated_at"] = "2026-09-03T18:01:00Z"
+    transaction.save_state(layout, state)
+    transaction.atomic_symlink(f"releases/{RELEASE_ID}", layout.active)
+
     result = transaction.activate_release(
         RELEASE_ID,
         expected_release_approval_reference=APPROVAL,
         layout=layout,
     )
-    assert result["status"] == "active"
-    assert calls == ["activate"]
+    assert result == {"status": "already_active", "release_id": RELEASE_ID}
 
 
 def test_pending_updater_timer_requires_exact_disabled_inactive(monkeypatch):

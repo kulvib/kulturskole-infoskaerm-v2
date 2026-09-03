@@ -60,7 +60,7 @@ Hvis `install` genkøres som recovery, er det kun gyldigt så længe release-sta
 
 ## Manuel aktivering
 
-Aktivering er et separat trin. Efter claim står den nye klient fortsat som backend-`pending`; en superadmin skal først godkende præcis denne klient via den eksisterende backend approval-flow. First activation beviser derefter fail-closed backend-godkendelsen med installationens allerede provisionerede `status` credential, før active-symlink, systemd-definitioner eller services må ændres.
+Aktivering er et separat trin. Efter claim står den nye klient fortsat som backend-`pending`; en superadmin skal først godkende præcis denne klient via den eksisterende backend approval-flow. First activation beviser derefter fail-closed backend-godkendelsen med installationens allerede provisionerede `status` credential, før active-symlink, systemd-definitioner eller services må ændres. Gate-status afgøres fra den durable release-state, ikke fra active-symlinket: hvis first activation crashes efter symlink-swap men før `active_release_id` er committed, skal et activation-resume derfor bevise backend approval igen før yderligere lokal mutation.
 
 Operatøren skal samtidig angive den **forventede immutable release-approval reference** fra den approved bundle; værdien er en kontrol mod artifactets provenance og er ikke fri audit-tekst:
 
