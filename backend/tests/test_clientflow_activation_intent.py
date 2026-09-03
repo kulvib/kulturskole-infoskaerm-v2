@@ -346,3 +346,74 @@ def test_first_activation_failure_uses_pending_restore_not_definition_removal(tm
     assert state["active_release_id"] is None
     assert state["activation_intent"] is None
     assert any(event["event"] == "automatic_rollback_completed" for event in state["history"])
+
+def test_stage_bundle_rejects_new_release_while_activation_intent_is_unresolved_before_staging(
+    tmp_path, monkeypatch
+):
+    layout = Layout(tmp_path / "root")
+    layout.state_root.mkdir(parents=True, exist_ok=True)
+    current_release_id = "clientflow-1.3.15-seq-1216"
+    target_release_id = "clientflow-1.3.16-seq-1217"
+    transaction.save_state(
+        layout,
+        {
+            "schema_version": transaction.STATE_SCHEMA,
+            "highest_release_sequence": 1216,
+            "active_release_id": None,
+            "previous_release_id": None,
+            "staged_release_id": current_release_id,
+            "activation_intent": {
+                "release_id": current_release_id,
+                "previous_release_id": None,
+                "release_approval_reference": f"{current_release_id}/approval",
+                "started_at": "2026-09-03T20:00:00Z",
+                "health_verified_at": "2026-09-03T20:01:00Z",
+            },
+            "installed": {},
+            "history": [],
+        },
+    )
+
+    manifest = {
+        "version": "1.3.16",
+        "release_id": target_release_id,
+        "release_sequence": 1217,
+        "release_approval": {
+            "reference": f"{target_release_id}/approval",
+            "candidate_sha256": "a" * 64,
+        },
+        "source": {"commit": "b" * 40},
+    }
+
+    class _Handle:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        transaction,
+        "open_verified_bundle",
+        lambda *_args, **_kwargs: (
+            manifest,
+            object(),
+            1234,
+            "c" * 64,
+            _Handle(),
+        ),
+    )
+    monkeypatch.setattr(
+        transaction.tempfile,
+        "mkdtemp",
+        lambda *_args, **_kwargs: pytest.fail(
+            "filesystem staging må ikke begynde under unresolved activation_intent"
+        ),
+    )
+
+    with pytest.raises(TransactionError, match="activation transaction er uafsluttet"):
+        transaction.stage_bundle(
+            tmp_path / "unused-bundle.tar",
+            release_id=target_release_id,
+            expected_bundle_sha256="c" * 64,
+            install_mode="in_place_update",
+            layout=layout,
+        )
+
