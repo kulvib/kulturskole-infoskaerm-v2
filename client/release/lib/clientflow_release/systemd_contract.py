@@ -191,6 +191,86 @@ def _unit_references(value: str) -> list[str]:
     return refs
 
 
+def _service_directive_values(path: Path, key: str) -> list[str]:
+    return [
+        row.value
+        for row in _read_directives(path)
+        if row.section == "Service" and row.key == key
+    ]
+
+
+def _require_single_service_value(units: dict[str, Path], unit: str, key: str, expected: str) -> None:
+    path = units.get(unit)
+    if path is None:
+        raise SystemdContractError(f"Release mangler operational systemd unit: {unit}")
+    values = _service_directive_values(path, key)
+    if values != [expected]:
+        observed = ", ".join(values) if values else "<missing>"
+        raise SystemdContractError(
+            f"Operational systemd-kontrakt driftede: {unit} {key}={observed}, forventet {expected}"
+        )
+
+
+def _require_address_families(units: dict[str, Path], unit: str, required: set[str]) -> None:
+    path = units.get(unit)
+    if path is None:
+        raise SystemdContractError(f"Release mangler operational systemd unit: {unit}")
+    values = _service_directive_values(path, "RestrictAddressFamilies")
+    if len(values) != 1:
+        raise SystemdContractError(
+            f"Operational systemd-kontrakt driftede: {unit} RestrictAddressFamilies skal forekomme præcis én gang"
+        )
+    observed = set(values[0].split())
+    missing = sorted(required - observed)
+    if missing:
+        raise SystemdContractError(
+            f"Operational systemd-kontrakt mangler address families for {unit}: {', '.join(missing)}"
+        )
+
+
+def _validate_operational_service_contracts(units: dict[str, Path]) -> None:
+    # /etc/clientflow/activated is not a canonical lifecycle authority. Fresh
+    # activation is owned by the durable release transaction + active symlink,
+    # so a service gated on this orphan marker can be skipped while activation
+    # health requires the same WantedBy=clientflow.target service to be active.
+    for unit_name, path in units.items():
+        for row in _read_directives(path):
+            if row.key == "ConditionPathExists" and row.value == "/etc/clientflow/activated":
+                raise SystemdContractError(
+                    f"Obsolete parallel activation marker er ikke tilladt: {unit_name}:{row.line_number}"
+                )
+
+    # These root-owned paths intentionally execute package-management helpers.
+    # Ubuntu 26.04 systemd removes CAP_SETUID from the effective/permitted set in
+    # the observed NoNewPrivileges=yes sandbox, which prevents APT from dropping
+    # to _apt. Keep the required exception explicit and release-gated.
+    _require_single_service_value(
+        units, "clientflow-platform-prepare.service", "NoNewPrivileges", "no"
+    )
+    _require_single_service_value(
+        units, "clientflow-system-broker.service", "NoNewPrivileges", "no"
+    )
+
+    # Both real runtime paths invoke /usr/sbin/ip and therefore require netlink
+    # route/address access inside their systemd sandboxes.
+    for unit in ("clientflow-status-agent.service", "clientflow-display-runtime.service"):
+        _require_address_families(units, unit, {"AF_UNIX", "AF_NETLINK", "AF_INET", "AF_INET6"})
+
+    # Frozen Livestream deliberately retains NNP while explicitly carrying the
+    # capability pair needed by setpriv --reuid/--regid. Guard that isolation
+    # while the Ubuntu executable host gate proves it works under real systemd.
+    _require_single_service_value(
+        units, "clientflow-livestream-producer.service", "NoNewPrivileges", "yes"
+    )
+    for key in ("CapabilityBoundingSet", "AmbientCapabilities"):
+        path = units["clientflow-livestream-producer.service"]
+        values = _service_directive_values(path, key)
+        if len(values) != 1 or not {"CAP_SETUID", "CAP_SETGID"} <= set(values[0].split()):
+            raise SystemdContractError(
+                f"Frozen Livestream privilege-drop contract mangler CAP_SETUID/CAP_SETGID i {key}"
+            )
+
+
 def validate_release_systemd_contract(
     release_root: Path,
     *,
@@ -269,6 +349,8 @@ def validate_release_systemd_contract(
         raise SystemdContractError(
             "Systemd refererer ClientFlow units, som ikke findes i payloaden: " + ", ".join(missing_units)
         )
+
+    _validate_operational_service_contracts(units)
 
     return {
         "unit_count": len(units),

@@ -2,7 +2,6 @@
 Description=ClientFlow physical input display wake worker
 After=clientflow-display-power-broker.socket clientflow-display-runtime.service
 Requires=clientflow-display-power-broker.socket
-ConditionPathExists=/etc/clientflow/activated
 
 [Service]
 Type=simple

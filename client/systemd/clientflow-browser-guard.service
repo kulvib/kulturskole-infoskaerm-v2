@@ -2,7 +2,6 @@
 Description=ClientFlow Browser Guard and dynamic kiosk refresh
 After=clientflow-display-runtime.service
 Requires=clientflow-display-runtime.service
-ConditionPathExists=/etc/clientflow/activated
 
 [Service]
 Type=simple

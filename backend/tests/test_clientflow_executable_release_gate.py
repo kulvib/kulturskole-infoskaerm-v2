@@ -104,3 +104,62 @@ def test_platform_target_lock_is_exact_ubuntu_2604_amd64():
     assert lock["host_requirements"]["os_id"] == "ubuntu"
     assert lock["host_requirements"]["version_id"] == "26.04"
     assert lock["host_requirements"]["architecture"] == "amd64"
+
+
+def test_release_systemd_contract_rejects_obsolete_parallel_activation_marker(tmp_path):
+    root = _release_tree(tmp_path)
+    unit = root / "client-runtime/systemd/clientflow-browser-guard.service"
+    text = unit.read_text(encoding="utf-8")
+    text = text.replace(
+        "Requires=clientflow-display-runtime.service\n",
+        "Requires=clientflow-display-runtime.service\nConditionPathExists=/etc/clientflow/activated\n",
+        1,
+    )
+    unit.write_text(text, encoding="utf-8")
+    with pytest.raises(SystemdContractError, match="parallel activation marker"):
+        validate_release_systemd_contract(root)
+
+
+@pytest.mark.parametrize(
+    "unit_name",
+    ["clientflow-platform-prepare.service", "clientflow-system-broker.service"],
+)
+def test_release_systemd_contract_rejects_nnp_on_apt_privilege_drop_paths(tmp_path, unit_name):
+    root = _release_tree(tmp_path)
+    unit = root / "client-runtime/systemd" / unit_name
+    text = unit.read_text(encoding="utf-8")
+    assert "NoNewPrivileges=no" in text
+    unit.write_text(text.replace("NoNewPrivileges=no", "NoNewPrivileges=yes", 1), encoding="utf-8")
+    with pytest.raises(SystemdContractError, match="NoNewPrivileges=yes"):
+        validate_release_systemd_contract(root)
+
+
+@pytest.mark.parametrize(
+    "unit_name",
+    ["clientflow-status-agent.service", "clientflow-display-runtime.service"],
+)
+def test_release_systemd_contract_rejects_missing_netlink_for_ip_consumers(tmp_path, unit_name):
+    root = _release_tree(tmp_path)
+    unit = root / "client-runtime/systemd" / unit_name
+    text = unit.read_text(encoding="utf-8")
+    assert "AF_NETLINK" in text
+    unit.write_text(text.replace(" AF_NETLINK", "", 1), encoding="utf-8")
+    with pytest.raises(SystemdContractError, match="AF_NETLINK"):
+        validate_release_systemd_contract(root)
+
+
+def test_release_systemd_contract_preserves_frozen_livestream_privilege_drop_capabilities(tmp_path):
+    root = _release_tree(tmp_path)
+    unit = root / "client-runtime/systemd/clientflow-livestream-producer.service"
+    text = unit.read_text(encoding="utf-8")
+    assert "AmbientCapabilities=CAP_KILL CAP_SETGID CAP_SETUID" in text
+    unit.write_text(
+        text.replace(
+            "AmbientCapabilities=CAP_KILL CAP_SETGID CAP_SETUID",
+            "AmbientCapabilities=CAP_KILL",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemdContractError, match="Frozen Livestream privilege-drop"):
+        validate_release_systemd_contract(root)
