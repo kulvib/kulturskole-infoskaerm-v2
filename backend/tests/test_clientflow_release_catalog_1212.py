@@ -63,7 +63,7 @@ def test_catalog_1216_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1216_matches_source_build_1315_1216_after_promotion() -> None:
+def test_catalog_1216_remains_selected_while_next_source_identity_is_prepared() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -72,20 +72,25 @@ def test_catalog_1216_matches_source_build_1315_1216_after_promotion() -> None:
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
     source_sequence = int(release_input["release_sequence"])
+    source_tuple = tuple(int(part) for part in source_version.split("."))
+    selected_tuple = tuple(int(part) for part in release["version"].split("."))
 
-    # Promotion is permitted only after the exact candidate has passed CI,
-    # manual approval and immutable 51M publication. Once promoted, source/build
-    # identity and the runtime selection catalog must be exactly aligned.
-    assert source_version == "1.3.15"
-    assert source_sequence == 1216
+    # Source/build identity may move exactly one release ahead while candidate
+    # build, manual approval and immutable 51M publication are pending. Runtime
+    # selection must remain on the last physically published approved release.
     assert data["catalog_sequence"] == 1216
-    assert source_sequence == data["catalog_sequence"]
     assert data["latest_stable"] == "1.3.15"
     assert data["default_install_version"] == "1.3.15"
     assert release["version"] == "1.3.15"
     assert release["release_sequence"] == 1216
     assert release["release_id"] == "clientflow-1.3.15-seq-1216"
     assert release["requires_reboot"] is True
+
+    assert source_sequence in {data["catalog_sequence"], data["catalog_sequence"] + 1}
+    if source_sequence == data["catalog_sequence"]:
+        assert source_tuple == selected_tuple
+    else:
+        assert source_tuple > selected_tuple
 
     # Exact approved byte identity remains authority of the immutable 51M store
     # and is deliberately not copied into the policy catalog.
