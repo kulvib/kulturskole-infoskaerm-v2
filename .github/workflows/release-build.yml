@@ -207,6 +207,21 @@ jobs:
             --candidate-dir "$RUNNER_TEMP/candidate-a" \
             --system-python /usr/bin/python3
 
+      - name: Require exact embedded Display platform install on Ubuntu 26.04
+        shell: bash
+        run: |
+          set -euo pipefail
+          if dpkg-query -W -f='${Status}' google-chrome-stable 2>/dev/null | grep -qx 'install ok installed'; then
+            sudo /usr/bin/apt-get -o DPkg::Lock::Timeout=120 -y purge google-chrome-stable
+          fi
+          if dpkg-query -W -f='${Status}' google-chrome-stable 2>/dev/null | grep -qx 'install ok installed'; then
+            echo 'GitHub target-host kunne ikke normaliseres til fresh Chrome-absent state' >&2
+            exit 1
+          fi
+          sudo /usr/bin/python3 scripts/verify_clientflow_release_candidate_runtime.py \
+            --candidate-dir "$RUNNER_TEMP/candidate-a" \
+            --display-platform-install-only
+
   reproducibility:
     name: Require byte-identical independent builds
     needs: [preflight, build, candidate-runtime]
