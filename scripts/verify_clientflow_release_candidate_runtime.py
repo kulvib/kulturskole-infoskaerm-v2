@@ -143,6 +143,121 @@ def _verify_embedded_display_platform_artifact(release_root: Path) -> None:
         )
 
 
+def _verify_display_platform_install_on_host(release_root: Path) -> dict[str, str]:
+    if os.geteuid() != 0:
+        raise CandidateGateError("Executable Display platform-install gate kræver root på ephemeral CI host")
+    runtime_python = release_root / "runtime/bin/python"
+    code = r'''
+import json
+from pathlib import Path
+import sys
+from clientflow_runtime.display_platform_prepare import (
+    _active_google_repo_files,
+    _ensure_exact_chrome,
+    _installed_chrome,
+    _load_chrome_artifact,
+    _preconfigure_google_repo_opt_out,
+    _repo_opt_out_is_false,
+    _verify_deb_metadata,
+)
+root = Path(sys.argv[1])
+package_path, artifact = _load_chrome_artifact(root)
+_verify_deb_metadata(package_path, artifact)
+if _installed_chrome() is not None:
+    raise SystemExit("chrome_present_before_fresh_install_gate")
+before_sources = sorted(str(path) for path in _active_google_repo_files())
+if before_sources:
+    raise SystemExit("active_google_repo_before_fresh_install_gate:" + ",".join(before_sources))
+_preconfigure_google_repo_opt_out()
+if not _repo_opt_out_is_false():
+    raise SystemExit("chrome_repo_opt_out_not_established")
+_ensure_exact_chrome(package_path, artifact)
+installed = _installed_chrome()
+if installed is None:
+    raise SystemExit("chrome_missing_after_fresh_install_gate")
+if installed[1] != str(artifact["version"]) or installed[2] != str(artifact["architecture"]):
+    raise SystemExit("chrome_identity_mismatch_after_fresh_install_gate")
+after_sources = sorted(str(path) for path in _active_google_repo_files())
+if after_sources:
+    raise SystemExit("chrome_install_added_active_repo:" + ",".join(after_sources))
+print(
+    "CLIENTFLOW_DISPLAY_PLATFORM_INSTALL_OK "
+    + json.dumps(
+        {
+            "architecture": installed[2],
+            "package": "google-chrome-stable",
+            "version": installed[1],
+        },
+        sort_keys=True,
+    )
+)
+'''
+    result = subprocess.run(
+        [str(runtime_python), "-I", "-c", code, str(release_root)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=300,
+        check=False,
+        env={
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "LANG": "C.UTF-8",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+    )
+    marker = "CLIENTFLOW_DISPLAY_PLATFORM_INSTALL_OK "
+    if result.returncode != 0 or marker not in result.stdout:
+        raise CandidateGateError(
+            "Exact embedded Display platform-artifact kunne ikke installeres på target host:\n"
+            + result.stdout[-8000:]
+        )
+    payload = result.stdout.rsplit(marker, 1)[1].splitlines()[0]
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise CandidateGateError("Display platform-install gate gav ugyldig success-payload") from exc
+    return {
+        "package": str(parsed.get("package") or ""),
+        "version": str(parsed.get("version") or ""),
+        "architecture": str(parsed.get("architecture") or ""),
+    }
+
+
+def verify_display_platform_install_candidate(candidate_dir: Path) -> dict[str, object]:
+    candidate = _exact_one(candidate_dir, "*-candidate.tar")
+    manifest, payload, _bundle_size, candidate_sha256, handle = open_verified_bundle(
+        candidate,
+        require_deployable=False,
+    )
+    try:
+        if manifest.get("deployable") is not False:
+            raise CandidateGateError("Release-build candidate må aldrig være deployable")
+        validate_runtime_artifacts(payload, manifest)
+        with tempfile.TemporaryDirectory(prefix="clientflow-display-install-gate-") as temp_dir:
+            workspace = Path(temp_dir)
+            extracted = extract_verified_payload(
+                payload,
+                workspace / "payload",
+                expected_root=manifest["payload"]["root"],
+            )
+            prepare_runtime(extracted, manifest)
+            _validate_prepared_release_tree(extracted, manifest)
+            _verify_embedded_display_platform_artifact(extracted)
+            installed = _verify_display_platform_install_on_host(extracted)
+    finally:
+        handle.close()
+
+    return {
+        "status": "candidate_display_platform_install_gate_pass",
+        "candidate": candidate.name,
+        "candidate_sha256": candidate_sha256,
+        "release_id": manifest["release_id"],
+        "version": manifest["version"],
+        "release_sequence": manifest["release_sequence"],
+        "display_platform_install": installed,
+    }
+
+
 def _managed_units_synthetic_root(release_root: Path, manifest: dict, workspace: Path) -> tuple[Path, list[Path]]:
     layout = Layout(workspace / "managed-root")
     unit_names = _apply_definitions(
@@ -268,9 +383,13 @@ def main() -> int:
     parser.add_argument("--candidate-dir", type=Path, required=True)
     parser.add_argument("--repo", type=Path, default=REPO)
     parser.add_argument("--system-python", type=Path, default=Path("/usr/bin/python3"))
+    parser.add_argument("--display-platform-install-only", action="store_true")
     args = parser.parse_args()
     try:
-        result = verify_candidate(args.candidate_dir.resolve(), args.repo.resolve(), args.system_python)
+        if args.display_platform_install_only:
+            result = verify_display_platform_install_candidate(args.candidate_dir.resolve())
+        else:
+            result = verify_candidate(args.candidate_dir.resolve(), args.repo.resolve(), args.system_python)
     except Exception as exc:
         print(f"CLIENTFLOW_CANDIDATE_OPERATIONAL_GATE_FAILED: {exc}", file=sys.stderr)
         return 1

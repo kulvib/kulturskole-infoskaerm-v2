@@ -233,22 +233,70 @@ def test_system_kiosk_policy_blocks_bluetooth_and_masks_sleep(monkeypatch, tmp_p
     assert (tmp_path / "logind.conf").is_file()
 
 
-def test_display_chrome_local_deb_install_uses_apt_lock_timeout(monkeypatch, tmp_path):
+def test_display_chrome_dependency_preflight_is_non_mutating_and_rejects_extra_packages(monkeypatch, tmp_path):
     module = _load_module()
     calls = []
     package = tmp_path / "chrome.deb"
     package.write_bytes(b"deb")
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda command, **_kwargs: calls.append(command)
+        or "Inst google-chrome-stable (151.0.7922.173-1 local-deb [amd64])\n",
+    )
+
+    module._simulate_local_deb_install(package)
+
+    assert calls == [
+        [
+            "/usr/bin/apt-get",
+            "-o",
+            "DPkg::Lock::Timeout=120",
+            "-s",
+            "--no-install-recommends",
+            "install",
+            str(package),
+        ]
+    ]
+
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda command, **_kwargs: "\n".join(
+            [
+                "Inst google-chrome-stable (151.0.7922.173-1 local-deb [amd64])",
+                "Inst unexpected-runtime-dependency (1.0 Ubuntu:26.04 [amd64])",
+            ]
+        ),
+    )
+    try:
+        module._simulate_local_deb_install(package)
+    except module.DisplayPlatformPreparationError as exc:
+        assert "live dependency-install er ikke tilladt" in str(exc)
+        assert "unexpected-runtime-dependency" in str(exc)
+    else:
+        raise AssertionError("unexpected dependency install was accepted")
+
+
+def test_display_chrome_exact_local_archive_is_installed_with_dpkg_after_preflight(monkeypatch, tmp_path):
+    module = _load_module()
+    calls = []
+    preflight = []
+    package = tmp_path / "chrome.deb"
+    package.write_bytes(b"deb")
     states = iter([None, ("install ok installed", "151.0.7922.173-1", "amd64")])
     monkeypatch.setattr(module, "_installed_chrome", lambda: next(states))
-    monkeypatch.setattr(module, "_simulate_local_deb_install", lambda _path: None)
+    monkeypatch.setattr(module, "_simulate_local_deb_install", lambda path: preflight.append(path))
     monkeypatch.setattr(module, "_run", lambda command, **_kwargs: calls.append(command) or "")
     monkeypatch.setattr(module, "CHROME_EXECUTABLE", tmp_path / "google-chrome-stable")
     module.CHROME_EXECUTABLE.write_text("#!/bin/sh\n", encoding="utf-8")
     module.CHROME_EXECUTABLE.chmod(0o755)
+
     module._ensure_exact_chrome(package, {"version": "151.0.7922.173-1", "architecture": "amd64"})
-    assert [
-        "/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "-y", "--no-download", "install", str(package)
-    ] in calls
+
+    assert preflight == [package]
+    assert calls == [["/usr/bin/dpkg", "--install", str(package)]]
+    assert not any("--no-download" in command for command in calls)
 
 
 def test_kiosk_application_lockdown_is_user_scoped(monkeypatch, tmp_path):
