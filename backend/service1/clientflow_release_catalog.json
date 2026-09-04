@@ -1,20 +1,20 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1216,
-  "latest_stable": "1.3.15",
-  "default_install_version": "1.3.15",
+  "catalog_sequence": 1217,
+  "latest_stable": "1.3.16",
+  "default_install_version": "1.3.16",
   "retention_policy": {
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
   },
-  "created_at": "2026-09-03T00:00:00Z",
+  "created_at": "2026-09-04T00:00:00Z",
   "releases": [
     {
-      "version": "1.3.15",
-      "client_version": "1.3.15",
-      "release_sequence": 1216,
-      "revision": "clientflow-1.3.15-seq-1216",
+      "version": "1.3.16",
+      "client_version": "1.3.16",
+      "release_sequence": 1217,
+      "revision": "clientflow-1.3.16-seq-1217",
       "status": "stable",
       "installable": true,
       "update_allowed": true,
@@ -34,11 +34,11 @@
         "requires_platform_preflight": true
       },
       "notes": [
-        "Canonical ClientFlow 1.3.15 release containing the repository-reviewed platform/systemd compatibility fixes required after the 1.3.14 physical activation failure, including platform/system broker privilege policy, Status/Display AF_NETLINK access and removal of obsolete local activation-marker dependencies.",
+        "Canonical ClientFlow 1.3.16 release containing the repository-reviewed end-to-end lifecycle/recovery fixes required before the next Ubuntu 26.04 clean-install verification, including pending updater gating, first-activation approval/reboot crash safety, activation/update transaction isolation and deterministic System reboot/shutdown reconciliation across boot boundaries.",
         "Fresh install and in-place update remain bounded to the safe ClientFlow 1.3.11 baseline. One controlled reboot is required after green activation so GDM/logind kiosk-session policy becomes authoritative before reconnect verification.",
-        "Promoted only after the exact manually approved 1.3.15/1216 whole bundle was reproducibly built, published immutably and byte-identity verified in the canonical Render 51M artifact store. Physical Ubuntu 26.04 clean-install verification remains the next verification step."
+        "Promoted only after the exact manually approved 1.3.16/1217 whole bundle was reproducibly built, passed the Ubuntu 26.04 executable candidate gate, published immutably and byte-identity re-verified in the canonical Render 51M artifact store. Physical Ubuntu 26.04 clean-install verification remains the next verification step."
       ],
-      "release_id": "clientflow-1.3.15-seq-1216",
+      "release_id": "clientflow-1.3.16-seq-1217",
       "artifact_type": "runtime_release",
       "install_modes": [
         "fresh_install",
