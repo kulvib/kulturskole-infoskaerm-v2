@@ -161,6 +161,8 @@ def test_release_build_workflow_is_manual_ci_gated_reproducible_and_non_publishi
     assert "candidate-runtime:" in source
     assert "runs-on: ubuntu-26.04" in source
     assert "verify_clientflow_release_candidate_runtime.py" in source
+    assert "--display-platform-install-only" in source
+    assert "Require exact embedded Display platform install on Ubuntu 26.04" in source
     assert "needs: [preflight, build, candidate-runtime]" in source
     assert "runtime-platform-inputs.lock.json" not in source  # materializer owns the canonical default
     assert "--require-hashes" in source

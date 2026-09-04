@@ -270,7 +270,17 @@ def _installed_chrome() -> tuple[str, str, str] | None:
 
 
 def _simulate_local_deb_install(package_path: Path) -> None:
-    output = _run(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "-s", "--no-download", "install", str(package_path)])
+    output = _run(
+        [
+            "/usr/bin/apt-get",
+            "-o",
+            "DPkg::Lock::Timeout=120",
+            "-s",
+            "--no-install-recommends",
+            "install",
+            str(package_path),
+        ]
+    )
     installs = []
     for line in output.splitlines():
         match = re.match(r"^Inst\s+(\S+)", line)
@@ -290,7 +300,11 @@ def _ensure_exact_chrome(package_path: Path, artifact: dict[str, object]) -> Non
     installed = _installed_chrome()
     if not installed or installed[1] != expected_version or installed[2] != expected_arch:
         _simulate_local_deb_install(package_path)
-        _run(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "-y", "--no-download", "install", str(package_path)])
+        # Ubuntu 26.04 APT can lose the absolute local-archive pathname when
+        # --no-download is combined with a direct .deb install. Dependency
+        # resolution is therefore proven non-mutating above, while dpkg owns
+        # installation of the exact release-verified local archive bytes.
+        _run(["/usr/bin/dpkg", "--install", str(package_path)])
     installed = _installed_chrome()
     if not installed or installed[1] != expected_version or installed[2] != expected_arch:
         raise DisplayPlatformPreparationError("Installeret Google Chrome matcher ikke release-lock")
