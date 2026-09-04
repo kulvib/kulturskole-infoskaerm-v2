@@ -51,16 +51,16 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
         assert selected_tuple < source_tuple
 
 
-def test_51f_promoted_1315_keeps_1311_safe_in_place_baseline_and_requires_reboot() -> None:
+def test_51f_promoted_1316_keeps_1311_safe_in_place_baseline_and_requires_reboot() -> None:
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = catalog["releases"][0]
 
     # 1.3.11/1212 remains the first release containing the corrected
-    # activation/update transaction implementation. 1.3.15/1216 is now the
+    # activation/update transaction implementation. 1.3.16/1217 is now the
     # selected fresh/update target while preserving 1.3.11 as the minimum
     # safe in-place predecessor and continuing to exclude immutable 1.3.10.
     # Its kiosk/GDM host policy becomes authoritative after a controlled reboot.
-    assert release["version"] == "1.3.15"
+    assert release["version"] == "1.3.16"
     assert release["version"] == catalog["latest_stable"]
     assert release["version"] == catalog["default_install_version"]
     assert release["min_current_version"] == "1.3.11"
