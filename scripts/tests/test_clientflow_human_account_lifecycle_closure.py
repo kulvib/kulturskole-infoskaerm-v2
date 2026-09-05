@@ -133,3 +133,33 @@ def test_successful_first_activation_finalizes_install_state_without_rewriting_b
     assert final["fresh_install_binding"] == binding
     assert final["bootstrap_user"] is None
     assert "credential_seed_b64" not in final
+
+def test_pending_manual_activation_state_preserves_exact_bootstrap_user():
+    binding = {
+        "release_id": "clientflow-1.3.18-seq-1219",
+        "version": "1.3.18",
+        "release_sequence": 1219,
+        "bundle_sha256": "a" * 64,
+        "bundle_size": 123,
+        "release_approval_reference": "approval/ref",
+        "release_candidate_sha256": "b" * 64,
+        "source_commit": "c" * 40,
+    }
+    source_state = {
+        "bootstrap_user": "ubuntu-bootstrap",
+        "credential_seed_b64": "resume-only",
+    }
+
+    final = cli._pending_manual_activation_state(
+        source_state,
+        binding=binding,
+        install_id="11111111-1111-4111-8111-111111111111",
+        backend_url="https://example.invalid",
+        kiosk_user=accounts.KIOSK_USER,
+    )
+
+    assert final["status"] == "pending_manual_activation"
+    assert final["bootstrap_user"] == "ubuntu-bootstrap"
+    assert final["fresh_install_binding"] == binding
+    assert "credential_seed_b64" not in final
+
