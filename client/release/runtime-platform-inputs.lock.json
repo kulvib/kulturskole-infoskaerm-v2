@@ -159,7 +159,8 @@
       "bootstrap_role": "apt-recovery",
       "trust_authority": "ubuntu-signed-apt-repository",
       "ubuntu_suite": "resolute",
-      "ubuntu_component": "main"
+      "ubuntu_component": "main",
+      "archive_url": "https://archive.ubuntu.com/ubuntu/pool/main/a/apt/apt_3.2.0_amd64.deb"
     }
   ]
 }

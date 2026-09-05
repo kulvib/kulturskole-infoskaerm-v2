@@ -102,6 +102,7 @@ def test_current_platform_lock_is_source_independent_and_matches_physically_veri
         "trust_authority": "ubuntu-signed-apt-repository",
         "ubuntu_suite": "resolute",
         "ubuntu_component": "main",
+        "archive_url": "https://archive.ubuntu.com/ubuntu/pool/main/a/apt/apt_3.2.0_amd64.deb",
     }]
 
 

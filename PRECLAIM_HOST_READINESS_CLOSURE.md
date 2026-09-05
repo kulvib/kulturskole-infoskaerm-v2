@@ -35,3 +35,7 @@ No Livestream, Terminal or Remote Desktop file is changed. No runtime agent or f
 ## Still open
 
 Network/factory cleanup, pre-first-activation repair authority, GTK4 legacy GUI parity, periodic time integrity, quick settings, cfadmin popup parity, recovery/support UX, local power-event reporting, full capability-based legacy parity gate and obsolete frontend-contract cleanup remain open.
+
+## CI authority-probe correction r2
+
+The Ubuntu 26.04 host probe no longer asks the runner's mutable APT package index to resolve the locked historical `apt=3.2.0` version. That resolver can legitimately stop advertising an older exact version while the Ubuntu archive pool retains the immutable package file. The probe now fetches the exact baseline `apt_3.2.0_amd64.deb` from the locked `https://archive.ubuntu.com/ubuntu/pool/main/a/apt/` URL using Python's standard HTTPS stack, then requires exact locked size/SHA-256 and Debian package metadata before exercising the destructive apt/curl recovery path. Production recovery itself remains offline-from-network and consumes only the exact bytes embedded in the approved whole bundle.

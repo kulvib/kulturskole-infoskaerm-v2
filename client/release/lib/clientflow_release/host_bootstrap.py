@@ -143,6 +143,9 @@ def _select_apt_bootstrap_artifact(lock: dict[str, Any]) -> dict[str, Any]:
     size = artifact.get("size")
     if not name or Path(name).name != name or not name.startswith("apt_") or not name.endswith("_amd64.deb"):
         raise HostBootstrapError("APT recovery-artifact har ugyldigt filnavn")
+    expected_archive_url = f"https://archive.ubuntu.com/ubuntu/pool/main/a/apt/{name}"
+    if artifact.get("archive_url") != expected_archive_url:
+        raise HostBootstrapError("APT recovery-artifact har ugyldig canonical Ubuntu archive URL")
     if not version or not re.fullmatch(r"[0-9A-Za-z.+:~_-]+", version):
         raise HostBootstrapError("APT recovery-artifact har ugyldig version")
     if not isinstance(size, int) or size <= 0 or size > 32 * 1024 * 1024:

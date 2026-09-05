@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "backend"))
@@ -66,32 +68,33 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="clientflow-preclaim-host-probe-") as temp_name:
         temp = Path(temp_name)
-        _run(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "update"])
-        # Ubuntu 26.04 supports opt-in architecture variants such as amd64v3.
-        # The canonical recovery artifact is deliberately the baseline amd64
-        # package so it remains portable across supported amd64 clients.  Force
-        # APT's variant selector off for this authority check; otherwise a CI
-        # runner with amd64v3 enabled may legally download apt_*_amd64v3.deb
-        # even though the repo lock names the baseline apt_*_amd64.deb bytes.
-        _run(
-            [
-                "/usr/bin/apt-get",
-                "-o",
-                "DPkg::Lock::Timeout=120",
-                "-o",
-                "APT::Architecture-Variants=",
-                "download",
-                f"apt:{artifact['architecture']}={artifact['version']}",
-            ],
-            cwd=temp,
-        )
         package = temp / str(artifact["file"])
+        # Do not ask the runner's mutable APT index to resolve an old exact
+        # release package. Ubuntu archive pools retain immutable package files
+        # after package indexes advance. The production recovery path never
+        # downloads this file: it consumes the exact hash-locked bytes already
+        # embedded in the approved whole bundle. This CI authority probe only
+        # proves that those locked bytes still match Canonical's archive copy.
+        request = urllib.request.Request(
+            str(artifact["archive_url"]),
+            headers={"User-Agent": "ClientFlow-preclaim-bootstrap-probe/1"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response, package.open("xb") as output:
+                remaining = int(artifact["size"]) + 1
+                while remaining > 0:
+                    chunk = response.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    output.write(chunk)
+                    remaining -= len(chunk)
+                if response.read(1):
+                    raise ProbeError("Ubuntu archive artifact exceeds repo-locked size")
+        except (OSError, urllib.error.URLError, urllib.error.HTTPError) as exc:
+            package.unlink(missing_ok=True)
+            raise ProbeError(f"Unable to fetch locked APT artifact from canonical Ubuntu archive: {exc}") from exc
         if not package.is_file() or package.is_symlink():
-            downloaded = sorted(item.name for item in temp.glob("*.deb"))
-            raise ProbeError(
-                "Ubuntu signed APT download did not materialize the locked baseline artifact "
-                f"{artifact['file']}; downloaded={downloaded}"
-            )
+            raise ProbeError("Canonical Ubuntu archive download did not materialize the locked APT artifact")
         if _sha256(package) != (int(artifact["size"]), str(artifact["sha256"])):
             raise ProbeError("Ubuntu signed APT download does not match repo-locked recovery artifact")
         host_bootstrap._verify_deb_metadata(package, artifact)

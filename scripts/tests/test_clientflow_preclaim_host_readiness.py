@@ -29,7 +29,19 @@ def test_platform_lock_has_one_ubuntu_signed_apt_recovery_artifact() -> None:
         "trust_authority": "ubuntu-signed-apt-repository",
         "ubuntu_suite": "resolute",
         "ubuntu_component": "main",
+        "archive_url": "https://archive.ubuntu.com/ubuntu/pool/main/a/apt/apt_3.2.0_amd64.deb",
     }
+
+
+
+
+def test_platform_lock_rejects_noncanonical_apt_archive_url() -> None:
+    lock = json.loads((ROOT / "client/release/runtime-platform-inputs.lock.json").read_text(encoding="utf-8"))
+    lock["preclaim_bootstrap_artifacts"][0]["archive_url"] = (
+        "https://example.invalid/apt_3.2.0_amd64.deb"
+    )
+    with pytest.raises(host_bootstrap.HostBootstrapError, match="canonical Ubuntu archive URL"):
+        host_bootstrap._select_apt_bootstrap_artifact(lock)
 
 
 def test_preclaim_readiness_repairs_apt_before_curl(monkeypatch, tmp_path: Path) -> None:
@@ -120,9 +132,9 @@ def test_curl_recovery_uses_apt_only_after_apt_is_ready(monkeypatch) -> None:
     assert calls[1][-3:] == ["install", "--reinstall", "curl"]
 
 
-def test_ubuntu2604_probe_forces_baseline_amd64_package_over_architecture_variants() -> None:
+def test_ubuntu2604_probe_uses_locked_canonical_archive_url_not_mutable_apt_index() -> None:
     source = (ROOT / "scripts/verify_clientflow_preclaim_bootstrap_ubuntu2604.py").read_text(encoding="utf-8")
-    assert '"APT::Architecture-Variants="' in source
-    assert "f\"apt:{artifact['architecture']}={artifact['version']}\"" in source
+    assert 'urllib.request.urlopen(request, timeout=120)' in source
+    assert 'str(artifact["archive_url"])' in source
+    assert '"download"' not in source
     assert 'package = temp / str(artifact["file"])' in source
-    assert 'glob("apt_*_amd64.deb")' not in source
