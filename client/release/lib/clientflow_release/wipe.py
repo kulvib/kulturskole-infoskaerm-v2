@@ -22,6 +22,7 @@ USERS = (
     "clientflow-system-agent",
     "clientflow-updater",
     "cfadmin",
+    "clientflow-kiosk",
 )
 GROUPS = (
     "clientflow-display-control",
