@@ -1,9 +1,15 @@
 #!/usr/bin/python3
 """ClientFlow local GTK4 status/control GUI for the kiosk Wayland session.
 
-Read-only status is derived from canonical local runtime/systemd state. The only
-mutating controls are Start/Stop kiosk, sent to the narrow Display runtime RPC.
-No domain credential or secret is read by this process.
+Legacy 1.1.19 is the functional/layout acceptance reference.  V2 keeps its
+native GTK4 implementation and canonical runtime/state authorities, while
+preserving the technician-facing grouping and copy affordances:
+Handlinger, Systeminfo, Kioskinfo, Netværksinfo and Kalender – næste 7 dage.
+
+The only mutating Display controls are Start/Stop kiosk through the narrow
+Display runtime RPC.  "Skift til administrator" only locks the current
+clientflow-kiosk seat0 session so GDM can present cfadmin.  No domain
+credential or secret is read by this process.
 """
 from __future__ import annotations
 
@@ -20,7 +26,7 @@ from typing import Any
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, Gtk, Pango  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
 
 SOCKET_PATH = os.getenv("CLIENTFLOW_DISPLAY_RUNTIME_SOCKET", "/run/clientflow/display/runtime.sock")
 STATUS_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_STATUS_PATH", "/var/lib/clientflow/display-runtime/runtime-status.json"))
@@ -28,7 +34,9 @@ CONFIG_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_CONFIG_PATH", "/var/lib/clientf
 RESOLUTION_STATUS_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_RESOLUTION_PATH", "/var/lib/clientflow/display-runtime/display-resolution.json"))
 GUI_STATUS_PATH = Path(os.getenv("CLIENTFLOW_GUI_STATUS_PATH", "/var/lib/clientflow/display-runtime/local-gui-status.json"))
 CALENDAR_PREVIEW_PATH = Path(os.getenv("CLIENTFLOW_CALENDAR_PREVIEW_PATH", "/var/lib/clientflow/display-runtime/calendar-preview.json"))
+PUBLIC_CLIENT_PATH = Path(os.getenv("CLIENTFLOW_PUBLIC_CLIENT_PATH", "/var/lib/clientflow/client-public.json"))
 VERSION_PATH = Path("/opt/clientflow/active/VERSION")
+SWITCH_USER_HELPER = Path("/opt/clientflow/active/client-runtime/libexec/clientflow-switch-user-admin")
 CLIENT_ID = str(os.getenv("CLIENTFLOW_CLIENT_ID") or "-").strip() or "-"
 
 
@@ -85,7 +93,11 @@ def _run(command: list[str], timeout: float = 3.0) -> str:
             text=True,
             timeout=timeout,
             check=False,
-            env={"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
+            env={
+                **os.environ,
+                "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "LANG": os.getenv("LANG", "C.UTF-8"),
+            },
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -103,12 +115,17 @@ def _network_snapshot() -> dict[str, str]:
         routes = json.loads(route or "[]")
     except json.JSONDecodeError:
         routes = []
-    active_interface = str(routes[0].get("dev") or "") if isinstance(routes, list) and routes and isinstance(routes[0], dict) else ""
+    active_interface = (
+        str(routes[0].get("dev") or "")
+        if isinstance(routes, list) and routes and isinstance(routes[0], dict)
+        else ""
+    )
     raw = _run(["/usr/sbin/ip", "-j", "address", "show"])
     try:
         rows = json.loads(raw or "[]")
     except json.JSONDecodeError:
         rows = []
+
     interfaces: dict[str, dict[str, str]] = {}
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, dict):
@@ -122,24 +139,32 @@ def _network_snapshot() -> dict[str, str]:
                 ip = str(info.get("local") or "-")
                 break
         try:
-            mac = Path(f"/sys/class/net/{name}/address").read_text(encoding="ascii").strip()
+            mac = Path(f"/sys/class/net/{name}/address").read_text(encoding="ascii").strip() or "-"
         except OSError:
             mac = "-"
         kind = "wifi" if Path(f"/sys/class/net/{name}/wireless").exists() else "lan"
         interfaces[name] = {"ip": ip, "mac": mac, "kind": kind}
 
-    def summary(name: str) -> str:
-        row = interfaces.get(name)
-        return f"{name} · {row['ip']} · {row['mac']}" if row else "-"
-
     wifi_name = next((name for name, row in interfaces.items() if row["kind"] == "wifi"), "")
-    lan_name = next((name for name, row in interfaces.items() if row["kind"] == "lan" and name != active_interface), "")
-    if not lan_name and active_interface in interfaces and interfaces[active_interface]["kind"] == "lan":
-        lan_name = active_interface
+    lan_candidates = [name for name, row in interfaces.items() if row["kind"] == "lan"]
+    lan_name = active_interface if active_interface in lan_candidates else (lan_candidates[0] if lan_candidates else "")
+    active = interfaces.get(active_interface) or {}
+    wifi = interfaces.get(wifi_name) or {}
+    lan = interfaces.get(lan_name) or {}
+    active_kind = str(active.get("kind") or "")
+    active_label = (
+        f"{'WiFi' if active_kind == 'wifi' else 'LAN'} · {active_interface}"
+        if active_interface
+        else "Ingen aktiv forbindelse"
+    )
     return {
-        "active": summary(active_interface) if active_interface else "Ingen aktiv forbindelse",
-        "wifi": summary(wifi_name) if wifi_name else "-",
-        "lan": summary(lan_name) if lan_name else "-",
+        "active_connection": active_label,
+        "active_ip": str(active.get("ip") or "-"),
+        "active_mac": str(active.get("mac") or "-"),
+        "wifi_ip": str(wifi.get("ip") or "-"),
+        "wifi_mac": str(wifi.get("mac") or "-"),
+        "lan_ip": str(lan.get("ip") or "-"),
+        "lan_mac": str(lan.get("mac") or "-"),
     }
 
 
@@ -161,114 +186,212 @@ def _version() -> str:
         return "-"
 
 
-def _calendar_lines() -> list[str]:
+def _calendar_rows() -> list[tuple[str, str, str, str]]:
     preview = _read_json(CALENDAR_PREVIEW_PATH)
     rows = preview.get("days") if isinstance(preview.get("days"), list) else []
     by_date = {str(row.get("date")): row for row in rows if isinstance(row, dict)}
-    lines: list[str] = []
+    result: list[tuple[str, str, str, str]] = []
     today = date.today()
     danish = ("man", "tir", "ons", "tor", "fre", "lør", "søn")
     for offset in range(7):
         current = date.fromordinal(today.toordinal() + offset)
-        key = current.isoformat()
-        row = by_date.get(key, {})
+        row = by_date.get(current.isoformat(), {})
         status = str(row.get("status") or "missing")
         if status == "on":
-            value = f"{str(row.get('onTime') or '-')[:5]}–{str(row.get('offTime') or '-')[:5]}"
+            state = "Åben"
+            opens = str(row.get("onTime") or "-")[:5]
+            closes = str(row.get("offTime") or "-")[:5]
         elif status == "off":
-            value = "Lukket"
+            state, opens, closes = "Lukket", "-", "-"
         else:
-            value = "Ikke rapporteret"
-        lines.append(f"{danish[current.weekday()]} {current.strftime('%d/%m')}: {value}")
-    return lines
+            state, opens, closes = "Ikke rapporteret", "-", "-"
+        result.append((f"{danish[current.weekday()]} {current.strftime('%d/%m')}", state, opens, closes))
+    return result
 
 
 class ClientFlowWindow(Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application) -> None:
         super().__init__(application=app, title="ClientFlow Status")
-        # Compact two-column panel: no mandatory scrolling on common kiosk
-        # resolutions, while remaining resizable on smaller/rotated displays.
-        self.set_default_size(720, 720)
+        self.set_default_size(820, 900)
         self.set_resizable(True)
         self.labels: dict[str, Gtk.Label] = {}
+        self.copy_values: dict[str, str] = {}
+        self.calendar_labels: list[tuple[Gtk.Label, Gtk.Label, Gtk.Label, Gtk.Label]] = []
         self.message = Gtk.Label(xalign=0)
-        self.calendar_labels: list[Gtk.Label] = []
         self._build()
         _write_gui_status("running")
         self.refresh()
         GLib.timeout_add_seconds(1, self.refresh)
 
+    @staticmethod
+    def _frame(title: str) -> tuple[Gtk.Frame, Gtk.Box]:
+        frame = Gtk.Frame()
+        frame.set_label(title)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+        box.set_margin_start(10)
+        box.set_margin_end(10)
+        frame.set_child(box)
+        return frame, box
+
+    def _add_field(
+        self,
+        grid: Gtk.Grid,
+        row: int,
+        label_text: str,
+        key: str,
+        *,
+        copyable: bool = False,
+    ) -> None:
+        label = Gtk.Label(label=label_text, xalign=0)
+        label.add_css_class("dim-label")
+        value = Gtk.Label(label="-", xalign=0)
+        value.set_selectable(True)
+        value.set_hexpand(True)
+        value.set_ellipsize(Pango.EllipsizeMode.END)
+        grid.attach(label, 0, row, 1, 1)
+        grid.attach(value, 1, row, 1, 1)
+        self.labels[key] = value
+        if copyable:
+            button = Gtk.Button(label="Kopiér")
+            button.connect("clicked", lambda _button, selected=key: self._copy(selected))
+            grid.attach(button, 2, row, 1, 1)
+
     def _build(self) -> None:
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        outer.set_margin_top(16)
-        outer.set_margin_bottom(16)
-        outer.set_margin_start(18)
-        outer.set_margin_end(18)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        outer.set_margin_top(10)
+        outer.set_margin_bottom(10)
+        outer.set_margin_start(12)
+        outer.set_margin_end(12)
         self.set_child(outer)
 
         title = Gtk.Label(label="ClientFlow", xalign=0)
-        title.add_css_class("title-1")
+        title.add_css_class("title-2")
         outer.append(title)
 
-        grid = Gtk.Grid(column_spacing=18, row_spacing=7)
-        outer.append(grid)
-        fields = (
-            ("Client ID", "client_id"),
-            ("Hostname", "hostname"),
-            ("ClientFlow-version", "version"),
-            ("Backend sync", "backend"),
-            ("Kiosk URL", "kiosk_url"),
-            ("Auto refresh", "browser_refresh"),
-            ("Display runtime", "display"),
-            ("Display power", "power"),
-            ("Skærmopløsning", "resolution"),
-            ("Browser Guard", "browser_guard"),
-            ("Livestream", "livestream"),
-            ("Remote Desktop", "remote_desktop"),
-            ("Terminal", "terminal"),
-            ("Admin terminal", "admin_terminal"),
-            ("ClientFlow update", "update"),
-            ("Ubuntu update", "ubuntu_update"),
-            ("Aktivt netværk", "network_active"),
-            ("WiFi", "network_wifi"),
-            ("LAN", "network_lan"),
-            ("Uptime", "uptime"),
-        )
-        for index, (name, key) in enumerate(fields):
-            row = index // 2
-            column = (index % 2) * 2
-            label = Gtk.Label(label=name, xalign=0)
-            label.add_css_class("dim-label")
-            value = Gtk.Label(label="-", xalign=0)
-            value.set_selectable(True)
-            value.set_hexpand(True)
-            value.set_ellipsize(Pango.EllipsizeMode.END)
-            grid.attach(label, column, row, 1, 1)
-            grid.attach(value, column + 1, row, 1, 1)
-            self.labels[key] = value
-
-        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        outer.append(controls)
+        actions_frame, actions = self._frame("Handlinger")
+        outer.append(actions_frame)
+        action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        actions.append(action_row)
         self.start_button = Gtk.Button(label="Start kiosk")
         self.stop_button = Gtk.Button(label="Stop kiosk")
+        self.admin_button = Gtk.Button(label="Skift til administrator")
         self.start_button.connect("clicked", lambda _button: self._send_action("start_browser"))
         self.stop_button.connect("clicked", lambda _button: self._send_action("stop_browser"))
-        controls.append(self.start_button)
-        controls.append(self.stop_button)
+        self.admin_button.connect("clicked", self._switch_to_admin)
+        action_row.append(self.start_button)
+        action_row.append(self.stop_button)
+        action_row.append(self.admin_button)
+
+        system_frame, system_box = self._frame("Systeminfo")
+        outer.append(system_frame)
+        system_grid = Gtk.Grid(column_spacing=12, row_spacing=4)
+        system_box.append(system_grid)
+        system_fields = (
+            ("Klient ID", "client_id"),
+            ("Navn / Lokation", "name_locality"),
+            ("Hostname", "hostname"),
+            ("ClientFlow version", "version"),
+            ("Backend-status", "backend"),
+            ("Oppetid", "uptime"),
+            ("ClientFlow update", "update"),
+            ("Ubuntu/System", "ubuntu_update"),
+            ("Livestream", "livestream"),
+            ("Remote desktop", "remote_desktop"),
+            ("Remote terminal", "terminal"),
+            ("Admin terminal", "admin_terminal"),
+        )
+        for row, (label, key) in enumerate(system_fields):
+            self._add_field(system_grid, row, label, key)
+
+        kiosk_frame, kiosk_box = self._frame("Kioskinfo")
+        outer.append(kiosk_frame)
+        kiosk_grid = Gtk.Grid(column_spacing=12, row_spacing=4)
+        kiosk_box.append(kiosk_grid)
+        kiosk_fields = (
+            ("Kiosk URL", "kiosk_url", True),
+            ("Auto refresh", "browser_refresh", False),
+            ("Kiosk browser status", "display", False),
+            ("Display power", "power", False),
+            ("Skærmopløsning", "resolution", False),
+            ("Browser Guard", "browser_guard", False),
+        )
+        for row, (label, key, copyable) in enumerate(kiosk_fields):
+            self._add_field(kiosk_grid, row, label, key, copyable=copyable)
+
+        network_frame, network_box = self._frame("Netværksinfo")
+        outer.append(network_frame)
+        network_grid = Gtk.Grid(column_spacing=12, row_spacing=4)
+        network_box.append(network_grid)
+        network_fields = (
+            ("Aktiv forbindelse", "network_active", False),
+            ("Aktiv IP", "network_active_ip", True),
+            ("Aktiv MAC", "network_active_mac", True),
+            ("WiFi IP", "network_wifi_ip", True),
+            ("WiFi MAC", "network_wifi_mac", True),
+            ("LAN IP", "network_lan_ip", True),
+            ("LAN MAC", "network_lan_mac", True),
+        )
+        for row, (label, key, copyable) in enumerate(network_fields):
+            self._add_field(network_grid, row, label, key, copyable=copyable)
+
+        calendar_frame, calendar_box = self._frame("Kalender – næste 7 dage")
+        outer.append(calendar_frame)
+        calendar_grid = Gtk.Grid(column_spacing=14, row_spacing=3)
+        calendar_box.append(calendar_grid)
+        for column, heading in enumerate(("Dag", "Status", "Åbner", "Lukker")):
+            label = Gtk.Label(label=heading, xalign=0)
+            label.add_css_class("heading")
+            calendar_grid.attach(label, column, 0, 1, 1)
+        for index in range(7):
+            labels = tuple(Gtk.Label(label="-", xalign=0) for _ in range(4))
+            for column, label in enumerate(labels):
+                label.set_selectable(True)
+                calendar_grid.attach(label, column, index + 1, 1, 1)
+            self.calendar_labels.append(labels)  # type: ignore[arg-type]
 
         self.message.set_wrap(True)
         outer.append(self.message)
 
-        calendar_title = Gtk.Label(label="Kalender · næste 7 dage", xalign=0)
-        calendar_title.add_css_class("title-4")
-        outer.append(calendar_title)
-        calendar_grid = Gtk.Grid(column_spacing=12, row_spacing=5)
-        outer.append(calendar_grid)
-        for index in range(7):
-            label = Gtk.Label(label="-", xalign=0)
-            label.set_selectable(True)
-            calendar_grid.attach(label, 0, index, 1, 1)
-            self.calendar_labels.append(label)
+    def _copy(self, key: str) -> None:
+        value = str(self.copy_values.get(key) or "").strip()
+        if not value or value == "-":
+            self.message.set_text("Ingen værdi at kopiere.")
+            return
+        display = Gdk.Display.get_default()
+        if display is None:
+            self.message.set_text("Clipboard er ikke tilgængeligt.")
+            return
+        display.get_clipboard().set_text(value)
+        self.message.set_text("Kopieret!")
+
+    def _switch_to_admin(self, _button: Gtk.Button) -> None:
+        self.admin_button.set_sensitive(False)
+        self.message.set_text("Åbner administrator-login…")
+
+        def worker() -> None:
+            try:
+                result = subprocess.run(
+                    [str(SWITCH_USER_HELPER)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                    env={
+                        **os.environ,
+                        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                        "LANG": os.getenv("LANG", "C.UTF-8"),
+                    },
+                )
+                if result.returncode != 0:
+                    raise RuntimeError((result.stdout or "Skift af bruger fejlede").strip()[:180])
+            except Exception as exc:
+                GLib.idle_add(self.message.set_text, f"Administratorskift fejlede: {str(exc)[:180]}")
+                GLib.idle_add(self.admin_button.set_sensitive, True)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _send_action(self, action: str) -> None:
         self.start_button.set_sensitive(False)
@@ -281,7 +404,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 if action == "start_browser":
                     payload["payload"] = {"source": "gui"}
                 _rpc(payload, timeout=25.0)
-            except Exception as exc:  # GUI boundary: show bounded error, keep process alive.
+            except Exception as exc:
                 GLib.idle_add(self.message.set_text, f"Kommando fejlede: {str(exc)[:180]}")
             else:
                 GLib.idle_add(self.message.set_text, "Kommando udført.")
@@ -289,6 +412,11 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 GLib.idle_add(self.refresh)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _set(self, key: str, value: str) -> None:
+        text = str(value or "-")
+        self.labels[key].set_text(text)
+        self.copy_values[key] = text
 
     def refresh(self) -> bool:
         try:
@@ -298,47 +426,66 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             countdown = runtime.get("countdown_remaining")
             reason = str(runtime.get("countdown_reason") or "")
             if state == "countdown" and countdown:
-                display = f"Countdown {countdown}s · {reason or 'forbereder'}"
+                browser_status = f"Countdown {countdown}s · {reason or 'forbereder'}"
                 self.present()
             elif state == "running" and pid:
-                display = f"Chrome kører · PID {pid}"
+                browser_status = f"Chrome kører · PID {pid}"
             else:
-                display = state
-            self.labels["client_id"].set_text(CLIENT_ID)
-            self.labels["hostname"].set_text(socket.gethostname())
+                browser_status = state
+
+            public = _read_json(PUBLIC_CLIENT_PATH)
+            client_id = str(public.get("client_id") or CLIENT_ID)
+            client_name = str(public.get("name") or "-")
+            locality = str(public.get("locality") or "").strip()
+            name_locality = f"{client_name} / {locality}" if locality else client_name
             configuration = _read_json(CONFIG_PATH)
             resolution = _read_json(RESOLUTION_STATUS_PATH)
             network = _network_snapshot()
-            self.labels["version"].set_text(_version())
-            self.labels["backend"].set_text(_service_state("clientflow-status-agent.service"))
-            self.labels["kiosk_url"].set_text(str(configuration.get("kiosk_url") or "-"))
+
+            self._set("client_id", client_id)
+            self._set("name_locality", name_locality)
+            self._set("hostname", socket.gethostname())
+            self._set("version", _version())
+            self._set("backend", _service_state("clientflow-status-agent.service"))
+            self._set("uptime", _uptime())
+            self._set("update", _service_state("clientflow-updater.timer"))
+            self._set("ubuntu_update", _service_state("clientflow-system-broker.socket"))
+            self._set("livestream", _service_state("clientflow-livestream-producer.service"))
+            self._set("remote_desktop", _service_state("clientflow-remote-desktop-agent.service"))
+            self._set("terminal", _service_state("clientflow-terminal-agent.service"))
+            self._set("admin_terminal", _service_state("clientflow-root-terminal-broker.socket"))
+
+            self._set("kiosk_url", str(configuration.get("kiosk_url") or "-"))
             refresh_seconds = int(configuration.get("browser_refresh_interval_sec") or 0)
-            self.labels["browser_refresh"].set_text("slået fra" if refresh_seconds == 0 else f"{refresh_seconds} sek.")
-            self.labels["display"].set_text(display)
-            self.labels["power"].set_text(str(runtime.get("display_power") or "unknown"))
+            self._set("browser_refresh", "slået fra" if refresh_seconds == 0 else f"{refresh_seconds} sek.")
+            self._set("display", browser_status)
+            self._set("power", str(runtime.get("display_power") or "unknown"))
             if resolution.get("ok"):
-                self.labels["resolution"].set_text(
-                    f"{resolution.get('output') or '-'} · {resolution.get('width') or '?'}×{resolution.get('height') or '?'} · {resolution.get('refresh_rate') or '?'} Hz"
+                self._set(
+                    "resolution",
+                    f"{resolution.get('output') or '-'} · {resolution.get('width') or '?'}×{resolution.get('height') or '?'} · {resolution.get('refresh_rate') or '?'} Hz",
                 )
             else:
-                self.labels["resolution"].set_text(str(resolution.get("error") or "ikke detekteret")[:120])
-            self.labels["browser_guard"].set_text(_service_state("clientflow-browser-guard.service"))
-            self.labels["livestream"].set_text(_service_state("clientflow-livestream-producer.service"))
-            self.labels["remote_desktop"].set_text(_service_state("clientflow-remote-desktop-agent.service"))
-            self.labels["terminal"].set_text(_service_state("clientflow-terminal-agent.service"))
-            self.labels["admin_terminal"].set_text(_service_state("clientflow-root-terminal-broker.socket"))
-            self.labels["update"].set_text(_service_state("clientflow-updater.timer"))
-            self.labels["ubuntu_update"].set_text(_service_state("clientflow-system-broker.socket"))
-            self.labels["network_active"].set_text(network["active"])
-            self.labels["network_wifi"].set_text(network["wifi"])
-            self.labels["network_lan"].set_text(network["lan"])
-            self.labels["uptime"].set_text(_uptime())
-            for label, text in zip(self.calendar_labels, _calendar_lines()):
-                label.set_text(text)
+                self._set("resolution", str(resolution.get("error") or "ikke detekteret")[:120])
+            self._set("browser_guard", _service_state("clientflow-browser-guard.service"))
+
+            self._set("network_active", network["active_connection"])
+            self._set("network_active_ip", network["active_ip"])
+            self._set("network_active_mac", network["active_mac"])
+            self._set("network_wifi_ip", network["wifi_ip"])
+            self._set("network_wifi_mac", network["wifi_mac"])
+            self._set("network_lan_ip", network["lan_ip"])
+            self._set("network_lan_mac", network["lan_mac"])
+
+            for labels, values in zip(self.calendar_labels, _calendar_rows()):
+                for label, value in zip(labels, values):
+                    label.set_text(value)
+
             busy = state in {"countdown", "resetting"}
             running = bool(pid) and state == "running"
             self.start_button.set_sensitive(not busy and not running)
             self.stop_button.set_sensitive(not busy and running)
+            self.admin_button.set_sensitive(True)
             _write_gui_status("running")
         except Exception as exc:
             self.message.set_text(f"GUI refresh-fejl: {str(exc)[:180]}")

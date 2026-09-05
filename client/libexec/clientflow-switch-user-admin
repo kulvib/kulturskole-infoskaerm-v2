@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+EXPECTED_USER="${CLIENTFLOW_KIOSK_USER:-clientflow-kiosk}"
+CURRENT_USER="$(id -un)"
+
+if [[ "$CURRENT_USER" != "$EXPECTED_USER" ]]; then
+  echo "clientflow-switch-user-admin: må kun køres fra ${EXPECTED_USER}-sessionen" >&2
+  exit 1
+fi
+
+for binary in /usr/bin/loginctl /usr/bin/id; do
+  if [[ ! -x "$binary" ]]; then
+    echo "clientflow-switch-user-admin: mangler $binary" >&2
+    exit 1
+  fi
+done
+
+SESSION_ID="$(/usr/bin/loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null || true)"
+if [[ -z "$SESSION_ID" ]]; then
+  echo "clientflow-switch-user-admin: ingen aktiv seat0-session" >&2
+  exit 1
+fi
+
+prop() {
+  /usr/bin/loginctl show-session "$SESSION_ID" -p "$1" --value 2>/dev/null || true
+}
+
+NAME="$(prop Name)"
+SEAT="$(prop Seat)"
+REMOTE="$(prop Remote)"
+CLASS="$(prop Class)"
+ACTIVE="$(prop Active)"
+
+if [[ "$NAME" != "$EXPECTED_USER" || "$SEAT" != "seat0" || "$REMOTE" != "no" || "$CLASS" != "user" || "$ACTIVE" != "yes" ]]; then
+  echo "clientflow-switch-user-admin: aktiv seat0-session matcher ikke canonical kiosk-session" >&2
+  exit 1
+fi
+
+# Bounded local UX only: lock the current kiosk session.  No service, credential,
+# network or frozen-domain state is changed. GDM may then present cfadmin.
+exec /usr/bin/loginctl lock-session "$SESSION_ID"

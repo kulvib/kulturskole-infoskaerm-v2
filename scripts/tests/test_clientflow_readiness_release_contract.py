@@ -32,6 +32,14 @@ def test_direct_exec_payload_modes_do_not_depend_on_github_source_mode(tmp_path)
     ) == 0o755
     assert builder._payload_source_mode(
         source,
+        PurePosixPath("clientflow-9.9.9/client-runtime/libexec/clientflow-recovery"),
+    ) == 0o755
+    assert builder._payload_source_mode(
+        source,
+        PurePosixPath("clientflow-9.9.9/client-runtime/libexec/clientflow-switch-user-admin"),
+    ) == 0o755
+    assert builder._payload_source_mode(
+        source,
         PurePosixPath("clientflow-9.9.9/client-runtime/config-examples/example.json"),
     ) == 0o644
 
@@ -280,7 +288,7 @@ def test_local_clientflow_gui_is_release_owned_and_readiness_gated():
     assert 'client_id=int(response["client_id"])' in cli_source
     assert 'gi.require_version("Gtk", "4.0")' in gui
     assert 'Start kiosk' in gui and 'Stop kiosk' in gui
-    assert 'Kalender · næste 7 dage' in gui
+    assert 'Kalender – næste 7 dage' in gui
     assert '/etc/clientflow/credentials' not in gui and 'client_secret' not in gui
     compile(gui, "client/libexec/local-gui", "exec")
 
