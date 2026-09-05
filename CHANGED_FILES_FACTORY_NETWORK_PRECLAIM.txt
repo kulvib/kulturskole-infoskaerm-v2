@@ -1,0 +1,12 @@
+CHANGED_FILES_FACTORY_NETWORK_PRECLAIM.txt
+CLIENTFLOW_RELEASE_PROCEDURE.md
+CLIENTFLOW_LEGACY_119_PARITY_REVIEW.md
+FACTORY_NETWORK_PRECLAIM_CLOSURE.md
+backend/tests/test_clientflow_fresh_install_state_binding.py
+client/release/lib/clientflow_release/cli.py
+client/release/lib/clientflow_release/enrollment.py
+client/release/lib/clientflow_release/network_bootstrap.py
+frontend/src/utils/clientflowFreshInstall.js
+frontend/tests/clientflowFreshInstall51n.test.mjs
+scripts/tests/test_clientflow_factory_network_preclaim.py
+scripts/tests/test_clientflow_human_account_lifecycle_closure.py

@@ -18,6 +18,7 @@ from typing import Any
 
 from .constants import DOMAIN_NAMES
 from .filesystem import atomic_write_json, ensure_real_directory, fsync_directory
+from .network_bootstrap import collect_network_facts
 
 
 class EnrollmentError(RuntimeError):
@@ -232,6 +233,7 @@ def host_facts() -> dict[str, Any]:
         "machine_id": machine_id or None,
         "ubuntu_version": ubuntu_version or None,
         "uptime": None,
+        **collect_network_facts(),
     }
 
 

@@ -26,6 +26,13 @@ from .accounts import (
 from .constants import DOMAIN_NAMES, INSTALL_MODE_FRESH, MAX_BUNDLE_BYTES
 from .crypto import sha256_file
 from .host_bootstrap import ensure_preclaim_host_readiness
+from .network_bootstrap import (
+    cleanup_bootstrap_connection,
+    ensure_preclaim_network_readiness,
+    normalize_client_name,
+    normalize_connection_uuid,
+    normalize_locality,
+)
 from .enrollment import (
     EnrollmentHTTPError,
     claim,
@@ -604,18 +611,27 @@ def _pending_manual_activation_state(
     install_id: str,
     backend_url: str,
     kiosk_user: str,
+    client_name: str,
+    locality: str | None,
+    bootstrap_network_connection: dict[str, object] | None,
 ) -> dict:
-    """Build the durable pre-activation state without losing bootstrap identity."""
+    """Build durable pre-activation state without losing bootstrap identity/network ownership."""
     return {
         "schema_version": INSTALL_STATE_SCHEMA,
         "fresh_install_binding": binding,
         "install_id": install_id,
         "backend_url": backend_url,
         "kiosk_user": kiosk_user,
+        "client_name": client_name,
+        "locality": locality,
         # Preserve the exact pre-ClientFlow Ubuntu identity through the pending
         # activation boundary. Healthy first activation is the only point where
         # cleanup_bootstrap_user() is allowed to consume and clear this marker.
         "bootstrap_user": install_state.get("bootstrap_user"),
+        # Only an explicitly marked, active NetworkManager profile is owned by
+        # ClientFlow bootstrap cleanup. Unmarked host/customer profiles are
+        # never enumerated or deleted.
+        "bootstrap_network_connection": bootstrap_network_connection,
         "status": "pending_manual_activation",
     }
 
@@ -639,17 +655,19 @@ def install_fresh(args: argparse.Namespace) -> dict:
     release_id = str(binding["release_id"])
     state_path = _install_state_path(layout)
     new_install = not state_path.exists()
-    # Host prerequisites are established before one-time enrollment authorities
-    # are even read from stdin and before any ClientFlow local state is created.
-    # Recovery uses only bytes already bound to the approved whole bundle.
-    if layout.root == Path("/"):
-        ensure_preclaim_host_readiness(
-            args.bundle,
-            expected_bundle_sha256=approved_bundle_sha256,
-        )
-    enrollment_code, fresh_install_authorization = _fresh_install_authorities(args)
+    install_state: dict | None = None
+    stored_bootstrap_network = None
 
-    if not new_install:
+    # Name/locality are explicit fresh-install lifecycle data. They are
+    # validated before enrollment authorities are read and become immutable
+    # across crash/resume for the same consuming transaction.
+    if new_install:
+        client_name = normalize_client_name(getattr(args, "name", None))
+        locality = normalize_locality(getattr(args, "locality", None))
+        requested_bootstrap_uuid = normalize_connection_uuid(
+            getattr(args, "bootstrap_network_connection_uuid", None)
+        )
+    else:
         install_state = load_secure_json(state_path)
         if install_state.get("schema_version") != INSTALL_STATE_SCHEMA:
             raise RuntimeError(
@@ -661,7 +679,52 @@ def install_fresh(args: argparse.Namespace) -> dict:
             raise RuntimeError("Resume kræver præcis samme godkendte fresh-install release-binding")
         if install_state.get("backend_url") != backend_url or install_state.get("kiosk_user") != kiosk_user:
             raise RuntimeError("Resume kræver samme backend_url og kiosk-user som den oprindelige installation")
+        client_name = normalize_client_name(install_state.get("client_name"))
+        supplied_name = getattr(args, "name", None)
+        if supplied_name is not None and normalize_client_name(supplied_name) != client_name:
+            raise RuntimeError("Resume kræver samme eksplicitte klientnavn som den oprindelige installation")
+        locality = normalize_locality(install_state.get("locality"))
+        supplied_locality = getattr(args, "locality", None)
+        if supplied_locality is not None and normalize_locality(supplied_locality) != locality:
+            raise RuntimeError("Resume kræver samme lokation som den oprindelige installation")
+        stored_bootstrap_network = install_state.get("bootstrap_network_connection")
+        stored_uuid = None
+        if isinstance(stored_bootstrap_network, dict):
+            stored_uuid = normalize_connection_uuid(str(stored_bootstrap_network.get("uuid") or ""))
+        supplied_uuid = normalize_connection_uuid(
+            getattr(args, "bootstrap_network_connection_uuid", None)
+        )
+        if supplied_uuid is not None and supplied_uuid != stored_uuid:
+            raise RuntimeError(
+                "Resume kræver samme markerede bootstrap NetworkManager-forbindelse"
+            )
+        requested_bootstrap_uuid = stored_uuid
 
+    # Host prerequisites and network/backend reachability are proven before
+    # one-time enrollment authorities are read. The network preflight is
+    # read-only except for the separately completed host prerequisite repair.
+    bootstrap_network_connection = stored_bootstrap_network
+    if layout.root == Path("/"):
+        ensure_preclaim_host_readiness(
+            args.bundle,
+            expected_bundle_sha256=approved_bundle_sha256,
+        )
+        network_preflight = ensure_preclaim_network_readiness(
+            backend_url,
+            ca_file=getattr(args, "ca_file", None),
+            bootstrap_connection_uuid=requested_bootstrap_uuid,
+        )
+        current_marker = network_preflight.get("bootstrap_connection")
+        if stored_bootstrap_network is not None and current_marker != stored_bootstrap_network:
+            raise RuntimeError(
+                "Resume bootstrap NetworkManager-profil matcher ikke den oprindeligt markerede profil"
+            )
+        bootstrap_network_connection = current_marker
+
+    enrollment_code, fresh_install_authorization = _fresh_install_authorities(args)
+
+    if not new_install:
+        assert install_state is not None
         # Fresh-install resume owns only the pre-activation lifecycle.  The
         # durable release transaction + active symlink become authoritative as
         # soon as local activation starts.  Reject that state before
@@ -690,7 +753,8 @@ def install_fresh(args: argparse.Namespace) -> dict:
     else:
         # A brand-new consuming transaction must have both one-time authorities
         # before any ClientFlow filesystem state is created. They are never
-        # persisted locally; only the non-secret verified release binding is.
+        # persisted locally; only the non-secret verified release binding and
+        # explicit bootstrap identity/network ownership are retained.
         if not enrollment_code:
             raise RuntimeError("Ny fresh install kræver en one-time enrollment code via stdin")
         if not fresh_install_authorization:
@@ -710,6 +774,9 @@ def install_fresh(args: argparse.Namespace) -> dict:
             "credential_seed_b64": base64.urlsafe_b64encode(seed).rstrip(b"=").decode("ascii"),
             "backend_url": backend_url,
             "kiosk_user": kiosk_user,
+            "client_name": client_name,
+            "locality": locality,
+            "bootstrap_network_connection": bootstrap_network_connection,
             # Exact pre-ClientFlow Ubuntu user.  This is lifecycle metadata, not
             # a credential, and is removed only after healthy first activation.
             "bootstrap_user": detect_bootstrap_user() if layout.root == Path("/") else None,
@@ -760,8 +827,8 @@ def install_fresh(args: argparse.Namespace) -> dict:
                 seed=seed,
                 public_key_pem=public_key_pem,
                 update_auth_public_key_pem=update_public_key_pem,
-                name=args.name,
-                locality=args.locality,
+                name=client_name,
+                locality=locality,
                 ca_file=request_ca_file,
             )
         except EnrollmentHTTPError as exc:
@@ -834,6 +901,9 @@ def install_fresh(args: argparse.Namespace) -> dict:
         install_id=install_id,
         backend_url=backend_url,
         kiosk_user=kiosk_user,
+        client_name=client_name,
+        locality=locality,
+        bootstrap_network_connection=bootstrap_network_connection,
     )
     atomic_write_json(state_path, final_state, mode=0o600)
     return {
@@ -864,6 +934,10 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--kiosk-user", default=KIOSK_USER, choices=[KIOSK_USER])
     install.add_argument("--name")
     install.add_argument("--locality")
+    install.add_argument(
+        "--bootstrap-network-connection-uuid",
+        help="Explicit active NetworkManager WiFi/Ethernet profile owned by temporary ClientFlow bootstrap cleanup",
+    )
     install.add_argument("--ca-file", type=Path)
     _common_transaction_parser(install)
     activate = sub.add_parser("activate")
@@ -901,29 +975,57 @@ def _finalize_install_state_after_activation(layout: Layout, release_id: str) ->
         raise RuntimeError("Install-state kan kun finaliseres efter durable healthy activation")
     if original_release_id != release_id:
         # A newer release may be the *first* active release only through the
-        # explicit pre-first-activation repair flow.  Preserve the immutable
-        # original claim binding and require that there was no prior active
-        # release plus a strictly increasing sequence.
-        if install_state.get("status") != "pending_manual_activation":
+        # explicit pre-first-activation repair flow. Preserve the immutable
+        # original claim binding and allow a cleanup retry after that repaired
+        # first activation has already been recorded locally.
+        state_status = str(install_state.get("status") or "")
+        repair_from = str(install_state.get("first_activation_repair_from_release_id") or "")
+        if state_status == "pending_manual_activation":
+            if release_state.get("previous_release_id") is not None:
+                return
+            record = (release_state.get("installed") or {}).get(release_id)
+            if not isinstance(record, dict):
+                raise RuntimeError("Repair target mangler i local release-state")
+            if int(record.get("release_sequence") or 0) <= int(binding["release_sequence"]):
+                raise RuntimeError("Repair first activation kræver en strengt nyere release sequence")
+            install_state["first_activation_repair_from_release_id"] = original_release_id
+        elif not (state_status == "activated" and repair_from == original_release_id):
             return
-        if release_state.get("previous_release_id") is not None:
-            return
-        record = (release_state.get("installed") or {}).get(release_id)
-        if not isinstance(record, dict):
-            raise RuntimeError("Repair target mangler i local release-state")
-        if int(record.get("release_sequence") or 0) <= int(binding["release_sequence"]):
-            raise RuntimeError("Repair first activation kræver en strengt nyere release sequence")
-        install_state["first_activation_repair_from_release_id"] = original_release_id
+
     bootstrap_user = install_state.get("bootstrap_user")
     if layout.root == Path("/"):
         cleanup_bootstrap_user(str(bootstrap_user) if bootstrap_user else None)
+
+    bootstrap_network = install_state.get("bootstrap_network_connection")
+    if bootstrap_network is not None and not isinstance(bootstrap_network, dict):
+        raise RuntimeError("Install-state har ugyldig bootstrap NetworkManager marker")
     install_state["status"] = "activated"
     install_state["activated_release_id"] = release_id
     install_state["bootstrap_user"] = None
-    # credential_seed is needed only for enrollment crash/resume.  Once first
+    install_state["bootstrap_network_cleanup_pending"] = bool(bootstrap_network)
+    # credential_seed is needed only for enrollment crash/resume. Once first
     # activation is healthy, retaining it creates unnecessary long-lived state.
     install_state.pop("credential_seed_b64", None)
+    # Persist truthful lifecycle state before optional network cleanup. If
+    # deleting a deliberately temporary active profile drops connectivity, the
+    # durable state still records that activation itself succeeded.
     atomic_write_json(state_path, install_state, mode=0o600)
+
+    if layout.root == Path("/") and bootstrap_network:
+        try:
+            cleanup_bootstrap_connection(
+                bootstrap_network if isinstance(bootstrap_network, dict) else None
+            )
+        except Exception:
+            # Keep the exact marker for a same-release activation retry before
+            # the controlled reboot. Never broaden cleanup to other profiles.
+            install_state["bootstrap_network_cleanup_pending"] = True
+            atomic_write_json(state_path, install_state, mode=0o600)
+            raise
+        install_state["bootstrap_network_connection"] = None
+        install_state["bootstrap_network_cleanup_pending"] = False
+        atomic_write_json(state_path, install_state, mode=0o600)
+
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)

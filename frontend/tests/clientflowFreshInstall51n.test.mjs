@@ -19,6 +19,9 @@ test("51N handoff pins backend, release and whole-bundle SHA without persisting 
   assert.doesNotMatch(command, /CF-ABCD-EFGH-IJKL/);
   assert.match(command, /clientflow-1\.3\.0-seq-1201/);
   assert.doesNotMatch(command, /cf-fresh-v1\.payload\.signature/);
+  assert.match(command, /IFS= read -r CLIENTFLOW_CLIENT_NAME/);
+  assert.match(command, /IFS= read -r CLIENTFLOW_LOCALITY/);
+  assert.match(command, /IFS= read -r CLIENTFLOW_BOOTSTRAP_NETWORK_UUID/);
   assert.match(command, /IFS= read -r -s ENROLLMENT_CODE/);
   assert.match(command, /IFS= read -r -s FRESH_INSTALL_AUTHORIZATION/);
   assert.match(command, /expected_bundle_sha256/);

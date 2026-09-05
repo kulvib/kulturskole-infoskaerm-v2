@@ -146,7 +146,7 @@ def _fresh_install_args(tmp_path: Path) -> SimpleNamespace:
         expected_bundle_sha256=BINDING["bundle_sha256"],
         enrollment_code="CF-TEST-TEST-TEST",
         fresh_install_authorization="signed-authorization",
-        name=None,
+        name="Test client",
         locality=None,
         ca_file=None,
     )
@@ -257,6 +257,9 @@ def _write_pending_install_state(tmp_path: Path) -> None:
                 "install_id": "pending-resume-install-id",
                 "backend_url": "https://display.example.invalid",
                 "kiosk_user": "clientflow-kiosk",
+                "client_name": "Test client",
+                "locality": None,
+                "bootstrap_network_connection": None,
                 "status": "pending_manual_activation",
             }
         ),

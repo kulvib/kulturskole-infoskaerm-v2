@@ -263,17 +263,37 @@ The generated admin handoff is non-secret: paste it first, then run `clientflow_
 ```bash
 test -n "${ENROLLMENT_CODE:-}"
 test -n "${FRESH_INSTALL_AUTHORIZATION:-}"
+test -n "${CLIENTFLOW_CLIENT_NAME:-}"
+
+INSTALL_ARGS=(
+  install
+  --bundle "$BOOTSTRAP_BUNDLE"
+  --expected-bundle-sha256 "$APPROVED_BUNDLE_SHA256"
+  --backend-url https://<backend-origin>
+  --fresh-install-authority-stdin
+  --kiosk-user clientflow-kiosk
+  --name "$CLIENTFLOW_CLIENT_NAME"
+)
+if test -n "${CLIENTFLOW_LOCALITY:-}"; then
+  INSTALL_ARGS+=(--locality "$CLIENTFLOW_LOCALITY")
+fi
+if test -n "${CLIENTFLOW_BOOTSTRAP_NETWORK_UUID:-}"; then
+  INSTALL_ARGS+=(--bootstrap-network-connection-uuid "$CLIENTFLOW_BOOTSTRAP_NETWORK_UUID")
+fi
 
 printf '%s\n%s\n' "$ENROLLMENT_CODE" "$FRESH_INSTALL_AUTHORIZATION" |
-  sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" install \
-    --bundle "$BOOTSTRAP_BUNDLE" \
-    --expected-bundle-sha256 "$APPROVED_BUNDLE_SHA256" \
-    --backend-url https://<backend-origin> \
-    --fresh-install-authority-stdin \
-    --kiosk-user clientflow-kiosk
+  sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" "${INSTALL_ARGS[@]}"
 
 unset ENROLLMENT_CODE FRESH_INSTALL_AUTHORIZATION
 ```
+
+
+
+Before the block above, set `CLIENTFLOW_CLIENT_NAME` explicitly to the physical client's intended backend name. `CLIENTFLOW_LOCALITY` is optional. The installer no longer allows a brand-new consuming claim to silently fall back to hostname/"Ny infoskærm"; the explicit name and locality are persisted as non-secret lifecycle metadata and must remain identical on crash/resume.
+
+Fresh install also performs a read-only NetworkManager/backend preflight **before** it reads the enrollment code or signed authorization from stdin. Ubuntu Desktop must have a running NetworkManager with at least one connected non-loopback device, and the configured backend `/health` endpoint must return canonical `{"status":"ok"}` over the same TLS trust path.
+
+If the current connection is a temporary factory/test WiFi or Ethernet profile that ClientFlow should remove after healthy first activation, obtain its active NetworkManager UUID and set `CLIENTFLOW_BOOTSTRAP_NETWORK_UUID` before running the block. This is an explicit ownership marker. ClientFlow never enumerates-and-deletes arbitrary saved profiles: only the exact active UUID/type/name recorded before claim may later be deleted. Leave the variable unset for permanent customer/site connectivity.
 
 The one-time enrollment code and signed fresh-install authorization are passed only over stdin; they are never present in the privileged installer argv recorded by `sudo`/journald. The variables are unset immediately after a successful claim/install return.
 
@@ -304,7 +324,9 @@ sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \
 
 Display platform preparation materializes the canonical GDM/autologin and kiosk host baseline but does not restart `gdm3` inside the activation transaction. The baseline keeps Chrome in normal browser mode with `--start-fullscreen` (never `--kiosk`), disables idle lock/screensaver/suspend/dim, blocks Bluetooth, suppresses kiosk-user update/crash popups, hides and ACL-blocks local Settings/Terminal/package/network/Bluetooth administration apps for the kiosk user, installs a kiosk-user-only polkit deny rule for privileged system changes, preserves logout/user-switch for `cfadmin`, and enforces Europe/Copenhagen + NTP. Session-level GDM/logind changes become authoritative at the later controlled reboot so activation cannot terminate its own operator process.
 
-After activation health is green, perform one controlled reboot before the reboot/reconnect verification gate. The reboot is part of kiosk-session materialization, not release authority.
+After activation health is green, the installer removes the temporary Ubuntu bootstrap user and, if and only if an exact NetworkManager profile was explicitly marked during preclaim, deletes that exact profile. The install-state is first durably marked `activated`; if profile cleanup fails or the UUID/type/name no longer matches, cleanup fails closed and the exact marker remains pending for a same-release activation retry. Unmarked customer/site profiles are never touched.
+
+After activation health is green and any explicitly marked bootstrap-network cleanup has completed, perform one controlled reboot before the reboot/reconnect verification gate. The reboot is part of kiosk-session materialization, not release authority.
 
 Release staging is serialized against activation recovery: while `activation_intent` is present, `stage_bundle()` rejects any new release before extraction or filesystem staging begins. This prevents the updater/controller from layering a second release transaction over a crash-resume of first activation or an in-place activation. Once the existing activation is durably completed or rolled back and the intent is cleared, the verified deployment can be retried normally.
 
