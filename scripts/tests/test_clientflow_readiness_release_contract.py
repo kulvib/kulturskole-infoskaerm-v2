@@ -14,7 +14,7 @@ for item in (RELEASE_LIB, RUNTIME_ROOT, BACKEND_ROOT):
     if str(item) not in sys.path:
         sys.path.insert(0, str(item))
 
-from clientflow_release import builder, cli  # noqa: E402
+from clientflow_release import builder  # noqa: E402
 from clientflow_runtime import display_runtime, platform_prepare, system_broker  # noqa: E402
 
 
