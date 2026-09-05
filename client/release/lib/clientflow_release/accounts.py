@@ -116,6 +116,64 @@ def _validate_human_accounts() -> None:
         raise AccountProvisioningError("cfadmin mangler sudo-gruppen")
 
 
+
+def detect_bootstrap_user() -> str | None:
+    """Return the pre-ClientFlow interactive Ubuntu user when invoked through sudo.
+
+    Fresh-install state records only the username, never credentials.  Direct
+    root execution has no bootstrap user.  Canonical ClientFlow human accounts
+    are always protected from this classification.
+    """
+    candidate = str(os.environ.get("SUDO_USER") or "").strip()
+    if not candidate or candidate in {"root", KIOSK_USER, ADMIN_USER}:
+        return None
+    try:
+        account = pwd.getpwnam(candidate)
+    except KeyError:
+        return None
+    if account.pw_uid < 1000 or account.pw_uid >= 65000:
+        return None
+    return candidate
+
+
+def cleanup_bootstrap_user(name: str | None) -> None:
+    """Remove the exact recorded Ubuntu bootstrap user after healthy activation.
+
+    This intentionally does not enumerate or delete arbitrary local users.  The
+    fresh transaction records one exact pre-ClientFlow user and only that user
+    may be removed by this lifecycle hook.
+    """
+    candidate = str(name or "").strip()
+    if not candidate:
+        return
+    if candidate in {"root", KIOSK_USER, ADMIN_USER}:
+        raise AccountProvisioningError("Bootstrap-user matcher en beskyttet ClientFlow-bruger")
+    try:
+        account = pwd.getpwnam(candidate)
+    except KeyError:
+        return
+    if account.pw_uid < 1000 or account.pw_uid >= 65000:
+        raise AccountProvisioningError("Bootstrap-user er ikke en normal lokal Ubuntu-bruger")
+
+    subprocess.run(["/usr/bin/loginctl", "terminate-user", candidate], check=False)
+    subprocess.run(["/usr/bin/pkill", "-TERM", "-u", candidate], check=False)
+    result = subprocess.run(
+        ["/usr/sbin/userdel", "--remove", candidate],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AccountProvisioningError(
+            f"Kunne ikke fjerne bootstrap-user {candidate}: {(result.stdout or '')[-1000:]}"
+        )
+    try:
+        pwd.getpwnam(candidate)
+    except KeyError:
+        return
+    raise AccountProvisioningError(f"Bootstrap-user {candidate} findes stadig efter userdel")
+
 def provision_human_accounts(*, prompt_admin_password: bool = True, admin_password: str | None = None) -> dict[str, str]:
     if os.geteuid() != 0:
         raise AccountProvisioningError("Human-account provisioning kræver root")

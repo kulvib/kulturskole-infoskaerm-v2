@@ -16,7 +16,13 @@ import sys
 import uuid
 
 from .bundle import verify_bundle
-from .accounts import ADMIN_USER, KIOSK_USER, provision_human_accounts
+from .accounts import (
+    ADMIN_USER,
+    KIOSK_USER,
+    cleanup_bootstrap_user,
+    detect_bootstrap_user,
+    provision_human_accounts,
+)
 from .constants import DOMAIN_NAMES, INSTALL_MODE_FRESH, MAX_BUNDLE_BYTES
 from .crypto import sha256_file
 from .enrollment import (
@@ -93,6 +99,7 @@ def _fresh_conflicts(layout: Layout) -> list[str]:
             "clientflow-system-agent",
             "clientflow-updater",
             "cfadmin",
+            KIOSK_USER,
         )
         for user in accounts:
             try:
@@ -568,6 +575,9 @@ def install_fresh(args: argparse.Namespace) -> dict:
             "credential_seed_b64": base64.urlsafe_b64encode(seed).rstrip(b"=").decode("ascii"),
             "backend_url": backend_url,
             "kiosk_user": kiosk_user,
+            # Exact pre-ClientFlow Ubuntu user.  This is lifecycle metadata, not
+            # a credential, and is removed only after healthy first activation.
+            "bootstrap_user": detect_bootstrap_user() if layout.root == Path("/") else None,
             "status": "initialized",
         }
         atomic_write_json(state_path, install_state, mode=0o600)
@@ -740,6 +750,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+
+def _finalize_install_state_after_activation(layout: Layout, release_id: str) -> None:
+    state_path = _install_state_path(layout)
+    if not state_path.exists():
+        return
+    install_state = load_secure_json(state_path)
+    if install_state.get("schema_version") != INSTALL_STATE_SCHEMA:
+        raise RuntimeError("Install-state kan ikke finaliseres efter activation")
+    binding = _state_fresh_install_binding(install_state)
+    if str(binding.get("release_id") or "") != release_id:
+        # A later canonical update must never rewrite the immutable original
+        # fresh-install claim binding.  Only first activation finalizes it.
+        return
+    release_state = status(layout)
+    if release_state.get("active_release_id") != release_id or release_state.get("active_symlink_release_id") != release_id:
+        raise RuntimeError("Install-state kan kun finaliseres efter durable healthy activation")
+    bootstrap_user = install_state.get("bootstrap_user")
+    if layout.root == Path("/"):
+        cleanup_bootstrap_user(str(bootstrap_user) if bootstrap_user else None)
+    install_state["status"] = "activated"
+    install_state["activated_release_id"] = release_id
+    install_state["bootstrap_user"] = None
+    # credential_seed is needed only for enrollment crash/resume.  Once first
+    # activation is healthy, retaining it creates unnecessary long-lived state.
+    install_state.pop("credential_seed_b64", None)
+    atomic_write_json(state_path, install_state, mode=0o600)
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.operation == "verify":
@@ -755,12 +792,15 @@ def main(argv: list[str] | None = None) -> int:
     elif args.operation == "install":
         result = install_fresh(args)
     elif args.operation == "activate":
+        layout = _layout(args.root)
         result = activate_release(
             args.release_id,
             expected_release_approval_reference=args.expected_release_approval_reference,
-            layout=_layout(args.root),
+            layout=layout,
             first_activation_authorizer=_prove_backend_client_approved,
         )
+        if result.get("status") in {"active", "already_active"}:
+            _finalize_install_state_after_activation(layout, args.release_id)
     elif args.operation == "rollback":
         result = rollback_release(
             release_id=args.release_id,
