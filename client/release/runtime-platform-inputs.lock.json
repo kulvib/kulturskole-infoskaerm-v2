@@ -147,5 +147,19 @@
         ]
       }
     ]
-  }
+  },
+  "preclaim_bootstrap_artifacts": [
+    {
+      "file": "apt_3.2.0_amd64.deb",
+      "package": "apt",
+      "version": "3.2.0",
+      "architecture": "amd64",
+      "size": 1485978,
+      "sha256": "c8f0ba37e66fc367f57a887fba686c67d9487b290ca83bc992baeedc994bf47a",
+      "bootstrap_role": "apt-recovery",
+      "trust_authority": "ubuntu-signed-apt-repository",
+      "ubuntu_suite": "resolute",
+      "ubuntu_component": "main"
+    }
+  ]
 }

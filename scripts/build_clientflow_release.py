@@ -29,7 +29,7 @@ def main() -> int:
     base_inputs = (args.runtime_inputs or (repo / "client" / "runtime-inputs")).resolve()
     if not base_inputs.is_dir():
         raise SystemExit(
-            "Offline runtime-inputs mangler. Angiv --runtime-inputs med python-runtime-amd64.tar og wheelhouse/."
+            "Offline runtime-inputs mangler. Angiv --runtime-inputs med python-runtime-amd64.tar, wheelhouse/, platform/ og bootstrap/."
         )
 
     with tempfile.TemporaryDirectory(prefix="clientflow-runtime-inputs-") as tmp:

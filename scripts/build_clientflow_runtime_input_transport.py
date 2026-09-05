@@ -35,7 +35,7 @@ def _validate_entry(raw: object, *, kind: str) -> tuple[str, dict[str, object]]:
         raise ValueError(f"Invalid size for {name}")
     item = dict(raw)
     item["_kind"] = kind
-    if kind == "platform":
+    if kind in {"platform", "bootstrap"}:
         for field in ("package", "version", "architecture"):
             if not str(raw.get(field) or "").strip():
                 raise ValueError(f"Platform artifact {name} mangler {field}")
@@ -52,8 +52,16 @@ def _load_lock(lock_path: Path) -> tuple[dict[str, object], dict[str, dict[str, 
     platform_artifacts = data.get("platform_artifacts", [])
     if not isinstance(platform_artifacts, list):
         raise ValueError("runtime-platform-input platform_artifacts must be a list")
+    bootstrap_artifacts = data.get("preclaim_bootstrap_artifacts", [])
+    if not isinstance(bootstrap_artifacts, list):
+        raise ValueError("runtime-platform-input preclaim_bootstrap_artifacts must be a list")
     expected: dict[str, dict[str, object]] = {}
-    for raw, kind in [(item, "runtime") for item in artifacts] + [(item, "platform") for item in platform_artifacts]:
+    rows = (
+        [(item, "runtime") for item in artifacts]
+        + [(item, "platform") for item in platform_artifacts]
+        + [(item, "bootstrap") for item in bootstrap_artifacts]
+    )
+    for raw, kind in rows:
         name, item = _validate_entry(raw, kind=kind)
         if name in expected:
             raise ValueError(f"Duplicate locked artifact: {name}")
@@ -64,6 +72,8 @@ def _load_lock(lock_path: Path) -> tuple[dict[str, object], dict[str, dict[str, 
 def _artifact_path(input_dir: Path, name: str, declared: dict[str, object]) -> Path:
     if declared.get("_kind") == "platform":
         return input_dir / "platform" / name
+    if declared.get("_kind") == "bootstrap":
+        return input_dir / "bootstrap" / name
     if name == "python-runtime-amd64.tar":
         return input_dir / name
     return input_dir / "wheelhouse" / name
@@ -72,6 +82,8 @@ def _artifact_path(input_dir: Path, name: str, declared: dict[str, object]) -> P
 def _member_path(name: str, declared: dict[str, object]) -> str:
     if declared.get("_kind") == "platform":
         return f"platform/{name}"
+    if declared.get("_kind") == "bootstrap":
+        return f"bootstrap/{name}"
     return name if name == "python-runtime-amd64.tar" else f"wheelhouse/{name}"
 
 
@@ -96,6 +108,8 @@ def _open_locked_inputs(input_dir: Path, expected: dict[str, dict[str, object]])
     required_dirs = {input_dir / "wheelhouse"}
     if any(item.get("_kind") == "platform" for item in expected.values()):
         required_dirs.add(input_dir / "platform")
+    if any(item.get("_kind") == "bootstrap" for item in expected.values()):
+        required_dirs.add(input_dir / "bootstrap")
     for directory in required_dirs:
         if directory.is_symlink() or not directory.is_dir():
             raise ValueError(f"Runtime-input directory mangler eller er usikker: {directory.name}")
@@ -164,6 +178,8 @@ def _write_transport(fileobj: BinaryIO, opened: dict[str, int], expected: dict[s
         tf.addfile(_tar_info("wheelhouse", directory=True))
         if any(item.get("_kind") == "platform" for item in expected.values()):
             tf.addfile(_tar_info("platform", directory=True))
+        if any(item.get("_kind") == "bootstrap" for item in expected.values()):
+            tf.addfile(_tar_info("bootstrap", directory=True))
         for name, declared in sorted(expected.items()):
             member = _member_path(name, declared)
             fd = opened[name]
@@ -178,6 +194,8 @@ def _verify_transport(path: Path, expected: dict[str, dict[str, object]]) -> Non
     allowed_dirs = {"wheelhouse"}
     if any(item.get("_kind") == "platform" for item in expected.values()):
         allowed_dirs.add("platform")
+    if any(item.get("_kind") == "bootstrap" for item in expected.values()):
+        allowed_dirs.add("bootstrap")
     member_map = {_member_path(name, item): name for name, item in expected.items()}
     with tarfile.open(path, mode="r:") as tf:
         for member in tf:

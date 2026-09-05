@@ -1,0 +1,14 @@
+.github/workflows/ci.yml
+CHANGED_FILES_PRECLAIM_HOST_READINESS.txt
+PRECLAIM_HOST_READINESS_CLOSURE.md
+client/release/docs/CLIENTFLOW_RELEASE_AND_ROLLBACK.md
+client/release/lib/clientflow_release/builder.py
+client/release/lib/clientflow_release/cli.py
+client/release/lib/clientflow_release/host_bootstrap.py
+client/release/runtime-platform-inputs.lock.json
+scripts/build_clientflow_release.py
+scripts/build_clientflow_runtime_input_transport.py
+scripts/materialize_clientflow_runtime_inputs.py
+scripts/tests/test_clientflow_preclaim_host_readiness.py
+scripts/tests/test_clientflow_release_build_51k.py
+scripts/verify_clientflow_preclaim_bootstrap_ubuntu2604.py
