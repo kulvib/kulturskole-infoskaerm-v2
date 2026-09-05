@@ -1083,6 +1083,7 @@ def transaction_main(argv: list[str] | None = None) -> int:
     activate = sub.add_parser("activate")
     activate.add_argument("--release-id", required=True)
     activate.add_argument("--expected-release-approval-reference", required=True)
+    sub.add_parser("repair-first-activation")
     rollback = sub.add_parser("rollback")
     rollback.add_argument("--release-id")
     rollback.add_argument("--expected-release-approval-reference", required=True)
@@ -1100,6 +1101,10 @@ def transaction_main(argv: list[str] | None = None) -> int:
             args.release_id,
             expected_release_approval_reference=args.expected_release_approval_reference,
         )
+    elif args.operation == "repair-first-activation":
+        layout = Layout()
+        _require_root(layout)
+        result = _run_pre_first_activation_repair(layout)
     elif args.operation == "rollback":
         result = rollback_release(
             release_id=args.release_id,

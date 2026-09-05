@@ -199,25 +199,21 @@ def test_repair_activate_preserves_first_activation_backend_approval_gate(monkey
     assert observed["layout"] == layout
 
 
-def test_stable_updater_pyz_exposes_explicit_root_repair_entrypoint(monkeypatch, capsys):
-    from clientflow_release import updater_entrypoint
+def test_stable_updater_pyz_exposes_explicit_root_repair_dispatch(monkeypatch, capsys):
+    from clientflow_release import repair_dispatch, updater_entrypoint
 
-    monkeypatch.setattr(cli, "_require_root", lambda _layout: None)
+    observed: dict[str, bool] = {}
     monkeypatch.setattr(
-        cli,
-        "_run_pre_first_activation_repair",
-        lambda _layout: {
-            "status": "repaired_and_activated",
-            "from_release_id": BASELINE_ID,
-            "release_id": TARGET_ID,
-            "deployment_id": "11111111-1111-1111-1111-111111111111",
-        },
+        repair_dispatch,
+        "exec_pre_first_activation_repair",
+        lambda: observed.setdefault("dispatched", True),
     )
 
+    # Production os.execv does not return. The test double returns so the
+    # process-boundary branch can prove it selected the dedicated dispatcher.
     assert updater_entrypoint.main(["repair-first-activation"]) == 0
-    output = json.loads(capsys.readouterr().out)
-    assert output["status"] == "repaired_and_activated"
-    assert output["release_id"] == TARGET_ID
+    assert observed == {"dispatched": True}
+    assert capsys.readouterr().err == ""
 
 
 def test_stable_updater_pyz_rejects_unknown_operator_mode(capsys):
@@ -225,3 +221,36 @@ def test_stable_updater_pyz_rejects_unknown_operator_mode(capsys):
 
     assert updater_entrypoint.main(["anything-else"]) == 2
     assert "ukendt operation" in capsys.readouterr().err
+
+
+def test_stable_updater_repair_dispatch_resolves_exact_original_staged_wrapper(tmp_path: Path) -> None:
+    from clientflow_release.repair_dispatch import resolve_repair_transaction
+
+    layout = Layout(tmp_path)
+    _seed_pending(layout)
+    wrapper = (
+        layout.releases
+        / BASELINE_ID
+        / "release/bin/clientflow-release-transaction"
+    )
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    wrapper.write_text("# canonical staged transaction\n", encoding="utf-8")
+    wrapper.chmod(0o555)
+
+    assert resolve_repair_transaction(root=tmp_path) == wrapper
+
+
+def test_transaction_main_exposes_pre_first_activation_repair(monkeypatch, tmp_path: Path, capsys) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(cli, "_require_root", lambda layout: observed.setdefault("root", layout.root))
+    monkeypatch.setattr(
+        cli,
+        "_run_pre_first_activation_repair",
+        lambda layout: {"status": "repaired", "root": str(layout.root)},
+    )
+    # transaction_main is intentionally rooted at / in production; avoid host
+    # access by replacing both root guard and repair implementation.
+    assert cli.transaction_main(["repair-first-activation"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "repaired"
+    assert observed["root"] == Path("/")

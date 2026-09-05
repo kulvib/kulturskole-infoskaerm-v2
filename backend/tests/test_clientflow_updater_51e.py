@@ -45,7 +45,12 @@ def test_51e_updater_pyz_is_deterministic_minimal_and_bootable():
         assert "clientflow_release/updater_entrypoint.py" in names
         assert "clientflow_release/updater_client.py" in names
         assert "clientflow_release/updater_transport.py" in names
+        assert "clientflow_release/network_bootstrap.py" in names
+        assert "clientflow_release/repair_dispatch.py" in names
         assert "clientflow_release_format/bundle.py" in names
+        # The stable updater stays minimal/unprivileged. Root repair dispatches
+        # into the exact original staged release transaction wrapper instead
+        # of embedding installer/transaction authority in this PYZ.
         assert "clientflow_release/transaction.py" not in names
         assert "clientflow_release/cli.py" not in names
 
@@ -67,6 +72,19 @@ def test_51e_updater_pyz_is_deterministic_minimal_and_bootable():
         assert result.returncode == 1
         assert "clientflow-updater:" in result.stderr
         assert "ModuleNotFoundError" not in result.stderr
+
+        repair = subprocess.run(
+            [sys.executable, str(first), "repair-first-activation"],
+            env={**os.environ},
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+        assert repair.returncode == 1
+        assert "clientflow-updater:" in repair.stderr
+        assert "ModuleNotFoundError" not in repair.stderr
 
 
 def test_51e_verified_release_payload_contains_the_exact_updater_pyz():

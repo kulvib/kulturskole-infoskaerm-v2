@@ -39,6 +39,8 @@ UPDATER_MODULES = (
     "constants.py",
     "enrollment.py",
     "filesystem.py",
+    "network_bootstrap.py",
+    "repair_dispatch.py",
     "update_auth.py",
     "updater_client.py",
     "updater_config.py",

@@ -120,7 +120,10 @@ def test_51i_canonical_handoff_uses_pinned_bundle_and_private_root_bootstrap():
     assert '/usr/bin/tar -xOf "$BUNDLE_FD_PATH" "$INSTALLER_FILE"' in procedure
     assert 'BOOTSTRAP_DIR/clientflow-approved.tar' in procedure
     assert 'sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" verify' in procedure
-    assert 'sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" install' in procedure
+    assert 'INSTALL_ARGS=(' in procedure
+    assert 'install\n  --bundle "$BOOTSTRAP_BUNDLE"' in procedure
+    assert '--name "$CLIENTFLOW_CLIENT_NAME"' in procedure
+    assert 'sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" "${INSTALL_ARGS[@]}"' in procedure
 
     first_hash = procedure.index('"$BUNDLE_FD_PATH" |')
     extraction = procedure.index('/usr/bin/tar -xOf "$BUNDLE_FD_PATH" "$INSTALLER_FILE"')

@@ -68,3 +68,16 @@ No Livestream, Terminal or Remote Desktop source, unit, credential, protocol or 
 ## Still open after this batch
 
 Legacy GTK GUI parity, full capability-based parity gate, periodic time integrity, quick-settings parity, popup baseline for both human accounts, bounded local recovery/support UX, local reboot/shutdown attribution review, and obsolete frontend/backend contract cleanup remain open.
+
+
+## CI/package closure after integration
+
+The factory/network enrollment import made `network_bootstrap.py` a transitive
+dependency of the deliberately minimal stable updater PYZ. The PYZ manifest now
+includes that module explicitly. During the same executable review, the earlier
+pre-first-activation repair entrypoint was found to import installer `cli.py` and
+`transaction.py` even though the stable updater intentionally excludes both.
+Repair now dispatches to the exact original staged release's verified
+`release/bin/clientflow-release-transaction` wrapper; that wrapper exposes the
+root-only `repair-first-activation` operation. This keeps the stable updater
+minimal and makes the repair path survive reboot without relying on `/run`.
