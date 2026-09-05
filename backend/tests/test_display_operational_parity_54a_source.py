@@ -108,8 +108,10 @@ def test_local_gui_contains_operational_parity_fields_without_credentials() -> N
     runtime = read("client/runtime/clientflow_runtime/display_runtime.py")
 
     for label in (
+        "Handlinger", "Systeminfo", "Kioskinfo", "Netværksinfo",
         "Kiosk URL", "Auto refresh", "Skærmopløsning", "Browser Guard",
-        "Admin terminal", "Aktivt netværk", "WiFi", "LAN", "Kalender · næste 7 dage",
+        "Admin terminal", "Aktiv forbindelse", "Aktiv IP", "Aktiv MAC",
+        "WiFi IP", "WiFi MAC", "LAN IP", "LAN MAC", "Kalender – næste 7 dage",
     ):
         assert label in gui
     assert "CONFIG_PATH" in gui
@@ -118,5 +120,5 @@ def test_local_gui_contains_operational_parity_fields_without_credentials() -> N
     assert "clientflow-root-terminal-broker.socket" in gui
     assert "/etc/clientflow/credentials" not in gui
     assert "LoadCredential" not in gui
-    assert "self.set_default_size(720, 720)" in gui
+    assert "self.set_default_size(820, 900)" in gui
     assert "self.next_resolution_probe" in runtime

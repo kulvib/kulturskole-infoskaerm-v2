@@ -60,6 +60,34 @@ from .updater_config import UpdaterConfig
 from .update_controller import UpdateController
 
 INSTALL_STATE_SCHEMA = 2
+PUBLIC_CLIENT_METADATA_SCHEMA = 1
+
+
+def _write_public_client_metadata(
+    layout: Layout,
+    *,
+    client_id: int,
+    client_name: str,
+    locality: str | None,
+) -> None:
+    """Persist non-secret technician-facing identity for the local GUI.
+
+    Enrollment credentials and keys remain under /etc/clientflow.  This file
+    intentionally contains only display-safe facts and lives under the
+    world-traversable /var/lib/clientflow root so the kiosk GUI can read it
+    without gaining access to enrollment state.
+    """
+    atomic_write_json(
+        layout.path("/var/lib/clientflow/client-public.json"),
+        {
+            "schema_version": PUBLIC_CLIENT_METADATA_SCHEMA,
+            "client_id": int(client_id),
+            "name": client_name,
+            "locality": locality,
+            "kiosk_user": KIOSK_USER,
+        },
+        mode=0o644,
+    )
 
 
 def _layout(value: str | None) -> Layout:
@@ -895,6 +923,12 @@ def install_fresh(args: argparse.Namespace) -> dict:
 
     install_stable_updater_host(release_id, layout=layout)
     _validate_inactive_install(layout, release_id)
+    _write_public_client_metadata(
+        layout,
+        client_id=int(response["client_id"]),
+        client_name=client_name,
+        locality=locality,
+    )
     final_state = _pending_manual_activation_state(
         install_state,
         binding=binding,
