@@ -48,6 +48,9 @@ from .transaction import (
     status,
 )
 from .wipe import wipe
+from .updater_client import StableUpdaterClient
+from .updater_config import UpdaterConfig
+from .update_controller import UpdateController
 
 INSTALL_STATE_SCHEMA = 2
 
@@ -391,6 +394,106 @@ def _prove_backend_client_approved(layout: Layout) -> None:
         token_issuer=str(credential.get("token_issuer") or ""),
         ca_file=ca_file,
     )
+
+
+def _repair_updater_config(layout: Layout) -> UpdaterConfig:
+    credential_path = layout.path("/etc/clientflow/update/credential.json")
+    private_key_path = layout.path("/etc/clientflow/update/private-key.pem")
+    credential = _secure_json(credential_path)
+    ca_override = None
+    raw_ca = str(credential.get("tls_ca_file") or "").strip()
+    if raw_ca:
+        if not raw_ca.startswith("/"):
+            raise RuntimeError("Update credential har ugyldig CA-path")
+        ca_override = layout.path(raw_ca)
+    return UpdaterConfig.from_paths(
+        credential_file=credential_path,
+        private_key=private_key_path,
+        state_root=layout.path("/var/lib/clientflow/updater"),
+        ca_file_override=ca_override,
+    )
+
+
+def _pre_first_activation_repair_baseline(layout: Layout) -> dict[str, object]:
+    state_path = _install_state_path(layout)
+    install_state = load_secure_json(state_path)
+    if install_state.get("schema_version") != INSTALL_STATE_SCHEMA:
+        raise RuntimeError("Install-state schema er ugyldig for pre-first-activation repair")
+    if install_state.get("status") != "pending_manual_activation":
+        raise RuntimeError("Pre-first-activation repair kræver pending_manual_activation")
+    binding = _state_fresh_install_binding(install_state)
+    release_state = status(layout)
+    if release_state.get("active_release_id") is not None or release_state.get("active_symlink_release_id") is not None:
+        raise RuntimeError("Pre-first-activation repair kræver en klient uden aktiv release")
+    if release_state.get("activation_intent") is not None:
+        raise RuntimeError("Pre-first-activation repair er blokeret af en uafsluttet activation-intent")
+    original_release_id = str(binding.get("release_id") or "")
+    if release_state.get("staged_release_id") != original_release_id:
+        raise RuntimeError("Pending staged release matcher ikke den oprindelige fresh-install claim-binding")
+    record = (release_state.get("installed") or {}).get(original_release_id)
+    if not isinstance(record, dict):
+        raise RuntimeError("Oprindelig fresh-install release mangler fra local release-state")
+    expected = {
+        "release_sequence": int(binding["release_sequence"]),
+        "bundle_sha256": str(binding["bundle_sha256"]),
+        "bundle_size": int(binding["bundle_size"]),
+        "release_approval_reference": str(binding["release_approval_reference"]),
+        "release_candidate_sha256": str(binding["release_candidate_sha256"]),
+        "source_commit": str(binding["source_commit"]),
+    }
+    for key, value in expected.items():
+        if record.get(key) != value:
+            raise RuntimeError(f"Local staged baseline matcher ikke fresh-install binding: {key}")
+    return {"install_state": install_state, "binding": binding}
+
+
+def _repair_activate(
+    release_id: str,
+    *,
+    expected_release_approval_reference: str,
+    layout: Layout,
+) -> dict:
+    return activate_release(
+        release_id,
+        expected_release_approval_reference=expected_release_approval_reference,
+        layout=layout,
+        first_activation_authorizer=_prove_backend_client_approved,
+    )
+
+
+def _run_pre_first_activation_repair(layout: Layout) -> dict[str, object]:
+    baseline = _pre_first_activation_repair_baseline(layout)
+    binding = baseline["binding"]
+    config = _repair_updater_config(layout)
+    updater = StableUpdaterClient(config)
+    updater_result = updater.run_once()
+    snapshot = updater.state.snapshot
+    if snapshot is None:
+        raise RuntimeError("Backend har ingen aktiv pre-first-activation repair deployment")
+    if snapshot.target_release_sequence <= int(binding["release_sequence"]):
+        raise RuntimeError("Repair deployment er ikke strengt nyere end fresh-install baseline")
+    if snapshot.target_release_id == str(binding["release_id"]):
+        raise RuntimeError("Repair deployment må ikke genbruge den oprindelige fresh-install release")
+    if str(updater_result.get("status") or "") not in {"verified", "staged"}:
+        raise RuntimeError("Repair artifact nåede ikke verified/staged boundary")
+
+    controller = UpdateController(
+        config,
+        source_state_root=config.state_root,
+        controller_state_root=layout.path("/var/lib/clientflow/update-controller"),
+        layout=layout,
+        activate_func=_repair_activate,
+    )
+    result = controller.run_once()
+    if str(result.get("status") or "") != "succeeded":
+        raise RuntimeError("Pre-first-activation repair nåede ikke healthy succeeded state")
+    _finalize_install_state_after_activation(layout, snapshot.target_release_id)
+    return {
+        "status": "repaired_and_activated",
+        "from_release_id": binding["release_id"],
+        "release_id": snapshot.target_release_id,
+        "deployment_id": snapshot.deployment_id,
+    }
 
 
 def _validate_inactive_install(layout: Layout, release_id: str) -> None:
@@ -767,6 +870,8 @@ def build_parser() -> argparse.ArgumentParser:
     activate.add_argument("--release-id", required=True)
     activate.add_argument("--expected-release-approval-reference", required=True)
     _common_transaction_parser(activate)
+    repair = sub.add_parser("repair-first-activation")
+    _common_transaction_parser(repair)
     rollback = sub.add_parser("rollback")
     rollback.add_argument("--release-id")
     rollback.add_argument("--expected-release-approval-reference", required=True)
@@ -790,13 +895,25 @@ def _finalize_install_state_after_activation(layout: Layout, release_id: str) ->
     if install_state.get("schema_version") != INSTALL_STATE_SCHEMA:
         raise RuntimeError("Install-state kan ikke finaliseres efter activation")
     binding = _state_fresh_install_binding(install_state)
-    if str(binding.get("release_id") or "") != release_id:
-        # A later canonical update must never rewrite the immutable original
-        # fresh-install claim binding.  Only first activation finalizes it.
-        return
+    original_release_id = str(binding.get("release_id") or "")
     release_state = status(layout)
     if release_state.get("active_release_id") != release_id or release_state.get("active_symlink_release_id") != release_id:
         raise RuntimeError("Install-state kan kun finaliseres efter durable healthy activation")
+    if original_release_id != release_id:
+        # A newer release may be the *first* active release only through the
+        # explicit pre-first-activation repair flow.  Preserve the immutable
+        # original claim binding and require that there was no prior active
+        # release plus a strictly increasing sequence.
+        if install_state.get("status") != "pending_manual_activation":
+            return
+        if release_state.get("previous_release_id") is not None:
+            return
+        record = (release_state.get("installed") or {}).get(release_id)
+        if not isinstance(record, dict):
+            raise RuntimeError("Repair target mangler i local release-state")
+        if int(record.get("release_sequence") or 0) <= int(binding["release_sequence"]):
+            raise RuntimeError("Repair first activation kræver en strengt nyere release sequence")
+        install_state["first_activation_repair_from_release_id"] = original_release_id
     bootstrap_user = install_state.get("bootstrap_user")
     if layout.root == Path("/"):
         cleanup_bootstrap_user(str(bootstrap_user) if bootstrap_user else None)
@@ -832,6 +949,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         if result.get("status") in {"active", "already_active"}:
             _finalize_install_state_after_activation(layout, args.release_id)
+    elif args.operation == "repair-first-activation":
+        layout = _layout(args.root)
+        _require_root(layout)
+        result = _run_pre_first_activation_repair(layout)
     elif args.operation == "rollback":
         result = rollback_release(
             release_id=args.release_id,

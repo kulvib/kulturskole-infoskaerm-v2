@@ -310,6 +310,20 @@ Release staging is serialized against activation recovery: while `activation_int
 
 Staging has already persisted the approved bundle SHA-256/size, candidate SHA-256, source commit and immutable release-approval reference. Activation first requires the operator-provided expected release-approval reference to match that staged provenance; it is not a new free-form approval. Fresh first-activation authorization is keyed from durable `active_release_id`, not from the active-symlink: if a crash leaves the target symlink in place while first activation is still uncommitted, every activation resume must re-prove the same client is backend-approved before further local mutation. It then switches `/opt/clientflow/active`, applies managed definitions and starts `clientflow.target` **without boot-enabling it** so runtime health can be evaluated fail-closed. A successful health boundary is persisted while the exact `activation_intent` is still durable; only after that durable proof may `clientflow.target` be enabled for reboot persistence. This ordering applies to first activation and in-place update activation/rollback, so abrupt power loss before health cannot make an unverified release auto-start on the next boot. Only after first-activation health is durably green is `clientflow-updater.timer` enabled and started. If first activation fails at any point, rollback returns to staged/pending with no active release, `clientflow.target` disabled and the updater timer disabled/inactive.
 
+### Pre-first-activation repair
+
+A failed first activation must not require wipe, re-enrollment, a new client identity or cloned state. When the client is already backend-approved but still has **no active release**, a superadmin may explicitly authorize a `pre_first_activation_repair` deployment to one exact, strictly newer approved catalog release. Backend derives the current baseline from the server-side `client_enrolled` claim audit written in the same claim transaction and rejects repair if a canonical Status runtime is online, the claim binding is unavailable/invalid, the target is not newer, or no repair reason is supplied. Normal deployments still require a fresh online canonical Status version.
+
+The pending client keeps `clientflow-updater.timer` disabled. After the repair deployment has been authorized, run the persistent stable updater host explicitly:
+
+```bash
+sudo /usr/bin/python3 -I /usr/lib/clientflow/updater/clientflow-updater.pyz repair-first-activation
+```
+
+This operator command is intentionally stored in the stable updater plane rather than the transient `$BOOTSTRAP_INSTALLER` under `/run`, so a reboot after the failed activation cannot remove the repair capability. The command first proves the local state is still the exact original `pending_manual_activation` claim baseline with `active_release_id=None`, no active symlink and no activation intent. It then uses the existing update identity to fetch the backend-authorized exact whole bundle, verifies it through the normal updater boundary, stages it through the normal release transaction, obtains backend activation authorization, re-proves the existing backend client-approval gate, and health-activates the repair target.
+
+Successful repaired first activation preserves the immutable original `fresh_install_binding` as historical claim authority, records the newer first active release separately, cleans up the recorded bootstrap user, and only then opens the normal updater timer. Any mismatch fails closed without wipe or re-enrollment.
+
 ## 8. Validation before deployment
 
 At minimum:
