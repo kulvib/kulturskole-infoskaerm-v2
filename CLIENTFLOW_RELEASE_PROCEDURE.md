@@ -256,7 +256,7 @@ sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" verify \
 
 ## 6. Fresh installation
 
-Installation is for a clean Ubuntu Desktop 26.04 `amd64` client with an existing unprivileged kiosk user. The **first** consuming claim requires the same one-time enrollment code and signed `FRESH_INSTALL_AUTHORIZATION` that authorized the exact approved bundle download. Both are transient capabilities and must not be written into ClientFlow install-state.
+Installation is for a clean Ubuntu Desktop 26.04 `amd64` client. The Ubuntu bootstrap user is only the temporary operator session; after committed claim the installer creates the fixed dedicated kiosk account `clientflow-kiosk` plus the fixed local administrator `cfadmin`. The **first** consuming claim requires the same one-time enrollment code and signed `FRESH_INSTALL_AUTHORIZATION` that authorized the exact approved bundle download. Both are transient capabilities and must not be written into ClientFlow install-state.
 
 The generated admin handoff is non-secret: paste it first, then run `clientflow_fresh_install_download` and paste the separately copied enrollment code and signed authorization only at its hidden prompts. The function keeps `ENROLLMENT_CODE` and `FRESH_INSTALL_AUTHORIZATION` as transient values in the same shell for the later consuming claim, while neither capability appears in the pasted handoff command or shell history. Keep that same shell and require both before starting the first mutation:
 
@@ -270,12 +270,15 @@ printf '%s\n%s\n' "$ENROLLMENT_CODE" "$FRESH_INSTALL_AUTHORIZATION" |
     --expected-bundle-sha256 "$APPROVED_BUNDLE_SHA256" \
     --backend-url https://<backend-origin> \
     --fresh-install-authority-stdin \
-    --kiosk-user <kiosk-user>
+    --kiosk-user clientflow-kiosk
 
 unset ENROLLMENT_CODE FRESH_INSTALL_AUTHORIZATION
 ```
 
 The one-time enrollment code and signed fresh-install authorization are passed only over stdin; they are never present in the privileged installer argv recorded by `sudo`/journald. The variables are unset immediately after a successful claim/install return.
+
+
+After the backend claim has committed, the installer restores the physically proven legacy human-account contract before materializing the runtime definitions: `clientflow-kiosk` is created as the dedicated non-admin autologin account, while `cfadmin` is created as the local sudo administrator. The installer prompts twice for the `cfadmin` password through the controlling TTY; the cleartext password is never included in argv or persisted in ClientFlow state. This account mutation remains post-claim so a definitive claim mismatch cannot leave local human-account state behind.
 
 The installer derives a non-secret release binding from the locally verified approved bundle: release ID/version/sequence, whole-bundle SHA-256/size, immutable approval reference, candidate provenance and source commit. Backend claim verifies that complete binding against the signed authorization for the same enrollment-token **before** creating client/credential state or consuming the code. The existing enrollment receipt then commits its resume-proof hash to that exact binding, so crash recovery cannot switch release provenance without introducing a parallel release-authority table.
 
