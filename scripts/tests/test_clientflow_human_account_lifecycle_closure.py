@@ -67,8 +67,6 @@ def test_cleanup_bootstrap_user_refuses_protected_identity():
 
 
 def test_fresh_conflicts_include_existing_canonical_kiosk(monkeypatch, tmp_path: Path):
-    layout = Layout(tmp_path)
-
     def fake_getpwnam(name: str):
         if name == accounts.KIOSK_USER:
             return SimpleNamespace(pw_uid=1000)
