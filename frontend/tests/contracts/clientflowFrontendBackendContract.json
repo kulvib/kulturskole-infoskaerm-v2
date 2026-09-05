@@ -228,7 +228,8 @@
       "request_properties": [
         "target_version",
         "confirm_downgrade",
-        "reason"
+        "reason",
+        "pre_first_activation_repair"
       ],
       "response_properties": [
         "id",

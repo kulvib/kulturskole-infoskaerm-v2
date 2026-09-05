@@ -247,14 +247,16 @@ def _controller(
     transport: _BackendStateTransport,
     config: UpdaterConfig,
     fail_activation: bool,
+    first_activation: bool = False,
 ):
     layout = Layout(tmp / "root")
     layout.releases.mkdir(parents=True, mode=0o755)
+    previous_release_id = None if first_activation else PREVIOUS_RELEASE_ID
     local_state = {
         "schema_version": 2,
         "highest_release_sequence": 1299,
-        "active_release_id": PREVIOUS_RELEASE_ID,
-        "active_symlink_release_id": PREVIOUS_RELEASE_ID,
+        "active_release_id": previous_release_id,
+        "active_symlink_release_id": previous_release_id,
         "previous_release_id": None,
         "staged_release_id": None,
         "installed": {},
@@ -300,17 +302,17 @@ def _controller(
                 {
                     "event": "automatic_rollback_completed",
                     "failed_release_id": release_id,
-                    "restored_release_id": PREVIOUS_RELEASE_ID,
+                    "restored_release_id": previous_release_id,
                 }
             )
             local_state["staged_release_id"] = release_id
             raise TransactionError("Aktivering fejlede; tidligere release blev automatisk gendannet")
-        local_state["previous_release_id"] = PREVIOUS_RELEASE_ID
+        local_state["previous_release_id"] = previous_release_id
         local_state["active_release_id"] = release_id
         local_state["active_symlink_release_id"] = release_id
         local_state["staged_release_id"] = None
         local_state["installed"][release_id]["activated_at"] = "2026-08-23T20:03:00Z"
-        return {"status": "active", "release_id": release_id, "previous_release_id": PREVIOUS_RELEASE_ID}
+        return {"status": "active", "release_id": release_id, "previous_release_id": previous_release_id}
 
     return UpdateController(
         config,
@@ -387,6 +389,47 @@ def test_operational_update_chain_real_backend_state_machine_reaches_succeeded()
             assert deployment.observed_release_id == TARGET_RELEASE_ID
             assert deployment.observed_release_sequence == TARGET_SEQUENCE
             assert deployment.observed_previous_release_id == PREVIOUS_RELEASE_ID
+
+        assert _event_types(engine) == [
+            "authorized",
+            "download_started",
+            "bundle_verified",
+            "staged",
+            "activation_started",
+            "health_check_started",
+            "succeeded",
+        ]
+
+
+def test_pre_first_activation_repair_real_backend_state_machine_reaches_first_active_release():
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        tmp = Path(raw_tmp)
+        engine, config, transport = _run_verified_handoff(tmp)
+        controller, local_state = _controller(
+            tmp,
+            transport=transport,
+            config=config,
+            fail_activation=False,
+            first_activation=True,
+        )
+
+        assert local_state["active_release_id"] is None
+        result = controller.run_once()
+
+        assert result["status"] == "succeeded"
+        assert result["release_id"] == TARGET_RELEASE_ID
+        assert local_state["active_release_id"] == TARGET_RELEASE_ID
+        assert local_state["previous_release_id"] is None
+        assert local_state["staged_release_id"] is None
+
+        with Session(engine) as session:
+            deployment = session.exec(
+                select(ClientFlowDeployment).where(ClientFlowDeployment.client_id == CLIENT_ID)
+            ).one()
+            assert deployment.state == "succeeded"
+            assert deployment.observed_release_id == TARGET_RELEASE_ID
+            assert deployment.observed_release_sequence == TARGET_SEQUENCE
+            assert deployment.observed_previous_release_id is None
 
         assert _event_types(engine) == [
             "authorized",

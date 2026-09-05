@@ -33,6 +33,7 @@ test("ClientFlow update request creates a canonical deployment", () => {
   assert.match(infoSource, /targetVersion: resolvedSelectedVersion/);
   assert.match(apiSource, /confirm_downgrade: options\.confirmDowngrade === true/);
   assert.match(apiSource, /reason: options\.reason \|\| null/);
+  assert.match(apiSource, /pre_first_activation_repair: options\.preFirstActivationRepair === true/);
   assert.match(apiSource, /getClientflowDeployments/);
   assert.match(apiSource, /getActiveClientflowDeployment/);
   assert.match(apiSource, /cancelClientflowDeployment/);

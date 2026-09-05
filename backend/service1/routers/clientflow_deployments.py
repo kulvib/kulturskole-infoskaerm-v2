@@ -35,7 +35,7 @@ from ..clientflow_releases import (
 )
 from ..clientflow_update_models import ClientFlowDeployment
 from ..db import get_session
-from ..models import Client
+from ..models import AuditLog, Client
 from ..system_control import active_system_command, lock_system_client
 
 router = APIRouter(tags=["clientflow-deployments"])
@@ -45,6 +45,7 @@ class ClientFlowDeploymentCreate(BaseModel):
     target_version: str = PydanticField(..., min_length=1, max_length=40)
     confirm_downgrade: bool = False
     reason: Optional[str] = PydanticField(default=None, max_length=500)
+    pre_first_activation_repair: bool = False
 
 
 class ClientFlowDeploymentCancel(BaseModel):
@@ -110,6 +111,90 @@ def _canonical_runtime_version(session: Session, client: Client) -> str:
         )
     return version
 
+
+def _fresh_install_claim_binding(session: Session, client: Client) -> dict[str, object]:
+    if client.id is None:
+        raise HTTPException(status_code=409, detail="Klienten mangler canonical identity")
+    row = session.exec(
+        select(AuditLog)
+        .where(
+            AuditLog.action == "client_enrolled",
+            AuditLog.entity_type == "client",
+            AuditLog.entity_id == int(client.id),
+        )
+        .order_by(AuditLog.created_at.desc())
+    ).first()
+    details = dict(getattr(row, "details", None) or {}) if row is not None else {}
+    required = {
+        "release_id": details.get("fresh_install_release_id"),
+        "version": details.get("fresh_install_version"),
+        "release_sequence": details.get("fresh_install_release_sequence"),
+        "bundle_sha256": details.get("fresh_install_bundle_sha256"),
+        "bundle_size": details.get("fresh_install_bundle_size"),
+        "approval_reference": details.get("fresh_install_approval_reference"),
+        "candidate_sha256": details.get("fresh_install_candidate_sha256"),
+        "source_commit": details.get("fresh_install_source_commit"),
+    }
+    try:
+        required["release_sequence"] = int(required["release_sequence"])
+        required["bundle_size"] = int(required["bundle_size"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail="Klienten mangler en gyldig server-side fresh-install claim-binding") from exc
+    release_id = str(required["release_id"] or "").strip()
+    version = str(required["version"] or "").strip().lstrip("vV")
+    bundle_sha256 = str(required["bundle_sha256"] or "").strip().lower()
+    approval_reference = str(required["approval_reference"] or "").strip()
+    candidate_sha256 = str(required["candidate_sha256"] or "").strip().lower()
+    source_commit = str(required["source_commit"] or "").strip().lower()
+    if (
+        not release_id
+        or not version
+        or release_id != f"clientflow-{version}-seq-{required['release_sequence']}"
+        or len(bundle_sha256) != 64
+        or any(ch not in "0123456789abcdef" for ch in bundle_sha256)
+        or required["bundle_size"] <= 0
+        or not approval_reference
+        or len(candidate_sha256) != 64
+        or any(ch not in "0123456789abcdef" for ch in candidate_sha256)
+        or len(source_commit) not in {40, 64}
+        or any(ch not in "0123456789abcdef" for ch in source_commit)
+    ):
+        raise HTTPException(status_code=409, detail="Klienten mangler en gyldig server-side fresh-install claim-binding")
+    return required
+
+
+def _pre_first_activation_repair_current(session: Session, client: Client) -> dict[str, object]:
+    presence = load_client_presence(session, client)
+    status = presence.status
+    if status.is_online:
+        raise HTTPException(
+            status_code=409,
+            detail="Pre-first-activation repair er kun tilladt uden en aktiv canonical Status-runtime",
+        )
+    return _fresh_install_claim_binding(session, client)
+
+def _require_pre_first_activation_repair_target(
+    release: dict[str, object],
+    binding: dict[str, object],
+    *,
+    reason: str | None,
+) -> None:
+    target_version = str(release.get("version") or "").strip()
+    current_version = str(binding.get("version") or "").strip()
+    try:
+        target_sequence = int(release.get("release_sequence"))
+        original_sequence = int(binding.get("release_sequence"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail="Repair release identity er ugyldig") from exc
+    if target_sequence <= original_sequence or compare_versions(target_version, current_version) <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Pre-first-activation repair kræver en strengt nyere approved release end den oprindelige claim-binding",
+        )
+    if not str(reason or "").strip():
+        raise HTTPException(status_code=400, detail="Pre-first-activation repair kræver en begrundelse")
+
+
 def _require_version_change(target_version: str, current_version: str) -> None:
     if compare_versions(target_version, current_version) == 0:
         raise HTTPException(
@@ -138,7 +223,12 @@ def create_clientflow_deployment(
     requested_version = str(body.target_version or "").strip()
     if requested_version.lower() == "latest":
         raise HTTPException(status_code=400, detail="ClientFlow deployment kræver en konkret katalogversion; 'latest' er ikke tilladt")
-    current_version = _canonical_runtime_version(session, client)
+    repair_binding = None
+    if body.pre_first_activation_repair:
+        repair_binding = _pre_first_activation_repair_current(session, client)
+        current_version = str(repair_binding["version"])
+    else:
+        current_version = _canonical_runtime_version(session, client)
     try:
         catalog = load_catalog()
         release = resolve_release(requested_version)
@@ -152,6 +242,8 @@ def create_clientflow_deployment(
 
     target_version = str(release["version"])
     _require_version_change(target_version, current_version)
+    if repair_binding is not None:
+        _require_pre_first_activation_repair_target(release, repair_binding, reason=body.reason)
     latest_version = str(catalog["latest_stable"])
     is_downgrade = bool(current_version and compare_versions(target_version, current_version) < 0)
     is_non_latest_without_current = bool(not current_version and target_version != latest_version)
@@ -213,6 +305,9 @@ def create_clientflow_deployment(
                 "bundle_size": deployment.bundle_size,
                 "release_approval_reference": deployment.release_approval_reference,
                 "allow_downgrade": deployment.allow_downgrade,
+                "pre_first_activation_repair": repair_binding is not None,
+                "repair_from_release_id": repair_binding.get("release_id") if repair_binding else None,
+                "repair_from_release_sequence": repair_binding.get("release_sequence") if repair_binding else None,
                 "reason": reason,
             },
         )

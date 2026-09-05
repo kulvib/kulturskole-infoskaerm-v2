@@ -1185,6 +1185,7 @@ export async function requestClientflowDeployment(clientId, options = {}) {
       target_version: targetVersion,
       confirm_downgrade: options.confirmDowngrade === true,
       reason: options.reason || null,
+      pre_first_activation_repair: options.preFirstActivationRepair === true,
     }),
   });
   if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
