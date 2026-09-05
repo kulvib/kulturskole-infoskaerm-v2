@@ -68,7 +68,7 @@ def test_install_parser_allows_receipt_resume_without_one_time_authorities():
             "--bundle", "/tmp/bundle.tar",
             "--expected-bundle-sha256", "a" * 64,
             "--backend-url", "https://display.example.invalid",
-            "--kiosk-user", "kiosk",
+            "--kiosk-user", "clientflow-kiosk",
         ]
     )
     assert args.fresh_install_authority_stdin is False
@@ -86,7 +86,7 @@ def test_install_parser_rejects_secret_bearing_legacy_argv():
                 "--bundle", "/tmp/bundle.tar",
                 "--expected-bundle-sha256", "a" * 64,
                 "--backend-url", "https://display.example.invalid",
-                "--kiosk-user", "kiosk",
+                "--kiosk-user", "clientflow-kiosk",
                 "--enrollment-code", "CF-SECRET",
             ]
         )
@@ -140,7 +140,7 @@ def test_installer_carries_same_binding_into_claim_and_complete_resume_transacti
 def _fresh_install_args(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         root=str(tmp_path),
-        kiosk_user="kiosk",
+        kiosk_user="clientflow-kiosk",
         backend_url="https://display.example.invalid",
         bundle=tmp_path / "approved.tar",
         expected_bundle_sha256=BINDING["bundle_sha256"],
@@ -256,7 +256,7 @@ def _write_pending_install_state(tmp_path: Path) -> None:
                 "fresh_install_binding": BINDING,
                 "install_id": "pending-resume-install-id",
                 "backend_url": "https://display.example.invalid",
-                "kiosk_user": "kiosk",
+                "kiosk_user": "clientflow-kiosk",
                 "status": "pending_manual_activation",
             }
         ),

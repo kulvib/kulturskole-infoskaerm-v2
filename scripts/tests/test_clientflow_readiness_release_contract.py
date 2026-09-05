@@ -14,7 +14,7 @@ for item in (RELEASE_LIB, RUNTIME_ROOT, BACKEND_ROOT):
     if str(item) not in sys.path:
         sys.path.insert(0, str(item))
 
-from clientflow_release import builder, cli  # noqa: E402
+from clientflow_release import builder  # noqa: E402
 from clientflow_runtime import display_runtime, platform_prepare, system_broker  # noqa: E402
 
 
@@ -187,37 +187,25 @@ def test_ubuntu_2604_host_gate_executes_real_service_sandbox_probes():
     assert '["/usr/sbin/ip", "-j", "route", "show", "default"]' in source
 
 
-def test_cfadmin_is_created_locked_without_privileged_groups(monkeypatch):
-    from types import SimpleNamespace
+def test_fresh_human_accounts_restore_legacy_two_user_contract():
+    source = (ROOT / "client/release/lib/clientflow_release/accounts.py").read_text(encoding="utf-8")
+    cli_source = (ROOT / "client/release/lib/clientflow_release/cli.py").read_text(encoding="utf-8")
 
-    calls = []
-    created = {"value": False}
+    assert 'KIOSK_USER = "clientflow-kiosk"' in source
+    assert 'ADMIN_USER = "cfadmin"' in source
+    assert '["/usr/sbin/usermod", "--append", "--groups", "sudo", ADMIN_USER]' in source
+    assert '["/usr/bin/passwd", "--delete", KIOSK_USER]' in source
+    assert 'provision_human_accounts(prompt_admin_password=True)' in cli_source
+    assert 'install.add_argument("--kiosk-user", default=KIOSK_USER, choices=[KIOSK_USER])' in cli_source
 
-    def fake_getpwnam(name):
-        assert name == "cfadmin"
-        if not created["value"]:
-            raise KeyError(name)
-        return SimpleNamespace(pw_uid=1001, pw_gid=1001, pw_dir="/home/cfadmin", pw_shell="/bin/bash")
 
-    def fake_run(command, **kwargs):
-        calls.append(command)
-        created["value"] = True
-        return SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr(cli.pwd, "getpwnam", fake_getpwnam)
-    monkeypatch.setattr(cli.grp, "getgrgid", lambda gid: SimpleNamespace(gr_name="cfadmin"))
-    monkeypatch.setattr(cli.os, "getgrouplist", lambda user, gid: [gid])
-    monkeypatch.setattr(cli.subprocess, "run", fake_run)
-
-    cli._ensure_cfadmin_account(cli.Layout(Path("/")))
-
-    assert len(calls) == 1
-    command = calls[0]
-    assert command[0] == "/usr/sbin/useradd"
-    assert "--create-home" in command
-    assert ["--shell", "/bin/bash"] == command[command.index("--shell"):command.index("--shell") + 2]
-    assert ["--password", "!"] == command[command.index("--password"):command.index("--password") + 2]
-    assert "sudo" not in command and "adm" not in command and "root" not in command
+def test_cfadmin_password_is_tty_prompted_and_not_persisted():
+    source = (ROOT / "client/release/lib/clientflow_release/accounts.py").read_text(encoding="utf-8")
+    cli_source = (ROOT / "client/release/lib/clientflow_release/cli.py").read_text(encoding="utf-8")
+    assert 'getpass.getpass("Nyt password til cfadmin: ")' in source
+    assert 'getpass.getpass("Gentag password til cfadmin: ")' in source
+    assert 'chpasswd' in source
+    assert 'cfadmin_password' not in cli_source
 
 
 def test_fresh_conflict_inventory_owns_cfadmin_account():

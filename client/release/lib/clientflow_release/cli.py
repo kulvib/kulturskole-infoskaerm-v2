@@ -16,6 +16,7 @@ import sys
 import uuid
 
 from .bundle import verify_bundle
+from .accounts import ADMIN_USER, KIOSK_USER, provision_human_accounts
 from .constants import DOMAIN_NAMES, INSTALL_MODE_FRESH, MAX_BUNDLE_BYTES
 from .crypto import sha256_file
 from .enrollment import (
@@ -109,46 +110,6 @@ def _fresh_conflicts(layout: Layout) -> list[str]:
     return sorted(set(conflicts))
 
 
-def _ensure_cfadmin_account(layout: Layout) -> None:
-    """Create the non-root local management account after committed claim.
-
-    The account starts password-locked and receives no sudo/adm/root membership.
-    Privileged support remains isolated in the canonical Root Terminal domain.
-    """
-    if layout.root != Path("/"):
-        return
-    try:
-        pwd.getpwnam("cfadmin")
-    except KeyError:
-        subprocess.run(
-            [
-                "/usr/sbin/useradd",
-                "--create-home",
-                "--user-group",
-                "--shell",
-                "/bin/bash",
-                "--password",
-                "!",
-                "cfadmin",
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    account = pwd.getpwnam("cfadmin")
-    primary_group = grp.getgrgid(account.pw_gid).gr_name
-    group_names = {grp.getgrgid(gid).gr_name for gid in os.getgrouplist("cfadmin", account.pw_gid)}
-    if (
-        account.pw_uid == 0
-        or account.pw_dir != "/home/cfadmin"
-        or account.pw_shell != "/bin/bash"
-        or primary_group != "cfadmin"
-        or group_names.intersection({"root", "sudo", "adm"})
-    ):
-        raise RuntimeError("cfadmin matcher ikke canonical local-management account contract")
-
-
 def _cleanup_new_install_preclaim_state(layout: Layout, *, install_id: str) -> None:
     # _fresh_conflicts() proves these roots did not exist before a brand-new
     # transaction. Verify ownership of the still-uncommitted local transaction
@@ -215,16 +176,14 @@ def _secure_json(path: Path, *, secret: bool = True) -> dict:
     return value
 
 
-def _validate_kiosk_user(name: str, layout: Layout) -> str:
-    if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", name or ""):
-        raise RuntimeError("kiosk-user er ugyldig")
-    if name == "root" or name.startswith("clientflow"):
-        raise RuntimeError("kiosk-user må ikke være root eller en ClientFlow-systembruger")
-    if layout.root == Path("/"):
+def _validate_kiosk_user(name: str, layout: Layout, *, require_existing: bool = True) -> str:
+    if name != KIOSK_USER:
+        raise RuntimeError(f"Fresh install kræver canonical kiosk-user {KIOSK_USER}")
+    if layout.root == Path("/") and require_existing:
         try:
             account = pwd.getpwnam(name)
         except KeyError as exc:
-            raise RuntimeError("kiosk-user findes ikke på systemet") from exc
+            raise RuntimeError("Canonical kiosk-user findes ikke på systemet") from exc
         if account.pw_uid < 1000 or account.pw_uid == 0:
             raise RuntimeError("kiosk-user skal være en normal interaktiv ikke-systembruger")
     return name
@@ -530,7 +489,7 @@ def _fresh_install_authorities(args: argparse.Namespace) -> tuple[str | None, st
 def install_fresh(args: argparse.Namespace) -> dict:
     layout = _layout(args.root)
     _require_root(layout)
-    kiosk_user = _validate_kiosk_user(args.kiosk_user, layout)
+    kiosk_user = _validate_kiosk_user(args.kiosk_user, layout, require_existing=False)
     backend_url = validate_backend_url(args.backend_url)
     bundle_size, approved_bundle_sha256 = _verify_expected_bundle_identity(
         args.bundle, args.expected_bundle_sha256
@@ -677,8 +636,14 @@ def install_fresh(args: argparse.Namespace) -> dict:
             install_mode=INSTALL_MODE_FRESH,
             layout=layout,
         )
+        # Backend claim is committed before local human-account mutation. This
+        # preserves the fresh-install trust boundary while restoring the proven
+        # legacy two-user product contract. Password input is read directly
+        # from the controlling TTY and is never persisted in ClientFlow state.
+        if layout.root == Path("/"):
+            provision_human_accounts(prompt_admin_password=True)
+        kiosk_user = _validate_kiosk_user(KIOSK_USER, layout)
         install_staged_definitions(release_id, layout=layout, kiosk_user=kiosk_user, client_id=int(response["client_id"]))
-        _ensure_cfadmin_account(layout)
         stored_ca_path = _copy_install_configuration(layout, release_id, ca_file=None, kiosk_user=kiosk_user)
         request_ca_file = layout.path(stored_ca_path) if stored_ca_path else None
         _persist_updater_tls_ca(layout, stored_ca_path)
@@ -752,7 +717,7 @@ def build_parser() -> argparse.ArgumentParser:
     # sudo/audit process argv never persists them. Receipt resume omits this
     # flag and therefore requires no consumed/expired one-time authority.
     install.add_argument("--fresh-install-authority-stdin", action="store_true")
-    install.add_argument("--kiosk-user", required=True)
+    install.add_argument("--kiosk-user", default=KIOSK_USER, choices=[KIOSK_USER])
     install.add_argument("--name")
     install.add_argument("--locality")
     install.add_argument("--ca-file", type=Path)

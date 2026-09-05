@@ -64,7 +64,6 @@ KIOSK_BLOCKED_DESKTOP_IDS = (
 )
 KIOSK_BLOCKED_BINARIES = (
     "/usr/bin/gnome-control-center",
-    "/usr/bin/nautilus",
     "/usr/bin/gnome-terminal",
     "/usr/bin/kgx",
     "/usr/bin/firefox",
@@ -409,6 +408,11 @@ def _gsettings_commands() -> Iterable[tuple[str, str, str]]:
         ("org.gnome.settings-daemon.plugins.power", "power-button-action", "'nothing'"),
         ("org.gnome.desktop.notifications", "show-banners", "false"),
         ("org.gnome.desktop.notifications", "show-in-lock-screen", "false"),
+        # Legacy 1.1.19 desktop contract: DING may remain present, but the
+        # virtual Home/Trash icons are hidden. Nautilus itself must stay
+        # executable because DING uses it internally on Ubuntu 26.04.
+        ("org.gnome.shell.extensions.ding", "show-home", "false"),
+        ("org.gnome.shell.extensions.ding", "show-trash", "false"),
     )
 
 

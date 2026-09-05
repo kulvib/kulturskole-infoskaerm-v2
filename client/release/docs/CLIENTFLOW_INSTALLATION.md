@@ -11,7 +11,7 @@ ClientFlow 1.3.0 er den fysisk godkendte historiske bootstrap-baseline for den s
 ## Forudsætninger for en senere godkendt installation
 
 - Ny Ubuntu Desktop LTS 26.04 `amd64`-installation.
-- Eksisterende normal interaktiv ikke-systembruger (UID >= 1000) som kioskbruger. Det kan være Ubuntu-installationens bootstrap-bruger. Fresh install ændrer ikke brugerens eksisterende Unix-gruppemedlemskaber; ClientFlow kiosk-policyen er den eksplicitte GDM/desktop/app/polkit-confinement nedenfor, ikke en skjult konto-/sudo-demotion.
+- Ubuntu-installationens eksisterende normale bootstrap-bruger bruges kun til den kontrollerede installationssession. Efter committed claim opretter ClientFlow den faste dedikerede kioskbruger `clientflow-kiosk` og den faste lokale administrator `cfadmin`. Kioskbrugeren må ikke være medlem af sudo/adm/admin/wheel/lpadmin/lxd. `cfadmin` får sudo og et password, som operatøren indtaster interaktivt via den kontrollerende TTY; passwordet gemmes ikke i ClientFlow-state eller argv.
 - Ingen eksisterende ClientFlow-filer, systemd-units, Linux-brugere eller state.
 - Godkendt keyless bundle med `deployable: true`, gyldig `release_approval`, SHA-256-integritetsmetadata og monoton release sequence.
 - Den eksakte SHA-256 for **hele** den godkendte bundle skal være kendt via den godkendte releaseproces, før nogen installer-kode køres.
@@ -40,7 +40,7 @@ ClientFlow 1.3.0 er den fysisk godkendte historiske bootstrap-baseline for den s
        --expected-bundle-sha256 "$APPROVED_BUNDLE_SHA256" \
        --backend-url https://<backend-origin> \
        --fresh-install-authority-stdin \
-       --kiosk-user <kiosk-user>
+       --kiosk-user clientflow-kiosk
    ```
 
 4. Installeren afviser alle eksisterende ClientFlow-spor. En geninstallation kræver den separate wipe-procedure med eksakt destruktiv bekræftelse.
@@ -48,11 +48,12 @@ ClientFlow 1.3.0 er den fysisk godkendte historiske bootstrap-baseline for den s
 6. Releasen stages i `/opt/clientflow/releases/<release-id>` og gøres immutable.
 7. Separate sysusers, kataloger og systemd-definitioner materialiseres, men `clientflow.target` forbliver disabled og inaktiv.
 8. Installeren genererer en lokal RSA 3072-**systemkrypteringsnøgle** til enrollment. Det er ikke en release-signeringsnøgle.
-9. Seks domænecredentials skrives separat for status, display, livestream, Remote Desktop, terminal og system.
-10. En eventuel privat CA kopieres til den root-ejede ClientFlow-konfiguration og genbruges ved resume; installationen er ikke afhængig af den oprindelige inputfil efter første sikre kopi.
-11. Standardkonfiguration, root-grant-verifikation og credentials valideres med sikre filrettigheder.
-12. Installationen stopper ved status `pending_manual_activation`.
-13. Den stabile updater-PYZ og dens systemd-definitioner er materialiseret, men `clientflow-updater.timer` skal være eksplicit `disabled` og `inactive` gennem hele pending-fasen. Backend update-auth forbliver fail-closed for den pending klient, og klienten må derfor ikke poll'e update-plane før godkendt first activation.
+9. Efter committed claim materialiseres den faste `clientflow-kiosk` og `cfadmin`. Installeren beder interaktivt om `cfadmin`-password på TTY; kioskbrugeren holdes uden lokale admin-grupper, mens `cfadmin` får sudo.
+10. Seks domænecredentials skrives separat for status, display, livestream, Remote Desktop, terminal og system.
+11. En eventuel privat CA kopieres til den root-ejede ClientFlow-konfiguration og genbruges ved resume; installationen er ikke afhængig af den oprindelige inputfil efter første sikre kopi.
+12. Standardkonfiguration, root-grant-verifikation og credentials valideres med sikre filrettigheder.
+13. Installationen stopper ved status `pending_manual_activation`.
+14. Den stabile updater-PYZ og dens systemd-definitioner er materialiseret, men `clientflow-updater.timer` skal være eksplicit `disabled` og `inactive` gennem hele pending-fasen. Backend update-auth forbliver fail-closed for den pending klient, og klienten må derfor ikke poll'e update-plane før godkendt first activation.
 
 Der er **ingen automatisk reboot**, ingen automatisk aktivering, ingen åbning af Terminal eller Remote Desktop, ingen start af en livestream og ingen updater-polling i `pending_manual_activation`.
 
