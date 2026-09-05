@@ -3,8 +3,8 @@
 Branch: `fix/production-readiness-legacy-functional-closure`
 
 Base source archive identity reviewed: `5ecf9b1f98ab25847314f3bd431e89a5909ec6c9`
-New source candidate after this byte-changing batch: ClientFlow `1.3.19`, release sequence `1220`.
-This is source identity only. It is NOT approved, published or catalog-promoted.
+Current unpromoted source candidate retained: ClientFlow `1.3.18`, release sequence `1219`.
+The batch changes source bytes/commit provenance but does not allocate sequence 1220. Catalog authority remains 1.3.17/1218 until the completed 1.3.18/1219 candidate is reproducibly built, manually approved, published immutable and promoted.
 
 ## Findings closed in this batch
 
@@ -58,4 +58,4 @@ Targeted local result: `9 passed` together with the existing human-account legac
 
 This ZIP does NOT claim closure of: curl/APT preclaim bootstrap, NetworkManager/factory cleanup, pre-first-activation repair release authority, full GTK4 legacy GUI parity, periodic time integrity, quick settings, cfadmin popup parity, recovery/support UX, local power event reporters, full capability-based legacy parity gate, or frontend obsolete-contract cleanup.
 
-Do not build/approve/publish/promote 1.3.19/1220 merely because this slice is green. Continue source closure first.
+Do not build/approve/publish/promote 1.3.18/1219 merely because this slice is green. Continue source closure first.

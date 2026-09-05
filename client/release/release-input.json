@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "release_sequence": 1220,
+  "release_sequence": 1219,
   "minimum_ubuntu_lts": "26.04",
   "architecture": "amd64",
   "runtime_python": "3.13.14"
