@@ -39,3 +39,16 @@ Livestream, Terminal and Remote Desktop are not modified. The shared release/upd
 6. Exact newer deployment uses existing updater/controller and retains first-activation approval proof.
 7. Successful repaired first activation keeps original fresh-install binding and records the newer active release.
 8. Normal deployment/update tests remain green.
+
+
+## Stable repair dispatch integrity
+
+The persistent updater PYZ remains deliberately minimal and does not embed
+`cli.py` or `transaction.py`. Its explicit root-only repair mode resolves the
+original release ID from the durable fresh-install binding and `exec`s
+`/usr/bin/python3 -I` against that exact staged release's verified
+`release/bin/clientflow-release-transaction` wrapper. The wrapper exposes only
+the repair operation needed here and then runs the existing repair state
+machine from the immutable staged release source. This avoids a hidden missing
+module dependency in the updater PYZ while retaining the original claim-bound
+release as the repair code authority.

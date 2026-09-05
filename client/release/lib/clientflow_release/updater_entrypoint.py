@@ -24,17 +24,16 @@ def main(argv: list[str] | None = None) -> int:
             print("clientflow-updater: ukendt operation", file=sys.stderr)
             return 2
         try:
-            from .cli import _require_root, _run_pre_first_activation_repair
-            from .transaction import Layout
+            from .repair_dispatch import exec_pre_first_activation_repair
 
-            layout = Layout()
-            _require_root(layout)
-            result = _run_pre_first_activation_repair(layout)
+            # Successful dispatch replaces this process with the immutable
+            # original staged release transaction wrapper. It therefore does
+            # not return here.
+            exec_pre_first_activation_repair()
         except Exception as exc:  # process boundary: systemd/operator receives concise failure
             print(f"clientflow-updater: {exc}", file=sys.stderr)
             return 1
-        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-        return 0
+        return 0  # pragma: no cover - os.execv replaces the process
 
     try:
         config = UpdaterConfig.from_environment()

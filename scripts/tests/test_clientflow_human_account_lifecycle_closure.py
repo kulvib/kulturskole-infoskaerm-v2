@@ -156,6 +156,9 @@ def test_pending_manual_activation_state_preserves_exact_bootstrap_user():
         install_id="11111111-1111-4111-8111-111111111111",
         backend_url="https://example.invalid",
         kiosk_user=accounts.KIOSK_USER,
+        client_name="Test client",
+        locality=None,
+        bootstrap_network_connection=None,
     )
 
     assert final["status"] == "pending_manual_activation"

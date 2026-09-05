@@ -48,3 +48,28 @@ The change batch must preserve the trust boundary in this order:
 ## Release gate
 
 No catalog promotion or new physical clean install until the new source identity passes compile/tests, executable integration gates, reproducible build, manual approval, immutable publication to the canonical Render store and separate catalog promotion. 1.3.17/1218 remains immutable historical evidence.
+
+## Post-merge closure tracking
+
+The table above records the original blocking findings and their required regression. Current source closure is tracked by the dedicated closure documents rather than by rewriting the historical evidence rows.
+
+Closed before this batch:
+- L119-01 human-account lifecycle, including bootstrap-user persistence through pending;
+- L119-02 documented DING/Nautilus baseline defect;
+- L119-04 preclaim apt/curl host readiness;
+- L119-06 pre-first-activation repair authority/path;
+- L119-07 install-state/release-state activation reconciliation.
+
+Closed by `FACTORY_NETWORK_PRECLAIM_CLOSURE.md`:
+- L119-05 factory/network/name/locality/bootstrap-profile lifecycle.
+
+Still open:
+- L119-03 GUI functional/layout parity;
+- L119-08 full capability/executable legacy parity gate;
+- L119-09 periodic time integrity;
+- L119-10 quick-settings parity;
+- L119-11 popup baseline parity;
+- L119-12 bounded local recovery/support UX;
+- L119-13 local reboot/shutdown attribution review;
+- L119-14 obsolete/contradictory frontend/backend contracts.
+
