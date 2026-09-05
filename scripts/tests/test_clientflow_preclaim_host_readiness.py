@@ -118,3 +118,11 @@ def test_curl_recovery_uses_apt_only_after_apt_is_ready(monkeypatch) -> None:
 
     assert calls[0][-1] == "update"
     assert calls[1][-3:] == ["install", "--reinstall", "curl"]
+
+
+def test_ubuntu2604_probe_forces_baseline_amd64_package_over_architecture_variants() -> None:
+    source = (ROOT / "scripts/verify_clientflow_preclaim_bootstrap_ubuntu2604.py").read_text(encoding="utf-8")
+    assert '"APT::Architecture-Variants="' in source
+    assert "f\"apt:{artifact['architecture']}={artifact['version']}\"" in source
+    assert 'package = temp / str(artifact["file"])' in source
+    assert 'glob("apt_*_amd64.deb")' not in source

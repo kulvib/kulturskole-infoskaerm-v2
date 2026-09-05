@@ -67,20 +67,31 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="clientflow-preclaim-host-probe-") as temp_name:
         temp = Path(temp_name)
         _run(["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "update"])
+        # Ubuntu 26.04 supports opt-in architecture variants such as amd64v3.
+        # The canonical recovery artifact is deliberately the baseline amd64
+        # package so it remains portable across supported amd64 clients.  Force
+        # APT's variant selector off for this authority check; otherwise a CI
+        # runner with amd64v3 enabled may legally download apt_*_amd64v3.deb
+        # even though the repo lock names the baseline apt_*_amd64.deb bytes.
         _run(
             [
                 "/usr/bin/apt-get",
                 "-o",
                 "DPkg::Lock::Timeout=120",
+                "-o",
+                "APT::Architecture-Variants=",
                 "download",
-                f"apt={artifact['version']}",
+                f"apt:{artifact['architecture']}={artifact['version']}",
             ],
             cwd=temp,
         )
-        matches = sorted(temp.glob("apt_*_amd64.deb"))
-        if len(matches) != 1:
-            raise ProbeError(f"Expected one apt recovery package, found {len(matches)}")
-        package = matches[0]
+        package = temp / str(artifact["file"])
+        if not package.is_file() or package.is_symlink():
+            downloaded = sorted(item.name for item in temp.glob("*.deb"))
+            raise ProbeError(
+                "Ubuntu signed APT download did not materialize the locked baseline artifact "
+                f"{artifact['file']}; downloaded={downloaded}"
+            )
         if _sha256(package) != (int(artifact["size"]), str(artifact["sha256"])):
             raise ProbeError("Ubuntu signed APT download does not match repo-locked recovery artifact")
         host_bootstrap._verify_deb_metadata(package, artifact)
