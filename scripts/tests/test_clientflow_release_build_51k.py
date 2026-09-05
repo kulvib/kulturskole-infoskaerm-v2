@@ -91,6 +91,19 @@ def test_current_platform_lock_is_source_independent_and_matches_physically_veri
             "sha256": "878e5ab495b8a694980fca61bc09b37e651ccedce2291c73434d16e48a2646fd",
         }
     }
+    assert data["preclaim_bootstrap_artifacts"] == [{
+        "file": "apt_3.2.0_amd64.deb",
+        "package": "apt",
+        "version": "3.2.0",
+        "architecture": "amd64",
+        "size": 1485978,
+        "sha256": "c8f0ba37e66fc367f57a887fba686c67d9487b290ca83bc992baeedc994bf47a",
+        "bootstrap_role": "apt-recovery",
+        "trust_authority": "ubuntu-signed-apt-repository",
+        "ubuntu_suite": "resolute",
+        "ubuntu_component": "main",
+        "archive_url": "https://archive.ubuntu.com/ubuntu/pool/main/a/apt/apt_3.2.0_amd64.deb",
+    }]
 
 
 def test_runtime_input_materializer_accepts_only_hash_locked_regular_members(tmp_path: Path):
@@ -217,6 +230,8 @@ def test_runtime_input_transport_roundtrips_locked_platform_artifact(tmp_path: P
     wheel_bytes = b"pip-wheel"
     chrome_bytes = b"exact-google-chrome-deb"
     chrome_name = "google-chrome-stable_test_amd64.deb"
+    apt_bytes = b"exact-ubuntu-apt-deb"
+    apt_name = "apt_test_amd64.deb"
     lock = {
         "schema_version": 1,
         "runtime_python": "3.13.14",
@@ -243,21 +258,34 @@ def test_runtime_input_transport_roundtrips_locked_platform_artifact(tmp_path: P
                 "sha256": hashlib.sha256(chrome_bytes).hexdigest(),
             }
         ],
+        "preclaim_bootstrap_artifacts": [
+            {
+                "file": apt_name,
+                "package": "apt",
+                "version": "3.2.0",
+                "architecture": "amd64",
+                "size": len(apt_bytes),
+                "sha256": hashlib.sha256(apt_bytes).hexdigest(),
+            }
+        ],
     }
     lock_path = tmp_path / "lock.json"
     lock_path.write_text(json.dumps(lock), encoding="utf-8")
     source = tmp_path / "source"
     (source / "wheelhouse").mkdir(parents=True)
     (source / "platform").mkdir()
+    (source / "bootstrap").mkdir()
     (source / "python-runtime-amd64.tar").write_bytes(runtime_bytes)
     (source / "wheelhouse/pip.whl").write_bytes(wheel_bytes)
     (source / "platform" / chrome_name).write_bytes(chrome_bytes)
+    (source / "bootstrap" / apt_name).write_bytes(apt_bytes)
 
     archive = tmp_path / "runtime-inputs.tar"
     build_module.build_transport(source, archive, lock_path)
     with tarfile.open(archive, mode="r:") as tf:
         names = {member.name for member in tf.getmembers() if member.isfile()}
     assert f"platform/{chrome_name}" in names
+    assert f"bootstrap/{apt_name}" in names
 
     output = tmp_path / "materialized"
     result = materialize_module.materialize(archive, output, lock_path)
@@ -268,4 +296,16 @@ def test_runtime_input_transport_roundtrips_locked_platform_artifact(tmp_path: P
             "sha256": hashlib.sha256(chrome_bytes).hexdigest(),
         }
     ]
+    assert result["preclaim_bootstrap_artifacts"] == [
+        {
+            "file": apt_name,
+            "size": len(apt_bytes),
+            "sha256": hashlib.sha256(apt_bytes).hexdigest(),
+        }
+    ]
+    assert {item["file"] for item in result["artifacts"]} == {
+        "python-runtime-amd64.tar",
+        "pip.whl",
+    }
     assert (output / "platform" / chrome_name).read_bytes() == chrome_bytes
+    assert (output / "bootstrap" / apt_name).read_bytes() == apt_bytes

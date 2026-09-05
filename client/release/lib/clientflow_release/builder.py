@@ -178,9 +178,35 @@ def _create_payload(
             actual_platform = {item.name for item in platform_dir.iterdir() if item.is_file() and not item.is_symlink()}
             if actual_platform != declared_names:
                 raise ValueError("Materialiserede platform inputs matcher ikke repo-lock")
+
+        locked_bootstrap = platform_lock.get("preclaim_bootstrap_artifacts", [])
+        if not isinstance(locked_bootstrap, list) or not locked_bootstrap:
+            raise ValueError("runtime-platform-input lock mangler preclaim_bootstrap_artifacts")
+        bootstrap_dir = runtime_inputs / "bootstrap"
+        bootstrap_names: set[str] = set()
+        bootstrap_complete = bootstrap_dir.is_dir()
+        for raw in locked_bootstrap:
+            if not isinstance(raw, dict):
+                raise ValueError("runtime-platform-input lock har ugyldig preclaim bootstrap artifact")
+            name = str(raw.get("file") or "")
+            if not name or Path(name).name != name or name in bootstrap_names:
+                raise ValueError("runtime-platform-input lock har ugyldigt bootstrap-filnavn")
+            bootstrap_names.add(name)
+            path = bootstrap_dir / name
+            if not path.is_file() or path.is_symlink():
+                bootstrap_complete = False
+                continue
+            size, digest = sha256_file(path)
+            if size != int(raw.get("size", -1)) or digest != str(raw.get("sha256") or ""):
+                raise ValueError(f"Bootstrap input matcher ikke repo-lock: {name}")
+            sources.append((path, PurePosixPath(root) / "runtime-inputs/bootstrap" / name))
+        if bootstrap_dir.is_dir():
+            actual_bootstrap = {item.name for item in bootstrap_dir.iterdir() if item.is_file() and not item.is_symlink()}
+            if actual_bootstrap != bootstrap_names:
+                raise ValueError("Materialiserede bootstrap inputs matcher ikke repo-lock")
         sources.append((platform_lock_path, PurePosixPath(root) / "runtime-inputs/platform/runtime-platform-inputs.lock.json"))
 
-        complete = python_tar.is_file() and wheels_complete and platform_complete
+        complete = python_tar.is_file() and wheels_complete and platform_complete and bootstrap_complete
         if python_tar.is_file():
             sources.append((python_tar, PurePosixPath(root) / "runtime-inputs/python-runtime-amd64.tar"))
             size, digest = sha256_file(python_tar)

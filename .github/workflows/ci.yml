@@ -107,6 +107,13 @@ jobs:
           /usr/bin/python3 -c 'import platform, sys; print(platform.python_version()); assert sys.version_info[:2] == (3, 14)'
           /usr/bin/python3 scripts/verify_clientflow_ubuntu2604_host.py --repo "$GITHUB_WORKSPACE"
 
+      - name: Prove preclaim APT and curl recovery on ephemeral Ubuntu 26.04 host
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo /usr/bin/python3 scripts/verify_clientflow_preclaim_bootstrap_ubuntu2604.py \
+            --repo "$GITHUB_WORKSPACE"
+
       - name: Install and verify canonical ClientFlow host capabilities
         shell: bash
         run: |

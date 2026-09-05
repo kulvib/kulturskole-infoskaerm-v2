@@ -43,7 +43,7 @@ def _validate_entry(raw: object, *, kind: str) -> tuple[str, dict[str, object]]:
         raise ValueError(f"Invalid size for {name}")
     item = dict(raw)
     item["_kind"] = kind
-    if kind == "platform":
+    if kind in {"platform", "bootstrap"}:
         for field in ("package", "version", "architecture"):
             if not str(raw.get(field) or "").strip():
                 raise ValueError(f"Platform artifact {name} mangler {field}")
@@ -60,8 +60,16 @@ def _load_lock(lock_path: Path) -> tuple[dict[str, object], dict[str, dict[str, 
     platform_artifacts = data.get("platform_artifacts", [])
     if not isinstance(platform_artifacts, list):
         raise ValueError("runtime-platform-input platform_artifacts must be a list")
+    bootstrap_artifacts = data.get("preclaim_bootstrap_artifacts", [])
+    if not isinstance(bootstrap_artifacts, list):
+        raise ValueError("runtime-platform-input preclaim_bootstrap_artifacts must be a list")
     expected: dict[str, dict[str, object]] = {}
-    for raw, kind in [(item, "runtime") for item in artifacts] + [(item, "platform") for item in platform_artifacts]:
+    rows = (
+        [(item, "runtime") for item in artifacts]
+        + [(item, "platform") for item in platform_artifacts]
+        + [(item, "bootstrap") for item in bootstrap_artifacts]
+    )
+    for raw, kind in rows:
         name, item = _validate_entry(raw, kind=kind)
         if name in expected:
             raise ValueError(f"Duplicate locked artifact: {name}")
@@ -72,6 +80,8 @@ def _load_lock(lock_path: Path) -> tuple[dict[str, object], dict[str, dict[str, 
 def _member_path(name: str, declared: dict[str, object]) -> str:
     if declared.get("_kind") == "platform":
         return f"platform/{name}"
+    if declared.get("_kind") == "bootstrap":
+        return f"bootstrap/{name}"
     return name if name == "python-runtime-amd64.tar" else f"wheelhouse/{name}"
 
 
@@ -105,7 +115,13 @@ def materialize(archive_path: Path, output_dir: Path, lock_path: Path) -> dict[s
         (tmp / "wheelhouse").mkdir(mode=0o700)
         if any(item.get("_kind") == "platform" for item in expected.values()):
             (tmp / "platform").mkdir(mode=0o700)
-        allowed_dirs = {"wheelhouse"} | ({"platform"} if (tmp / "platform").exists() else set())
+        if any(item.get("_kind") == "bootstrap" for item in expected.values()):
+            (tmp / "bootstrap").mkdir(mode=0o700)
+        allowed_dirs = {"wheelhouse"}
+        if (tmp / "platform").exists():
+            allowed_dirs.add("platform")
+        if (tmp / "bootstrap").exists():
+            allowed_dirs.add("bootstrap")
 
         with tarfile.open(archive_path, mode="r:") as tf:
             for member in tf:
@@ -169,18 +185,26 @@ def materialize(archive_path: Path, output_dir: Path, lock_path: Path) -> dict[s
 
     runtime_verified: list[dict[str, object]] = []
     platform_verified: list[dict[str, object]] = []
+    bootstrap_verified: list[dict[str, object]] = []
     for name, declared in sorted(expected.items()):
         path = _target_path(output_dir, name, declared)
         size, digest = _sha256_file(path)
         if size != int(declared["size"]) or digest != str(declared["sha256"]):
             raise ValueError(f"Post-materialization verification failed for {name}")
         item = {"file": name, "size": size, "sha256": digest}
-        (platform_verified if declared.get("_kind") == "platform" else runtime_verified).append(item)
+        kind = declared.get("_kind")
+        if kind == "platform":
+            platform_verified.append(item)
+        elif kind == "bootstrap":
+            bootstrap_verified.append(item)
+        else:
+            runtime_verified.append(item)
     return {
         "runtime_python": lock["runtime_python"],
         "architecture": lock["architecture"],
         "artifacts": runtime_verified,
         "platform_artifacts": platform_verified,
+        "preclaim_bootstrap_artifacts": bootstrap_verified,
     }
 
 
@@ -191,7 +215,7 @@ def main() -> int:
     parser.add_argument("--lock", type=Path, default=ROOT / "client/release/runtime-platform-inputs.lock.json")
     args = parser.parse_args()
     result = materialize(args.archive, args.output_dir, args.lock)
-    for item in [*result["artifacts"], *result["platform_artifacts"]]:
+    for item in [*result["artifacts"], *result["platform_artifacts"], *result["preclaim_bootstrap_artifacts"]]:
         print(f"OK {item['file']} size={item['size']} sha256={item['sha256']}")
     print("RESULT: HASH-LOCKED RUNTIME INPUTS MATERIALIZED")
     return 0

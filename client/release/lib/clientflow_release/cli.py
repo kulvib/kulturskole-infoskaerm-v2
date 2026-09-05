@@ -25,6 +25,7 @@ from .accounts import (
 )
 from .constants import DOMAIN_NAMES, INSTALL_MODE_FRESH, MAX_BUNDLE_BYTES
 from .crypto import sha256_file
+from .host_bootstrap import ensure_preclaim_host_readiness
 from .enrollment import (
     EnrollmentHTTPError,
     claim,
@@ -512,6 +513,14 @@ def install_fresh(args: argparse.Namespace) -> dict:
     release_id = str(binding["release_id"])
     state_path = _install_state_path(layout)
     new_install = not state_path.exists()
+    # Host prerequisites are established before one-time enrollment authorities
+    # are even read from stdin and before any ClientFlow local state is created.
+    # Recovery uses only bytes already bound to the approved whole bundle.
+    if layout.root == Path("/"):
+        ensure_preclaim_host_readiness(
+            args.bundle,
+            expected_bundle_sha256=approved_bundle_sha256,
+        )
     enrollment_code, fresh_install_authorization = _fresh_install_authorities(args)
 
     if not new_install:

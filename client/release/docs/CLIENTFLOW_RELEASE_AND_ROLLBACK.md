@@ -167,4 +167,6 @@ Manuel rollback kræver både målreleaseens eksakte `--expected-release-approva
 
 ## Offline runtime input
 
-Python-runtime og tredjeparts-wheels er release-inputs, ikke source. De leveres til `scripts/build_clientflow_release.py --runtime-inputs ...`. Builderen genbygger altid ClientFlow-wheelet fra `client/runtime/`, så et ældre prebuilt ClientFlow-wheel ikke kan overskrive den canonical source.
+Python-runtime, tredjeparts-wheels og de hash-låste platform/bootstrap-artifacts er release-inputs, ikke source. De leveres til `scripts/build_clientflow_release.py --runtime-inputs ...` som `python-runtime-amd64.tar`, `wheelhouse/`, `platform/` og `bootstrap/`. Den canonical `client/release/runtime-platform-inputs.lock.json` fastlåser exact filnavn, størrelse og SHA-256 for både platform- og preclaim-bootstrap-bytes. Runtime-input transporten må derfor ikke mangle eller tilføje filer i nogen af de deklarerede inputklasser.
+
+`platform/` forbliver Display-platformens artifact-namespace. `bootstrap/` er separat og er udelukkende preclaim host-recovery input; aktuell Ubuntu 26.04-kontrakt kræver den låste `apt` recovery-`.deb`. Builderen genbygger altid ClientFlow-wheelet fra `client/runtime/`, så et ældre prebuilt ClientFlow-wheel ikke kan overskrive den canonical source.
