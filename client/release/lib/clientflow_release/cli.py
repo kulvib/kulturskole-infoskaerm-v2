@@ -494,6 +494,29 @@ def _fresh_install_authorities(args: argparse.Namespace) -> tuple[str | None, st
     return enrollment_code, fresh_install_authorization
 
 
+def _pending_manual_activation_state(
+    install_state: dict,
+    *,
+    binding: dict,
+    install_id: str,
+    backend_url: str,
+    kiosk_user: str,
+) -> dict:
+    """Build the durable pre-activation state without losing bootstrap identity."""
+    return {
+        "schema_version": INSTALL_STATE_SCHEMA,
+        "fresh_install_binding": binding,
+        "install_id": install_id,
+        "backend_url": backend_url,
+        "kiosk_user": kiosk_user,
+        # Preserve the exact pre-ClientFlow Ubuntu identity through the pending
+        # activation boundary. Healthy first activation is the only point where
+        # cleanup_bootstrap_user() is allowed to consume and clear this marker.
+        "bootstrap_user": install_state.get("bootstrap_user"),
+        "status": "pending_manual_activation",
+    }
+
+
 def install_fresh(args: argparse.Namespace) -> dict:
     layout = _layout(args.root)
     _require_root(layout)
@@ -702,14 +725,13 @@ def install_fresh(args: argparse.Namespace) -> dict:
 
     install_stable_updater_host(release_id, layout=layout)
     _validate_inactive_install(layout, release_id)
-    final_state = {
-        "schema_version": INSTALL_STATE_SCHEMA,
-        "fresh_install_binding": binding,
-        "install_id": install_id,
-        "backend_url": backend_url,
-        "kiosk_user": kiosk_user,
-        "status": "pending_manual_activation",
-    }
+    final_state = _pending_manual_activation_state(
+        install_state,
+        binding=binding,
+        install_id=install_id,
+        backend_url=backend_url,
+        kiosk_user=kiosk_user,
+    )
     atomic_write_json(state_path, final_state, mode=0o600)
     return {
         "status": "pending_manual_activation",

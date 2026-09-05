@@ -59,3 +59,14 @@ Targeted local result: `9 passed` together with the existing human-account legac
 This ZIP does NOT claim closure of: curl/APT preclaim bootstrap, NetworkManager/factory cleanup, pre-first-activation repair release authority, full GTK4 legacy GUI parity, periodic time integrity, quick settings, cfadmin popup parity, recovery/support UX, local power event reporters, full capability-based legacy parity gate, or frontend obsolete-contract cleanup.
 
 Do not build/approve/publish/promote 1.3.18/1219 merely because this slice is green. Continue source closure first.
+
+## Post-merge correction
+
+A later read-only fresh-main review found that `install_fresh()` dropped the
+recorded `bootstrap_user` when rewriting durable `pending_manual_activation`
+state. Therefore the original B1 closure was incomplete at that boundary.
+
+The correction is documented in `BOOTSTRAP_USER_PENDING_STATE_CLOSURE.md` and
+preserves the exact recorded bootstrap identity until healthy first activation,
+where the existing exact-only cleanup consumes and clears it.
+
