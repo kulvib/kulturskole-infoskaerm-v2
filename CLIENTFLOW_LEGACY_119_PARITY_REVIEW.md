@@ -67,11 +67,13 @@ Closed by `LOCAL_UX_LEGACY_119_CLOSURE.md`:
 - L119-03 GUI functional/layout parity;
 - L119-12 bounded local recovery/support UX.
 
+Closed by `PLATFORM_SESSION_POLICY_LEGACY_119_CLOSURE.md`:
+- L119-09 periodic Europe/Copenhagen + NTP integrity;
+- L119-10 recurring kiosk quick-settings parity;
+- L119-11 popup baseline parity for both human accounts.
+
 Still open:
 - L119-08 full capability/executable legacy parity gate;
-- L119-09 periodic time integrity;
-- L119-10 quick-settings parity;
-- L119-11 popup baseline parity;
 - L119-13 local reboot/shutdown attribution review;
 - L119-14 obsolete/contradictory frontend/backend contracts.
 

@@ -1,0 +1,24 @@
+[Unit]
+Description=ClientFlow recurring kiosk quick-settings policy
+After=graphical.target clientflow-display-platform-prepare.service
+Requires=clientflow-display-platform-prepare.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/clientflow/active/runtime/bin/clientflow-kiosk-session-policy
+UMask=0022
+NoNewPrivileges=no
+PrivateTmp=yes
+PrivateDevices=no
+ProtectSystem=strict
+ProtectHome=false
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
