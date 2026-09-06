@@ -18,6 +18,7 @@ from .atomic import atomic_write_json
 from .config import ConfigurationError, load_secure_json
 from .server import serve_forever
 from .socket_activation import activated_socket
+from .power_lifecycle import clear_system_intent, record_system_intent
 
 _HOSTNAME_RE = re.compile(r"^(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _FIXED_BINARIES = {
@@ -348,9 +349,18 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
         return completed
+    if action in BOOT_BOUNDARY_ACTIONS:
+        record_system_intent(
+            action=action,
+            command_id=command_id,
+            source=str(payload.get("source") or "system_command"),
+            requested_boot_id=(str(payload.get("requested_boot_id")) if payload.get("requested_boot_id") else None),
+        )
     try:
         result = _execute(prepared)
     except Exception as exc:
+        if action in BOOT_BOUNDARY_ACTIONS:
+            clear_system_intent()
         _journal_finish(
             lock_fd,
             client_id=client_id,

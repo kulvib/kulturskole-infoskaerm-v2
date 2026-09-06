@@ -30,6 +30,7 @@ CLIENTFLOW_ENTRYPOINTS = (
     "clientflow-platform-prepare",
     "clientflow-time-integrity",
     "clientflow-kiosk-session-policy",
+    "clientflow-power-event-marker",
     "clientflow-livestream-agent",
     "clientflow-livestream-broker",
     "clientflow-livestream-producer",

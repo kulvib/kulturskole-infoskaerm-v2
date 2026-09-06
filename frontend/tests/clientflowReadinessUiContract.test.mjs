@@ -29,10 +29,13 @@ test("Ubuntu action copy represents package installation, not a check-only actio
   assert.doesNotMatch(info, /Tjek\/opdater Ubuntu/);
 });
 
-test("orphaned kiosk lockdown control is fail-closed in the frontend", () => {
+test("orphaned kiosk lockdown control is removed from the frontend", () => {
   const info = read("src/pages/clientdetailspage/ClientDetailsInfoSection.jsx");
-  assert.match(info, /Canonical ClientFlow understøtter endnu ikke kiosk lockdown; kontrollen er fail-closed\./);
-  assert.doesNotMatch(info, /payload\.desktop_lockdown_enabled\s*=/);
+  const page = read("src/pages/clientdetailspage/ClientDetailsPage.jsx");
+  const combined = info + page;
+  assert.doesNotMatch(combined, /Kiosk lockdown/);
+  assert.doesNotMatch(combined, /desktop_lockdown_enabled/);
+  assert.doesNotMatch(combined, /desktop_lockdown_status/);
 });
 
 test("diagnostic labels point to canonical units instead of obsolete agents", () => {

@@ -1123,33 +1123,6 @@ function isCanonicalKioskUrl(value) {
 }
 
 
-function normalizeLockdownStatus(value) {
-  return String(value || "unknown").trim().toLowerCase();
-}
-
-function getKioskLockdownMeta(status, desiredEnabled) {
-  const st = normalizeLockdownStatus(status);
-  if (st === "applied" || st === "active") {
-    return { label: "Aktiv", color: "success", description: "Kiosk-brugeren er låst. cfadmin, root og ClientFlow-services påvirkes ikke." };
-  }
-  if (st === "disabled" || st === "off") {
-    return { label: "Slået fra", color: "default", description: "Kiosk lockdown er slået fra på klienten." };
-  }
-  if (st === "pending") {
-    return { label: "Afventer klient", color: "warning", description: desiredEnabled ? "Backend afventer at klienten anvender kiosk lockdown." : "Backend afventer at klienten ruller kiosk lockdown tilbage." };
-  }
-  if (st === "applying") {
-    return { label: "Anvender", color: "info", description: "Klienten er ved at låse kiosk-brugeren." };
-  }
-  if (st === "rolling_back" || st === "rollback") {
-    return { label: "Ruller tilbage", color: "warning", description: "Klienten er ved at fjerne kiosk lockdown." };
-  }
-  if (st === "error" || st === "failed") {
-    return { label: "Fejl", color: "error", description: "Klienten kunne ikke gennemføre kiosk lockdown. Brug cfadmin/administrator-terminal til fejlsøgning." };
-  }
-  return { label: desiredEnabled ? "Ukendt / ønsket til" : "Ukendt", color: "default", description: "Klienten har endnu ikke rapporteret en tydelig kiosk lockdown-status." };
-}
-
 function normalizeLocalManagementStatus(value) {
   return String(value || "ready").trim().toLowerCase();
 }
@@ -1822,7 +1795,6 @@ function getConfigFormFromClient(client) {
     locality: client?.locality || "",
     kiosk_url: client?.kiosk_url || "",
     browser_refresh_interval_sec: String(client?.browser_refresh_interval_sec ?? 900),
-    desktop_lockdown_enabled: client?.desktop_lockdown_enabled ? "true" : "false",
     organization_id: getOrganizationId(client) ? String(getOrganizationId(client)) : "",
   };
 }
@@ -1891,7 +1863,6 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     form.locality !== initialForm.locality ||
     form.kiosk_url !== initialForm.kiosk_url ||
     String(form.browser_refresh_interval_sec || "") !== String(initialForm.browser_refresh_interval_sec || "") ||
-    String(form.desktop_lockdown_enabled || "false") !== String(initialForm.desktop_lockdown_enabled || "false") ||
     String(form.organization_id || "") !== String(initialForm.organization_id || "")
   ), [form, initialForm]);
 
@@ -2089,8 +2060,6 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     setForm(initialForm);
   };
 
-  const lockdownDesiredEnabled = String(form.desktop_lockdown_enabled || "false") === "true";
-  const lockdownMeta = getKioskLockdownMeta(client?.desktop_lockdown_status, lockdownDesiredEnabled);
   const localManagementStatus = normalizeLocalManagementStatus(localManagementSnapshot.status);
   const localManagementMeta = getLocalManagementMeta(localManagementStatus);
   const localManagementActionLabel = getLocalManagementActionLabel(localManagementSnapshot.action);
@@ -2284,57 +2253,9 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                 Sikkerhed på klienten
               </Typography>
               <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>
-                Indstillingerne her påvirker kun den lokale Ubuntu-klient. Kiosk-brugeren får ikke sudo/administrator-rettigheder.
+                Administrative handlinger på den lokale Ubuntu-klient. Kiosk-brugeren får ikke sudo/administrator-rettigheder.
               </Typography>
               <Grid container spacing={1.25}>
-                <Grid
-                  size={{
-                    xs: 12,
-                    md: 6
-                  }}>
-                  <TextField
-                    select
-                    fullWidth
-                    label="Kiosk lockdown"
-                    value={form.desktop_lockdown_enabled}
-                    onChange={setField("desktop_lockdown_enabled")}
-                    disabled
-                    helperText="Canonical ClientFlow understøtter endnu ikke kiosk lockdown; kontrollen er fail-closed."
-                    sx={textFieldSx}
-                  >
-                    <MenuItem value="true">Til</MenuItem>
-                    <MenuItem value="false">Fra</MenuItem>
-                  </TextField>
-                </Grid>
-                <Grid
-                  size={{
-                    xs: 12,
-                    md: 6
-                  }}>
-                  <Box sx={{ height: "100%", p: 1.25, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
-                    <Stack
-                      direction="row"
-                      spacing={1}
-                      useFlexGap
-                      sx={{
-                        alignItems: "center",
-                        flexWrap: "wrap"
-                      }}>
-                      <Chip
-                        size="small"
-                        label={lockdownMeta.label}
-                        sx={compactDarkChipSx(lockdownMeta.color)}
-                      />
-                      <Typography variant="caption" sx={{ color: MUTED, fontWeight: 800 }}>
-                        Ønske: {lockdownDesiredEnabled ? "Til" : "Fra"}
-                      </Typography>
-                    </Stack>
-                    <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.75 }}>
-                      {client?.desktop_lockdown_message || lockdownMeta.description}
-                    </Typography>
-                  </Box>
-                </Grid>
-
                 {isSuperadmin && (
                   <>
                     <Grid size={12}>

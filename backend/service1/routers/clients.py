@@ -1122,11 +1122,31 @@ def _apply_system_projection_for_read(session, client: Client, presence: ClientP
         current_boot_id=presence.status.boot_id,
         status_online=presence.status.is_online,
     )
+    # A later local power transition is canonical observed evidence from the
+    # Status domain, not a System command. Preserve that lifecycle metadata when
+    # the latest historical System command is older; pending/state still come
+    # exclusively from the System command projection.
+    local_power_at = getattr(client, "last_power_event_at", None)
+    command_power_at = power.get("last_power_event_at")
+    preserve_local_power = bool(
+        getattr(client, "last_power_event_source", None) == "local"
+        and local_power_at is not None
+        and (command_power_at is None or local_power_at > command_power_at)
+    )
+    local_metadata_fields = {
+        "last_power_event",
+        "last_power_event_at",
+        "last_power_event_source",
+        "last_reboot_started_at",
+        "last_shutdown_started_at",
+    }
     for key, value in power.items():
         # None is authoritative for legacy lifecycle metadata, but state=None
         # means "no current canonical power command" and must not erase the
         # ordinary non-System client state compatibility field.
         if key == "state" and value is None:
+            continue
+        if preserve_local_power and key in local_metadata_fields:
             continue
         _set_runtime_read_attr(client, key, value)
     os_update = os_update_projection(session, client_id)
