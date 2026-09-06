@@ -91,3 +91,33 @@ def test_status_power_event_rejects_boot_binding_mismatch():
     assert client.last_boot_id == current
     assert client.last_power_event is None
     assert client.last_shutdown_started_at is None
+
+
+def test_local_status_power_event_preserves_opaque_boot_id_contract():
+    previous = "boot-a"
+    current = "boot-b"
+    client = SimpleNamespace(
+        id=99,
+        last_boot_id=previous,
+        last_boot_at=None,
+        last_power_event=None,
+        last_power_event_at=None,
+        last_power_event_source=None,
+        last_reboot_started_at=None,
+        last_shutdown_started_at=None,
+    )
+    session = FakeSession(client)
+    started = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    apply_status_power_observation(
+        session,
+        client_id=99,
+        status_payload={"local_power_event": _event("reboot", previous, current, started)},
+        boot_id=current,
+    )
+
+    assert client.last_boot_id == current
+    assert client.last_power_event == "reboot_completed"
+    assert client.last_power_event_source == "local"
+    assert client.last_reboot_started_at is not None
+    assert session.added == [client]

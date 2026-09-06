@@ -90,13 +90,9 @@ def record_system_intent(
     except ValueError as exc:
         raise PowerLifecycleError("power_command_id_invalid") from exc
     current_boot = _current_boot_id()
-    if requested_boot_id:
-        try:
-            requested = str(uuid.UUID(str(requested_boot_id)))
-        except ValueError as exc:
-            raise PowerLifecycleError("power_requested_boot_id_invalid") from exc
-        if requested != current_boot:
-            raise PowerLifecycleError("power_requested_boot_id_mismatch")
+    requested = str(requested_boot_id or "")
+    if len(requested) > 128:
+        raise PowerLifecycleError("power_requested_boot_id_invalid")
     _ensure_state_dir()
     atomic_write_json(
         SYSTEM_INTENT_PATH,
@@ -105,7 +101,13 @@ def record_system_intent(
             "action": action,
             "command_id": str(command_id),
             "source": str(source or "system_command")[:80],
+            # The backend Status/System boot-id contract is intentionally opaque
+            # (bounded to 128 characters at the HTTP boundary).  Local reporter
+            # suppression is instead bound to the actual kernel boot id read on
+            # this host, so synthetic or future boot-id formats cannot change the
+            # established System broker contract.
             "boot_id": current_boot,
+            **({"requested_boot_id": requested} if requested else {}),
             "created_at_epoch": time.time(),
         },
         mode=0o600,

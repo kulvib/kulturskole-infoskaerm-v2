@@ -61,6 +61,21 @@ def test_canonical_system_intent_suppresses_false_local_attribution(monkeypatch,
     assert not power_lifecycle.SYSTEM_INTENT_PATH.exists()
 
 
+def test_canonical_system_intent_accepts_opaque_status_boot_id(monkeypatch, tmp_path: Path):
+    host_boot_id = str(uuid.uuid4())
+    _configure(monkeypatch, tmp_path, host_boot_id)
+    power_lifecycle.record_system_intent(
+        action="reboot",
+        command_id=str(uuid.uuid4()),
+        source="control_room",
+        requested_boot_id="boot-a",
+    )
+    result = power_lifecycle.mark_local_transition("reboot")
+    assert result == {"status": "canonical_system_command", "action": "reboot"}
+    assert not power_lifecycle.LOCAL_MARKER_PATH.exists()
+    assert not power_lifecycle.SYSTEM_INTENT_PATH.exists()
+
+
 def test_wrong_action_intent_cannot_mask_local_transition(monkeypatch, tmp_path: Path):
     boot_id = str(uuid.uuid4())
     _configure(monkeypatch, tmp_path, boot_id)

@@ -38,6 +38,16 @@ V2 retained canonical remote System command reconciliation but removed the durab
 
 The implementation changes Status/System shared platform code only because the documented defect is in power lifecycle attribution. Livestream, Terminal and Remote Desktop source is untouched. Display source is untouched.
 
+### CI correction — opaque boot-id contract
+
+The first CI run exposed a contract regression in the new attribution layer: `requested_boot_id` was parsed as a UUID and compared to the local kernel boot id. The established Status/System HTTP contract intentionally treats boot ids as bounded opaque strings (`max_length=128`), and the operational integration flow uses values such as `boot-a`/`boot-b`.
+
+The correction preserves that authority boundary:
+- backend-reported/requested boot ids remain bounded opaque strings;
+- only `/proc/sys/kernel/random/boot_id`, which is read locally from Linux, is UUID-validated;
+- local reporter suppression is bound to that actual same-host kernel boot id, not to the representation chosen by the backend Status contract;
+- event ids remain UUIDs.
+
 ### Regression
 
 Tests cover:

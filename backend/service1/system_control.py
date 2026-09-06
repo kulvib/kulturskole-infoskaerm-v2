@@ -427,9 +427,8 @@ def apply_status_power_observation(
     client = session.get(Client, client_id)
     if client is None:
         return
-    try:
-        current_boot = str(uuid.UUID(str(boot_id or "")))
-    except ValueError:
+    current_boot = str(boot_id or "")
+    if not current_boot or len(current_boot) > 128:
         return
 
     now = utcnow()
@@ -461,12 +460,19 @@ def apply_status_power_observation(
         return
     try:
         uuid.UUID(str(event.get("event_id") or ""))
-        previous_boot = str(uuid.UUID(str(event.get("previous_boot_id") or "")))
-        observed_boot = str(uuid.UUID(str(event.get("observed_boot_id") or "")))
     except ValueError:
         session.add(client)
         return
-    if previous_boot == current_boot or observed_boot != current_boot:
+    previous_boot = str(event.get("previous_boot_id") or "")
+    observed_boot = str(event.get("observed_boot_id") or "")
+    if (
+        not previous_boot
+        or not observed_boot
+        or len(previous_boot) > 128
+        or len(observed_boot) > 128
+        or previous_boot == current_boot
+        or observed_boot != current_boot
+    ):
         session.add(client)
         return
     try:
