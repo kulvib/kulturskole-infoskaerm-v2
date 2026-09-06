@@ -409,3 +409,87 @@ def power_projection(
     result["last_power_event_at"] = row.completed_at or row.claimed_at or row.requested_at
     result["last_power_event_source"] = str(payload.get("source") or "system_command")[:80]
     return result
+
+def apply_status_power_observation(
+    session: Session,
+    *,
+    client_id: int,
+    status_payload: dict[str, Any] | None,
+    boot_id: str | None,
+) -> None:
+    """Persist canonical Status boot evidence and bounded local power attribution.
+
+    Status is the only liveness/boot authority.  The optional local_power_event
+    is accepted solely as provenance for a transition that happened outside the
+    canonical System command queue.  It can never create/complete a System
+    command or change pending System state.
+    """
+    client = session.get(Client, client_id)
+    if client is None:
+        return
+    try:
+        current_boot = str(uuid.UUID(str(boot_id or "")))
+    except ValueError:
+        return
+
+    now = utcnow()
+    if str(getattr(client, "last_boot_id", "") or "") != current_boot:
+        client.last_boot_id = current_boot
+        client.last_boot_at = now
+
+    payload = status_payload if isinstance(status_payload, dict) else {}
+    event = payload.get("local_power_event")
+    if not isinstance(event, dict):
+        session.add(client)
+        return
+
+    try:
+        schema_version = int(event.get("schema_version", 0) or 0)
+    except (TypeError, ValueError):
+        schema_version = 0
+    if (
+        schema_version != 1
+        or str(event.get("source") or "") != "local"
+        or str(event.get("event") or "") not in {"reboot_completed", "boot_after_shutdown"}
+        or str(event.get("action") or "") not in {"reboot", "shutdown"}
+    ):
+        session.add(client)
+        return
+    expected_event = "reboot_completed" if event.get("action") == "reboot" else "boot_after_shutdown"
+    if event.get("event") != expected_event:
+        session.add(client)
+        return
+    try:
+        uuid.UUID(str(event.get("event_id") or ""))
+        previous_boot = str(uuid.UUID(str(event.get("previous_boot_id") or "")))
+        observed_boot = str(uuid.UUID(str(event.get("observed_boot_id") or "")))
+    except ValueError:
+        session.add(client)
+        return
+    if previous_boot == current_boot or observed_boot != current_boot:
+        session.add(client)
+        return
+    try:
+        started = datetime.fromisoformat(str(event.get("started_at") or "").replace("Z", "+00:00"))
+    except ValueError:
+        session.add(client)
+        return
+    if started.tzinfo is not None:
+        started = started.astimezone(timezone.utc).replace(tzinfo=None)
+
+    # Reject nonsensical/future evidence and ancient stale markers. A local
+    # shutdown can legitimately remain powered off for weeks, so retain a
+    # generous 180-day bound.
+    if started > now + timedelta(minutes=5) or started < now - timedelta(days=180):
+        session.add(client)
+        return
+
+    client.last_power_event = expected_event
+    client.last_power_event_source = "local"
+    client.last_power_event_at = now
+    if expected_event == "reboot_completed":
+        client.last_reboot_started_at = started
+    else:
+        client.last_shutdown_started_at = started
+    session.add(client)
+

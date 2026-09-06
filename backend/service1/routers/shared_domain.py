@@ -14,7 +14,7 @@ from ..display_control import (
     reconcile_display_configuration,
 )
 from ..calendar_control import build_display_calendar_delivery
-from ..system_control import apply_system_command_completion
+from ..system_control import apply_status_power_observation, apply_system_command_completion
 from ..shared_domain import (
     claim_shared_command,
     complete_shared_command,
@@ -79,6 +79,13 @@ def _status(domain: str, client_id: int, body: StatusBody, authorization: str | 
                 client_id=client_id,
                 agent_version=body.agent_version,
                 status_payload=body.status_payload,
+            )
+        elif domain == "status":
+            apply_status_power_observation(
+                session,
+                client_id=client_id,
+                status_payload=body.status_payload,
+                boot_id=body.boot_id,
             )
         session.commit()
         return {

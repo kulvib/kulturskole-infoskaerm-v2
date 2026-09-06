@@ -6,7 +6,7 @@ import grp
 import shutil
 import subprocess
 
-from .transaction import Layout, _quiesce_runtime, _remove_definitions
+from .transaction import Layout, _disable_power_lifecycle_reporters, _quiesce_runtime, _remove_definitions
 
 USERS = (
     "clientflow",
@@ -41,6 +41,7 @@ def wipe(*, reason: str, confirm: str, layout: Layout = Layout()) -> None:
         subprocess.run(["/usr/bin/systemctl", "stop", "clientflow-updater.service"], check=False)
         subprocess.run(["/usr/bin/systemctl", "stop", "clientflow-update-controller.service"], check=False)
         _quiesce_runtime(layout, require_target=False)
+        _disable_power_lifecycle_reporters(layout)
         subprocess.run(["/usr/bin/systemctl", "disable", "clientflow.target"], check=False)
     _remove_definitions(layout)
     sudoers_root = layout.path("/etc/sudoers.d")

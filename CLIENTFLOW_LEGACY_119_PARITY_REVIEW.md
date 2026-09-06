@@ -77,3 +77,7 @@ Still open:
 - L119-13 local reboot/shutdown attribution review;
 - L119-14 obsolete/contradictory frontend/backend contracts.
 
+Closed by `LOCAL_POWER_FRONTEND_CONTRACT_CLOSURE.md`:
+- L119-13 local reboot/shutdown attribution and reconnect reconciliation;
+- L119-14 unsupported kiosk-lockdown frontend exposure / obsolete UI contract.
+

@@ -16,6 +16,7 @@ from .config import DomainCredential
 from .constants import Domain, SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS
 from .logging_utils import configure_logging
 from .net import DomainTransport, backoff_seconds
+from .power_lifecycle import PowerLifecycleError, collect_completed_local_power_event
 from .status import report_status
 
 ACTIVE_SYSTEMD_ROOT = Path("/opt/clientflow/active/client-runtime/systemd")
@@ -220,6 +221,14 @@ def collect_host_status() -> dict[str, Any]:
     }
     payload.update(_network_status())
     payload.update(_time_status())
+    try:
+        local_power_event = collect_completed_local_power_event()
+    except PowerLifecycleError as exc:
+        payload["local_power_event_status"] = f"error:{exc}"
+    else:
+        payload["local_power_event_status"] = "reported" if local_power_event is not None else "idle"
+        if local_power_event is not None:
+            payload["local_power_event"] = local_power_event
     return payload
 
 

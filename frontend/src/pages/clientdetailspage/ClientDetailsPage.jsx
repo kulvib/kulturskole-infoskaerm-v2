@@ -232,11 +232,6 @@ const DISPLAY_RESOLUTION_LIVE_FIELDS = [
   "display_resolution_last_applied_at",
   "display_detected_outputs",
   "display_detected_updated_at",
-  "desktop_lockdown_enabled",
-  "desktop_lockdown_status",
-  "desktop_lockdown_message",
-  "desktop_lockdown_updated_at",
-  "desktop_lockdown_last_applied_at",
 ];
 
 const NETWORK_LIVE_FIELDS = [

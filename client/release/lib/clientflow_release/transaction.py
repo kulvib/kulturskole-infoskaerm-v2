@@ -776,6 +776,30 @@ def _disable_stable_updater_timer(layout: Layout) -> None:
         _run(["/usr/bin/systemctl", "disable", "--now", "clientflow-updater.timer"])
 
 
+_POWER_LIFECYCLE_REPORTER_UNITS = (
+    "clientflow-local-reboot-reporter.service",
+    "clientflow-local-shutdown-reporter.service",
+)
+
+
+def _disable_power_lifecycle_reporters(layout: Layout) -> None:
+    if layout.root != Path("/"):
+        return
+    for unit in _POWER_LIFECYCLE_REPORTER_UNITS:
+        _run(["/usr/bin/systemctl", "disable", unit], check=False)
+
+
+def _enable_power_lifecycle_reporters(layout: Layout) -> None:
+    if layout.root != Path("/"):
+        return
+    for unit in _POWER_LIFECYCLE_REPORTER_UNITS:
+        path = layout.unit_root / unit
+        if path.is_file() and not path.is_symlink():
+            _run(["/usr/bin/systemctl", "enable", unit])
+        else:
+            _run(["/usr/bin/systemctl", "disable", unit], check=False)
+
+
 def _restore_pending_first_activation(layout: Layout, release_root: Path) -> None:
     """Restore the exact pre-activation fresh-install operating state.
 
@@ -784,6 +808,7 @@ def _restore_pending_first_activation(layout: Layout, release_root: Path) -> Non
     updater plane disabled and inactive until a later backend-approved activation.
     """
     layout.active.unlink(missing_ok=True)
+    _disable_power_lifecycle_reporters(layout)
     _apply_definitions(layout, release_root)
     _systemd_prepare(layout)
     _disable_target(layout)
@@ -928,6 +953,7 @@ def _activate_release(
     # otherwise auto-start after a crash/power-loss in the middle of the swap.
     _disable_target(layout)
     _quiesce_runtime(layout)
+    _disable_power_lifecycle_reporters(layout)
     try:
         # Re-applying the exact target definitions is deliberate: after a crash we
         # cannot know whether the previous process died before or after the unit
@@ -953,6 +979,7 @@ def _activate_release(
             release_approval_reference=release_approval_reference,
         )
         save_state(layout, state)
+        _enable_power_lifecycle_reporters(layout)
         _enable_target(layout)
         if previous is None:
             # First activation is the lifecycle boundary that opens update auth.
@@ -976,6 +1003,7 @@ def _activate_release(
         save_state(layout, state)
     except Exception as activation_error:
         _quiesce_runtime(layout)
+        _disable_power_lifecycle_reporters(layout)
         try:
             if previous:
                 previous_root = layout.releases / previous
@@ -991,6 +1019,7 @@ def _activate_release(
                     restored_release_id=previous,
                 )
                 save_state(layout, state)
+                _enable_power_lifecycle_reporters(layout)
                 _enable_target(layout)
             else:
                 _restore_pending_first_activation(layout, release_root)
