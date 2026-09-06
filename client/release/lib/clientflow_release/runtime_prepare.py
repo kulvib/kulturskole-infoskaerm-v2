@@ -28,6 +28,8 @@ CLIENTFLOW_ENTRYPOINTS = (
     "clientflow-browser-guard",
     "clientflow-display-input-wake",
     "clientflow-platform-prepare",
+    "clientflow-time-integrity",
+    "clientflow-kiosk-session-policy",
     "clientflow-livestream-agent",
     "clientflow-livestream-broker",
     "clientflow-livestream-producer",

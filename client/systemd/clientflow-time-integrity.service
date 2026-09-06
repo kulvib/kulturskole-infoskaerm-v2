@@ -1,0 +1,24 @@
+[Unit]
+Description=ClientFlow periodic Europe/Copenhagen and NTP integrity
+After=systemd-timedated.service clientflow-platform-prepare.service
+Requires=clientflow-platform-prepare.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/clientflow/active/runtime/bin/clientflow-time-integrity
+UMask=0022
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX

@@ -21,6 +21,8 @@ GOOGLE_REPOSITORY_MARKER = "google.com/linux/chrome"
 RFKILL_EXECUTABLE = Path("/usr/sbin/rfkill")
 LOGIND_KIOSK_DROPIN = Path("/etc/systemd/logind.conf.d/90-clientflow-kiosk.conf")
 POLKIT_KIOSK_RULE = Path("/etc/polkit-1/rules.d/90-clientflow-kiosk.rules")
+FIREFOX_POLICY_PATH = Path("/etc/firefox/policies/policies.json")
+CFADMIN_USER = "cfadmin"
 SLEEP_TARGETS = ("sleep.target", "suspend.target", "hibernate.target", "hybrid-sleep.target")
 KIOSK_DISABLED_AUTOSTARTS = (
     "update-notifier.desktop",
@@ -441,8 +443,8 @@ def _prepare_gnome_settings(kiosk_user: str, home: Path) -> None:
         )
 
 
-def _prepare_kiosk_autostarts(home: Path, *, uid: int, gid: int) -> None:
-    """Suppress stock Ubuntu desktop popups for the kiosk user only."""
+def _prepare_user_popup_autostarts(home: Path, *, uid: int, gid: int) -> None:
+    """Suppress stock Ubuntu update/crash popups for one human account."""
     autostart = home / ".config/autostart"
     autostart.mkdir(parents=True, exist_ok=True)
     os.chown(autostart, uid, gid)
@@ -459,6 +461,45 @@ def _prepare_kiosk_autostarts(home: Path, *, uid: int, gid: int) -> None:
             mode=0o644,
         )
         os.chown(path, uid, gid)
+
+
+def _prepare_kiosk_autostarts(home: Path, *, uid: int, gid: int) -> None:
+    """Compatibility wrapper for the canonical kiosk popup baseline."""
+    _prepare_user_popup_autostarts(home, uid=uid, gid=gid)
+
+
+def _prepare_firefox_popup_policy(path: Path | None = None) -> None:
+    target = path or FIREFOX_POLICY_PATH
+    policy = {
+        "policies": {
+            "DisableAppUpdate": True,
+            "DisableFirefoxStudies": True,
+            "DisableTelemetry": True,
+            "DontCheckDefaultBrowser": True,
+            "OverrideFirstRunPage": "",
+            "OverridePostUpdatePage": "",
+        }
+    }
+    _atomic_write_text(
+        target,
+        json.dumps(policy, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+        mode=0o644,
+    )
+
+
+def _prepare_human_popup_baseline(kiosk_user: str, *, cfadmin_user: str = CFADMIN_USER) -> None:
+    for username in (kiosk_user, cfadmin_user):
+        try:
+            record = pwd.getpwnam(username)
+        except KeyError as exc:
+            raise DisplayPlatformPreparationError(f"Human account findes ikke: {username}") from exc
+        home = Path(record.pw_dir)
+        if not home.is_dir() or home.is_symlink() or home.stat().st_uid != record.pw_uid:
+            raise DisplayPlatformPreparationError(
+                f"Human account home mangler eller har forkert ejerskab: {username}"
+            )
+        _prepare_user_popup_autostarts(home, uid=record.pw_uid, gid=record.pw_gid)
+    _prepare_firefox_popup_policy()
 
 
 def _prepare_kiosk_application_lockdown(home: Path, *, uid: int, gid: int) -> None:
@@ -571,7 +612,7 @@ def _prepare_graphical_kiosk(kiosk_user: str) -> bool:
     gdm_changed = _prepare_gdm(kiosk_user)
     _prepare_accounts_service(kiosk_user)
     _prepare_gnome_settings(kiosk_user, home)
-    _prepare_kiosk_autostarts(home, uid=record.pw_uid, gid=record.pw_gid)
+    _prepare_human_popup_baseline(kiosk_user)
     _prepare_kiosk_application_lockdown(home, uid=record.pw_uid, gid=record.pw_gid)
     _prepare_kiosk_binary_acl(kiosk_user)
     _prepare_kiosk_polkit_policy(kiosk_user)
