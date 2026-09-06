@@ -72,12 +72,13 @@ Closed by `PLATFORM_SESSION_POLICY_LEGACY_119_CLOSURE.md`:
 - L119-10 recurring kiosk quick-settings parity;
 - L119-11 popup baseline parity for both human accounts.
 
-Still open:
-- L119-08 full capability/executable legacy parity gate;
-- L119-13 local reboot/shutdown attribution review;
-- L119-14 obsolete/contradictory frontend/backend contracts.
-
 Closed by `LOCAL_POWER_FRONTEND_CONTRACT_CLOSURE.md`:
 - L119-13 local reboot/shutdown attribution and reconnect reconciliation;
 - L119-14 unsupported kiosk-lockdown frontend exposure / obsolete UI contract.
+
+Closed by `LEGACY_119_FULL_CAPABILITY_GATE.md`:
+- L119-08 full 177-entry installer/payload capability inventory;
+- executable Python/frontend/Ubuntu-host parity gate bound to the functional capability matrix.
+
+No L119 source blocker remains open in this review. Physical acceptance remains deferred until the next approved Ubuntu 26.04 clean-install verification.
 

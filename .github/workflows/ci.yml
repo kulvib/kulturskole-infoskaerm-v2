@@ -89,6 +89,9 @@ jobs:
       - name: Run Python test suite
         run: python -m pytest -q backend/tests scripts/tests
 
+      - name: Execute legacy 1.1.19 capability parity gate
+        run: python scripts/verify_clientflow_legacy119_capability_gate.py --repo "$GITHUB_WORKSPACE" --scope python
+
   client-host-ubuntu-2604:
     name: Ubuntu 26.04 client host executable contracts
     runs-on: ubuntu-26.04
@@ -121,6 +124,14 @@ jobs:
           sudo /usr/bin/python3 scripts/verify_clientflow_ubuntu2604_host.py \
             --repo "$GITHUB_WORKSPACE" \
             --install-platform-requirements
+
+      - name: Execute legacy 1.1.19 Ubuntu host capability gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo /usr/bin/python3 scripts/verify_clientflow_legacy119_capability_gate.py \
+            --repo "$GITHUB_WORKSPACE" \
+            --scope host
 
   frontend:
     name: Frontend contracts and build
@@ -165,6 +176,9 @@ jobs:
       - name: Run complete frontend test suite
         working-directory: frontend
         run: node --test tests/*.test.mjs
+
+      - name: Execute legacy 1.1.19 frontend capability parity gate
+        run: python3 scripts/verify_clientflow_legacy119_capability_gate.py --repo "$GITHUB_WORKSPACE" --scope frontend
 
       - name: Lint frontend
         working-directory: frontend
