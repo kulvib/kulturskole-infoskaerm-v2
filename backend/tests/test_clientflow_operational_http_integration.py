@@ -41,7 +41,7 @@ if str(CLIENT_RUNTIME_ROOT) not in sys.path:
     sys.path.insert(0, str(CLIENT_RUNTIME_ROOT))
 
 from clientflow_runtime.command_agent import CommandContext  # noqa: E402
-from clientflow_runtime import system_agent, system_broker  # noqa: E402
+from clientflow_runtime import power_lifecycle, system_agent, system_broker  # noqa: E402
 
 
 class _ASGIResponse:
@@ -450,6 +450,17 @@ def test_system_reboot_roundtrip_uses_real_route_agent_broker_and_boot_evidence(
     # the final host systemctl execution is replaced; no reboot occurs in CI.
     broker_state = tmp_path / "system-broker"
     monkeypatch.setattr(system_broker, "STATE_DIR", broker_state)
+
+    # The real broker now records local-power attribution state before calling
+    # systemctl. Keep that state fully inside the test sandbox; production uses
+    # the root-owned /var/lib/clientflow/power-events defaults.
+    power_state = tmp_path / "power-events"
+    boot_id_path = tmp_path / "kernel-boot-id"
+    boot_id_path.write_text("11111111-1111-4111-8111-111111111111\n", encoding="ascii")
+    monkeypatch.setattr(power_lifecycle, "STATE_DIR", power_state)
+    monkeypatch.setattr(power_lifecycle, "LOCAL_MARKER_PATH", power_state / "local-transition.json")
+    monkeypatch.setattr(power_lifecycle, "SYSTEM_INTENT_PATH", power_state / "system-command-intent.json")
+    monkeypatch.setattr(power_lifecycle, "BOOT_ID_PATH", boot_id_path)
     monkeypatch.setattr(system_broker, "JOURNAL_PATH", broker_state / "command-journal.json")
     monkeypatch.setattr(system_broker, "JOURNAL_LOCK_PATH", broker_state / "command-journal.lock")
     monkeypatch.setattr(system_broker, "_fixed_binary", lambda name: f"/usr/bin/{name}")
