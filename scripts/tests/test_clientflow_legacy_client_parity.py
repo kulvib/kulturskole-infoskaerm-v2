@@ -1,94 +1,72 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "client/legacy-client-parity.json"
-
-EXPECTED_LEGACY_PY = {
-    "opt/clientflow/api/chrome_kiosk.py",
-    "opt/clientflow/api/client_remote_desktop_agent.py",
-    "opt/clientflow/api/client_remote_desktop_wayland_capture.py",
-    "opt/clientflow/api/client_terminal_agent.py",
-    "opt/clientflow/api/clientflow_browser_guard.py",
-    "opt/clientflow/api/clientflow_calendar.py",
-    "opt/clientflow/api/clientflow_diagnostics.py",
-    "opt/clientflow/api/clientflow_display.py",
-    "opt/clientflow/api/clientflow_gui.py",
-    "opt/clientflow/api/clientflow_service.py",
-    "opt/clientflow/api/config_utils.py",
-    "opt/clientflow/api/kiosk_sleep.py",
-    "opt/clientflow/api/kiosk_wake.py",
-    "opt/clientflow/api/livestream.py",
-    "opt/clientflow/api/livestream_uploader.py",
-    "opt/clientflow/api/livestream_wayland.py",
-    "opt/clientflow/api/livestream_wayland_placeholder.py",
-    "opt/clientflow/api/rotate_client_secret.py",
-    "opt/clientflow/api/status_map.py",
-    "opt/clientflow/api/status_utils.py",
-    "opt/clientflow/api/ubuntu_update.py",
-    "usr/local/bin/clientflow-cursor-idle-monitor.py",
-    "usr/local/lib/clientflow-root/chrome_kiosk.py",
-    "usr/local/lib/clientflow-root/client_remote_desktop_agent.py",
-    "usr/local/lib/clientflow-root/client_remote_desktop_wayland_capture.py",
-    "usr/local/lib/clientflow-root/client_terminal_agent.py",
-    "usr/local/lib/clientflow-root/clientflow_browser_guard.py",
-    "usr/local/lib/clientflow-root/clientflow_calendar.py",
-    "usr/local/lib/clientflow-root/clientflow_diagnostics.py",
-    "usr/local/lib/clientflow-root/clientflow_display.py",
-    "usr/local/lib/clientflow-root/clientflow_graphical_session.py",
-    "usr/local/lib/clientflow-root/clientflow_gui.py",
-    "usr/local/lib/clientflow-root/clientflow_service.py",
-    "usr/local/lib/clientflow-root/clientflow_update_transaction.py",
-    "usr/local/lib/clientflow-root/config_utils.py",
-    "usr/local/lib/clientflow-root/kiosk_sleep.py",
-    "usr/local/lib/clientflow-root/kiosk_wake.py",
-    "usr/local/lib/clientflow-root/livestream.py",
-    "usr/local/lib/clientflow-root/livestream_uploader.py",
-    "usr/local/lib/clientflow-root/livestream_wayland.py",
-    "usr/local/lib/clientflow-root/livestream_wayland_placeholder.py",
-    "usr/local/lib/clientflow-root/rotate_client_secret.py",
-    "usr/local/lib/clientflow-root/status_map.py",
-    "usr/local/lib/clientflow-root/status_utils.py",
-    "usr/local/lib/clientflow-root/ubuntu_update.py",
-    "usr/local/sbin/clientflow-power-event-reporter.py",
-}
+GATE = ROOT / "scripts/verify_clientflow_legacy119_capability_gate.py"
 
 
-def test_every_legacy_119_client_python_file_has_explicit_v2_disposition() -> None:
+def _gate_module():
+    spec = importlib.util.spec_from_file_location("clientflow_legacy119_capability_gate", GATE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_legacy_119_exact_installer_and_166_file_payload_are_fully_disposed() -> None:
     payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 1
-    assert payload["legacy_baseline"] == {
+    baseline = payload["legacy_baseline"]
+    assert payload["schema_version"] == 2
+    assert baseline == {
         "release": "1.1.19",
         "sequence": 1119,
-        "payload_python_file_count": 46,
+        "installer_zip_sha256": "61dc8a417aaa32f4eabc7430a2af886933473142cebcdcbe8f1064a318941e80",
+        "installer_zip_size": 528568,
+        "payload_tar_sha256": "d490dd8f0effccc58e8d5687ae95d0821bf2747d4f131a2ee3a9c3088c1ec331",
+        "payload_tar_size": 482779,
+        "payload_file_count": 166,
+        "installer_surface_file_count": 11,
+        "total_inventory_count": 177,
+        "inventory_sha256": "e542df2c1c3d9b6c4a88966803bb6f39c6a938744756e6202eb9abde83a8d695",
     }
-    entries = payload["entries"]
-    assert {row["legacy_path"] for row in entries} == EXPECTED_LEGACY_PY
-    assert len(entries) == len(EXPECTED_LEGACY_PY)
-
-    allowed = {"implemented", "architecturally_replaced", "obsolete"}
-    for row in entries:
-        assert row["status"] in allowed
-        assert str(row["rationale"]).strip()
-        replacements = row["v2_replacements"]
-        assert replacements
-        for rel in replacements:
-            assert (ROOT / rel).exists(), f"Legacy parity replacement mangler: {rel}"
+    inventory = payload["inventory"]
+    assert len(inventory) == 177
+    assert sum(row["surface"] == "payload" for row in inventory) == 166
+    assert sum(row["surface"] == "installer" for row in inventory) == 11
+    assert len({(row["surface"], row["path"]) for row in inventory}) == 177
 
 
-def test_active_legacy_capabilities_are_not_marked_obsolete() -> None:
+def test_every_legacy_capability_has_real_v2_replacement_and_executable_proof() -> None:
+    module = _gate_module()
+    summary = module._validate(ROOT)
+    assert summary["inventory_entries"] == 177
+    assert summary["capabilities"] == 13
+    assert summary["capabilities_with_executable_proof"] == 13
+    assert summary["python_proof_files"] >= 10
+    assert summary["frontend_proof_files"] >= 5
+    assert summary["host_proof_files"] >= 2
+
+
+def test_frozen_domains_are_explicitly_read_only_capabilities() -> None:
     payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
-    by_name: dict[str, set[str]] = {}
-    for row in payload["entries"]:
-        by_name.setdefault(Path(row["legacy_path"]).name, set()).add(row["status"])
-    for active_name in (
-        "clientflow_browser_guard.py",
-        "clientflow_display.py",
-        "clientflow_gui.py",
-        "clientflow_service.py",
-        "kiosk_sleep.py",
-        "kiosk_wake.py",
-    ):
-        assert by_name[active_name].isdisjoint({"obsolete"})
+    by_id = {row["id"]: row for row in payload["capabilities"]}
+    assert {cap_id for cap_id, row in by_id.items() if row["frozen"]} == {
+        "frozen_livestream",
+        "frozen_terminal",
+        "frozen_remote_desktop",
+    }
+    for cap_id in ("frozen_livestream", "frozen_terminal", "frozen_remote_desktop"):
+        assert by_id[cap_id]["status"] == "implemented"
+        assert any(proof["proof_class"] != "source_contract" for proof in by_id[cap_id]["proofs"])
+
+
+def test_old_46_python_file_gate_is_no_longer_the_acceptance_boundary() -> None:
+    payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    serialized = json.dumps(payload, sort_keys=True)
+    assert "payload_python_file_count" not in serialized
+    assert payload["legacy_baseline"]["payload_file_count"] == 166
+    assert payload["legacy_baseline"]["total_inventory_count"] == 177
