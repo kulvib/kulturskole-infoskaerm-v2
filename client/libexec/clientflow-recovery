@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CMD="${1:-status}"
+TARGET="clientflow.target"
+
+die() {
+  echo "clientflow-recovery: $*" >&2
+  exit 1
+}
+
+desktop_dir() {
+  if [[ -n "${CLIENTFLOW_SUPPORT_OUTPUT_DIR:-}" ]]; then
+    mkdir -p "$CLIENTFLOW_SUPPORT_OUTPUT_DIR"
+    printf '%s\n' "$CLIENTFLOW_SUPPORT_OUTPUT_DIR"
+    return 0
+  fi
+  local owner="${SUDO_USER:-$(id -un)}"
+  local home=""
+  home="$(getent passwd "$owner" | cut -d: -f6)"
+  [[ -n "$home" && -d "$home" ]] || home="$HOME"
+  if [[ -d "$home/Skrivebord" ]]; then
+    printf '%s\n' "$home/Skrivebord"
+  elif [[ -d "$home/Desktop" ]]; then
+    printf '%s\n' "$home/Desktop"
+  else
+    mkdir -p "$home/Desktop"
+    if [[ "$(id -u)" -eq 0 && "$owner" != "root" ]]; then
+      chown "$owner:$owner" "$home/Desktop" 2>/dev/null || true
+    fi
+    printf '%s\n' "$home/Desktop"
+  fi
+}
+
+status() {
+  echo "== ClientFlow local recovery status =="
+  echo "Hostname: $(hostname 2>/dev/null || echo '-')"
+  echo "Version: $(cat /opt/clientflow/active/VERSION 2>/dev/null || echo '-')"
+  echo "Active release: $(readlink -f /opt/clientflow/active 2>/dev/null || echo '-')"
+  echo "Boot ID: $(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo '-')"
+  echo
+  echo "== Human sessions =="
+  /usr/bin/loginctl list-sessions --no-pager 2>/dev/null || true
+  echo
+  echo "== ClientFlow units =="
+  /usr/bin/systemctl is-active \
+    clientflow.target \
+    clientflow-status-agent.service \
+    clientflow-display-runtime.service \
+    clientflow-calendar.service \
+    clientflow-livestream-producer.service \
+    clientflow-remote-desktop-agent.service \
+    clientflow-terminal-agent.service \
+    clientflow-system-agent.service \
+    clientflow-updater.timer 2>/dev/null || true
+  echo
+  echo "== Network =="
+  /usr/sbin/ip -brief address 2>/dev/null || true
+  /usr/sbin/ip route show default 2>/dev/null || true
+  echo
+  echo "== Time =="
+  /usr/bin/timedatectl status 2>/dev/null || true
+  echo
+  echo "== Public client metadata =="
+  cat /var/lib/clientflow/client-public.json 2>/dev/null || echo "-"
+}
+
+bundle() {
+  local out owner stamp base staging archive
+  out="$(desktop_dir)"
+  owner="${SUDO_USER:-$(id -un)}"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  base="clientflow-support-$(hostname)-${stamp}"
+  staging="$out/.${base}.staging"
+  archive="$out/${base}.tar.gz"
+
+  rm -rf "$staging"
+  mkdir -p "$staging"
+  status >"$staging/status.txt" 2>&1 || true
+  /usr/bin/systemctl list-units 'clientflow*' --all --no-pager >"$staging/systemd-units.txt" 2>&1 || true
+  /usr/bin/systemctl list-unit-files 'clientflow*' --no-pager >"$staging/systemd-unit-files.txt" 2>&1 || true
+  /usr/bin/timedatectl show >"$staging/time.txt" 2>&1 || true
+  /usr/sbin/ip -j address show >"$staging/network-addresses.json" 2>&1 || true
+  /usr/sbin/ip -j route show >"$staging/network-routes.json" 2>&1 || true
+  uname -a >"$staging/uname.txt" 2>&1 || true
+  cp /var/lib/clientflow/client-public.json "$staging/client-public.json" 2>/dev/null || true
+  cp /opt/clientflow/active/VERSION "$staging/VERSION" 2>/dev/null || true
+
+  # Deliberately excluded: /etc/clientflow, credentials, private/update keys,
+  # environment dumps, command payloads and frozen-domain journals.
+  tar -C "$out" -czf "$archive" "$(basename "$staging")"
+  rm -rf "$staging"
+  if [[ "$(id -u)" -eq 0 && "$owner" != "root" ]]; then
+    chown "$owner:$owner" "$archive" 2>/dev/null || true
+  fi
+  chmod 0600 "$archive" 2>/dev/null || true
+  echo "Support bundle: $archive"
+}
+
+restart_target() {
+  [[ "$(id -u)" -eq 0 ]] || die "restart kræver sudo/root"
+  [[ -x /usr/bin/systemctl ]] || die "mangler /usr/bin/systemctl"
+  # Recovery mutation is intentionally bounded to the canonical aggregate
+  # target. No frozen-domain unit is addressed directly.
+  /usr/bin/systemctl restart "$TARGET"
+  /usr/bin/systemctl is-active --quiet "$TARGET" || die "$TARGET blev ikke aktiv"
+  echo "$TARGET genstartet."
+}
+
+case "$CMD" in
+  status) status ;;
+  bundle) bundle ;;
+  restart) restart_target ;;
+  *)
+    die "brug: clientflow-recovery status|bundle|restart"
+    ;;
+esac
