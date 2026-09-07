@@ -1,0 +1,26 @@
+[Unit]
+Description=ClientFlow optional kiosk quick-settings guard
+After=clientflow-platform-prepare.service graphical.target
+ConditionPathExists=/var/lib/clientflow/kiosk-lockdown/state.json
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/opt/clientflow/active/runtime/bin/clientflow-kiosk-quicksettings-guard
+Environment=CLIENTFLOW_LOCKDOWN_QUICKSETTINGS_INTERVAL=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=clientflow.target

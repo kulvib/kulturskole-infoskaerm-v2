@@ -1,0 +1,13 @@
+[Unit]
+Description=ClientFlow optional kiosk lockdown fixed-function broker socket
+
+[Socket]
+ListenStream=/run/clientflow/kiosk-lockdown.sock
+SocketUser=root
+SocketGroup=clientflow-display-agent
+SocketMode=0660
+RemoveOnStop=yes
+Service=clientflow-kiosk-lockdown-broker.service
+
+[Install]
+WantedBy=clientflow.target

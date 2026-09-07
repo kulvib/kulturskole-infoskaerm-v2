@@ -1,0 +1,11 @@
+[Unit]
+Description=ClientFlow Livestream isolated boot target
+Documentation=file:/usr/share/doc/clientflow/CLIENTFLOW_RUNTIME.md
+DefaultDependencies=no
+Wants=clientflow-livestream-broker.service
+Wants=clientflow-livestream-agent.service
+Wants=clientflow-livestream-producer.service
+Wants=clientflow-livestream-uploader.service
+
+[Install]
+WantedBy=multi-user.target

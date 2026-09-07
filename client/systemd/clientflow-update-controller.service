@@ -1,0 +1,38 @@
+[Unit]
+Description=ClientFlow privileged canonical update controller
+After=network-online.target clientflow-updater.service
+Wants=network-online.target
+ConditionPathExists=/opt/clientflow/active/client-runtime/libexec/update-controller
+ConditionPathExists=/etc/clientflow/update/credential.json
+ConditionPathExists=/etc/clientflow/update/private-key.pem
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/bin/sh /opt/clientflow/active/client-runtime/libexec/update-controller
+LoadCredential=update-credential.json:/etc/clientflow/update/credential.json
+LoadCredential=update-private-key.pem:/etc/clientflow/update/private-key.pem
+LoadCredential=update-ca.pem:/etc/clientflow/update/tls-ca.pem
+Environment=CLIENTFLOW_UPDATE_CA_FILE=%d/update-ca.pem
+Environment=CLIENTFLOW_UPDATE_SOURCE_STATE_DIR=/var/lib/clientflow/updater
+StateDirectory=clientflow/update-controller
+StateDirectoryMode=0700
+UMask=0077
+TimeoutStartSec=30min
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

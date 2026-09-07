@@ -1,0 +1,10 @@
+[Unit]
+Description=ClientFlow Remote Desktop isolated services
+After=network-online.target
+Wants=network-online.target
+Wants=clientflow-remote-desktop-agent.service
+Wants=clientflow-remote-desktop-capture.socket
+Wants=clientflow-remote-desktop-input-broker.socket
+
+[Install]
+WantedBy=multi-user.target

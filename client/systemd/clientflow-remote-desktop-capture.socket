@@ -1,0 +1,13 @@
+[Unit]
+Description=ClientFlow Remote Desktop capture socket
+
+[Socket]
+ListenStream=/run/clientflow/remote-desktop-capture.sock
+SocketUser=root
+SocketGroup=clientflow-remote-desktop-agent
+SocketMode=0660
+RemoveOnStop=yes
+Service=clientflow-remote-desktop-capture.service
+
+[Install]
+WantedBy=clientflow.target

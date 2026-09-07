@@ -1,0 +1,27 @@
+[Unit]
+Description=ClientFlow one-time root PTY broker
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/opt/clientflow/active/runtime/bin/clientflow-root-terminal-broker
+LoadCredential=identity.json:/etc/clientflow/identity.json
+LoadCredential=root-grant.json:/etc/clientflow/root-terminal/root-grant.json
+StateDirectory=clientflow/root-terminal
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=no
+PrivateTmp=no
+PrivateDevices=no
+ProtectSystem=no
+ProtectHome=no
+ProtectKernelTunables=no
+ProtectKernelModules=no
+ProtectKernelLogs=no
+ProtectControlGroups=no
+RestrictSUIDSGID=no
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+RestrictRealtime=no
+SystemCallArchitectures=native

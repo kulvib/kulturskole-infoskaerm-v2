@@ -1,0 +1,13 @@
+[Unit]
+Description=ClientFlow display power broker socket
+
+[Socket]
+ListenStream=/run/clientflow/display-power.sock
+SocketUser=root
+SocketGroup=clientflow-display-agent
+SocketMode=0660
+RemoveOnStop=yes
+Service=clientflow-display-power-broker.service
+
+[Install]
+WantedBy=clientflow.target

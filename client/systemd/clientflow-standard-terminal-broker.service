@@ -1,0 +1,26 @@
+[Unit]
+Description=ClientFlow credential-free standard Terminal PTY broker
+
+[Service]
+Type=simple
+User=clientflow-terminal-session
+Group=clientflow-terminal-session
+ExecStart=/opt/clientflow/active/runtime/bin/clientflow-standard-terminal-broker
+StateDirectory=clientflow/terminal-session
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX

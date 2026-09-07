@@ -1,0 +1,13 @@
+[Unit]
+Description=ClientFlow credential-free standard Terminal broker socket
+
+[Socket]
+ListenStream=/run/clientflow/standard-terminal.sock
+SocketUser=root
+SocketGroup=clientflow-terminal-agent
+SocketMode=0660
+RemoveOnStop=yes
+Service=clientflow-standard-terminal-broker.service
+
+[Install]
+WantedBy=clientflow.target

@@ -1,0 +1,36 @@
+[Unit]
+Description=ClientFlow livestream command agent
+After=network-online.target clientflow-livestream-broker.service
+Wants=network-online.target
+ConditionPathExists=/etc/clientflow/credentials/livestream.json
+
+[Service]
+Type=simple
+User=clientflow-livestream-agent
+Group=clientflow-livestream-agent
+SupplementaryGroups=clientflow-livestream-control
+ExecStart=/opt/clientflow/active/runtime/bin/clientflow-livestream-agent
+Restart=on-failure
+RestartSec=5s
+LoadCredential=livestream.json:/etc/clientflow/credentials/livestream.json
+StateDirectory=clientflow/livestream-agent
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=clientflow.target
