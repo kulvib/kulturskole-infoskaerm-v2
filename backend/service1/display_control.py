@@ -350,8 +350,9 @@ def reconcile_kiosk_lockdown(
     if client is None:
         return None
     payload = status_payload if isinstance(status_payload, dict) else {}
-    observed = payload.get("kiosk_lockdown")
-    observed = observed if isinstance(observed, dict) else {}
+    observed_raw = payload.get("kiosk_lockdown")
+    observed_present = isinstance(observed_raw, dict)
+    observed = observed_raw if observed_present else {}
     observed_status = str(observed.get("status") or "unknown").strip().lower()
     observed_message = str(observed.get("message") or "")[:1000] or None
     observed_desired = observed.get("desired") if isinstance(observed.get("desired"), bool) else None
@@ -364,6 +365,15 @@ def reconcile_kiosk_lockdown(
         session.add(client)
 
     desired = bool(getattr(client, "desktop_lockdown_enabled", False))
+
+    # Legacy/default contract is lockdown disabled. A Display status from a client
+    # that has not yet published the canonical kiosk_lockdown observation must not
+    # manufacture a disable command merely because the backend default is false.
+    # Explicit desired=True, or an explicit pending disable request, still converges
+    # as soon as the Display agent supports canonical commands.
+    if not observed_present and not desired and previous_status != "pending":
+        return None
+
     active = _active_display_commands(session, client_id)
     if observed_desired is desired and observed_status == ("applied" if desired else "disabled"):
         for row in active:

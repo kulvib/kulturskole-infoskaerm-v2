@@ -34,7 +34,8 @@ def test_dynamic_launcher_hide_and_exact_restore(tmp_path, monkeypatch):
     (system_apps / "clientflow-local-gui.desktop").write_text("[Desktop Entry]\nName=ClientFlow\n", encoding="utf-8")
     monkeypatch.setattr(kiosk_lockdown, "SOURCE_DESKTOP_DIRS", (system_apps,))
     monkeypatch.setattr(kiosk_lockdown, "EXTRA_DESKTOP_IDS", ())
-    record = SimpleNamespace(pw_uid=0, pw_gid=0)
+    monkeypatch.setattr(kiosk_lockdown.os, "chown", lambda *_args, **_kwargs: None)
+    record = SimpleNamespace(pw_uid=home.stat().st_uid, pw_gid=home.stat().st_gid)
 
     kiosk_lockdown._hide_launchers(home, record)
     hidden = original.read_text(encoding="utf-8")

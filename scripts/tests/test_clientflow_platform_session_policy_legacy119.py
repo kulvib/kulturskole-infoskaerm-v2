@@ -162,7 +162,20 @@ def test_popup_baseline_applies_to_both_human_accounts_and_firefox(monkeypatch, 
     monkeypatch.setattr(module.pwd, "getpwnam", lambda name: records[name])
     monkeypatch.setattr(module.os, "chown", lambda *_args, **_kwargs: None)
     firefox = tmp_path / "etc/firefox/policies/policies.json"
-    monkeypatch.setattr(module, "FIREFOX_POLICY_PATH", firefox)
+    firefox_install = tmp_path / "usr/lib/firefox/distribution/policies.json"
+    apport = tmp_path / "etc/default/apport"
+    original_apport = module._prepare_apport_disabled
+    original_firefox = module._prepare_firefox_popup_policy
+    monkeypatch.setattr(
+        module,
+        "_prepare_apport_disabled",
+        lambda: original_apport(apport, disable_service=False),
+    )
+    monkeypatch.setattr(
+        module,
+        "_prepare_firefox_popup_policy",
+        lambda: original_firefox(firefox, install_path=firefox_install),
+    )
 
     module._prepare_human_popup_baseline("clientflow-kiosk")
 
@@ -173,6 +186,8 @@ def test_popup_baseline_applies_to_both_human_accounts_and_firefox(monkeypatch, 
             text = (autostart / name).read_text(encoding="utf-8")
             assert "Hidden=true" in text
             assert "X-GNOME-Autostart-enabled=false" in text
+    assert apport.read_text(encoding="utf-8").strip() == "enabled=0"
+    assert firefox_install.read_text(encoding="utf-8") == firefox.read_text(encoding="utf-8")
     policy = firefox.read_text(encoding="utf-8")
     for key in (
         "DisableAppUpdate",
