@@ -1,0 +1,8 @@
+client/VERSION
+client/release/release-input.json
+client/release/lib/clientflow_release/accounts.py
+client/release/lib/clientflow_release/cli.py
+client/release/lib/clientflow_release/wipe.py
+scripts/tests/test_clientflow_human_account_lifecycle_closure.py
+PRODUCTION_READINESS_CLOSURE_1.md
+CHANGED_FILES_PRODUCTION_READINESS_CLOSURE_1.txt
