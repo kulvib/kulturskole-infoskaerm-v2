@@ -1,0 +1,598 @@
+diff --git a/backend/service1/display_control.py b/backend/service1/display_control.py
+index e127c63..3ffad27 100644
+--- a/backend/service1/display_control.py
++++ b/backend/service1/display_control.py
+@@ -280,6 +280,7 @@ def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
+     status_payload = status.status_payload if status and isinstance(status.status_payload, dict) else {}
+     runtime = _runtime_payload(status_payload)
+     state = str(runtime.get("state") or "unknown").strip().lower()
++    browser_requested = runtime.get("browser_requested") if isinstance(runtime.get("browser_requested"), bool) else None
+     runtime_updated = _epoch_datetime(runtime.get("updated_at"))
+     if state == "running":
+         chrome_status = "Kiosk browser kører"
+@@ -342,6 +343,7 @@ def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
+         "chrome_color": chrome_color,
+         "chrome_step": chrome_step,
+         "chrome_running": chrome_running,
++        "browser_requested": browser_requested,
+         "chrome_last_updated": step_updated or (status.reported_at if status else None),
+         "pending_chrome_action": pending,
+         "pending_chrome_action_source": "display_command" if pending != "none" else None,
+diff --git a/backend/service1/routers/clients.py b/backend/service1/routers/clients.py
+index b2c5cf1..848e7d9 100644
+--- a/backend/service1/routers/clients.py
++++ b/backend/service1/routers/clients.py
+@@ -989,6 +989,7 @@ def _apply_display_projection_for_read(session, client: Client) -> None:
+     _set_runtime_read_attr(client, "chrome_color", projection["chrome_color"])
+     _set_runtime_read_attr(client, "chrome_last_updated", projection["chrome_last_updated"])
+     _set_runtime_read_attr(client, "chrome_running", projection["chrome_running"])
++    _set_runtime_read_attr(client, "browser_requested", projection["browser_requested"])
+     _set_runtime_read_attr(client, "chrome_step", projection["chrome_step"])
+     _set_runtime_read_attr(client, "service_calendar_status", projection["service_calendar_status"])
+ 
+@@ -1320,6 +1321,7 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
+         "chrome_color": chrome_color_value,
+         "chrome_step": chrome_step_value,
+         "chrome_running": getattr(client, "chrome_running", None),
++        "browser_requested": getattr(client, "browser_requested", None),
+         **_derive_network_status(client),
+         "step": step_obj,
+         "uptime": client.uptime,
+diff --git a/backend/tests/test_clientflow_display_browser_request_projection.py b/backend/tests/test_clientflow_display_browser_request_projection.py
+new file mode 100644
+index 0000000..7bb2e47
+--- /dev/null
++++ b/backend/tests/test_clientflow_display_browser_request_projection.py
+@@ -0,0 +1,84 @@
++from __future__ import annotations
++
++from datetime import datetime
++from types import SimpleNamespace
++
++from service1 import display_control
++
++
++def test_display_projection_separates_process_running_from_browser_request(monkeypatch):
++    desired = SimpleNamespace(kiosk_url="https://example.test/", revision=7)
++    status = SimpleNamespace(
++        status_payload={
++            "runtime": {
++                "state": "failed",
++                "browser_pid": None,
++                "browser_requested": True,
++                "configuration_revision": 7,
++                "error": "browser_exited",
++                "updated_at": 1_780_000_000.0,
++            }
++        },
++        reported_at=datetime(2026, 8, 25, 18, 0, 0),
++        agent_version="1.3.10",
++    )
++
++    monkeypatch.setattr(display_control, "get_display_desired_configuration", lambda *_args, **_kwargs: desired)
++    monkeypatch.setattr(display_control, "latest_display_status", lambda *_args, **_kwargs: status)
++    monkeypatch.setattr(display_control, "active_display_control_command", lambda *_args, **_kwargs: None)
++
++    projection = display_control.display_read_projection(object(), 4242)
++
++    assert projection["chrome_running"] is False
++    assert projection["browser_requested"] is True
++    assert projection["chrome_step"] == "chrome_failed"
++    assert projection["pending_chrome_action"] == "none"
++
++
++def test_chrome_status_route_surfaces_browser_request_state(monkeypatch):
++    from service1.routers import clients
++
++    class _Client:
++        id = 4242
++        chrome_status = None
++        chrome_color = None
++        chrome_step = None
++        chrome_last_updated = None
++        chrome_running = False
++        pending_chrome_action = "none"
++        pending_reboot = False
++        pending_shutdown = False
++        uptime = None
++
++        def __getattr__(self, _name):
++            return None
++
++    client = _Client()
++
++    class _Session:
++        def get(self, _model, _id):
++            return client
++
++    projection = {
++        "kiosk_url": "https://example.test/",
++        "chrome_status": "Browserfejl: browser_exited",
++        "chrome_color": "red",
++        "chrome_step": "chrome_failed",
++        "chrome_running": False,
++        "browser_requested": True,
++        "chrome_last_updated": datetime(2026, 8, 25, 18, 0, 0),
++        "pending_chrome_action": "none",
++        "pending_chrome_action_source": None,
++        "service_calendar_status": None,
++    }
++    monkeypatch.setattr(clients, "display_read_projection", lambda *_args, **_kwargs: projection)
++    monkeypatch.setattr(clients, "_require_client_read_access", lambda *_args, **_kwargs: None)
++    monkeypatch.setattr(clients, "load_client_presence", lambda *_args, **_kwargs: object())
++    monkeypatch.setattr(clients, "_apply_status_runtime_snapshot", lambda *_args, **_kwargs: None)
++    monkeypatch.setattr(clients, "_apply_system_projection_for_read", lambda *_args, **_kwargs: None)
++
++    payload = clients.get_chrome_status(4242, session=_Session(), user=object())
++
++    assert payload["chrome_running"] is False
++    assert payload["browser_requested"] is True
++    assert payload["chrome_step"] == "chrome_failed"
+diff --git a/backend/tests/test_clientflow_display_runtime_permission_contract.py b/backend/tests/test_clientflow_display_runtime_permission_contract.py
+new file mode 100644
+index 0000000..61dae2d
+--- /dev/null
++++ b/backend/tests/test_clientflow_display_runtime_permission_contract.py
+@@ -0,0 +1,104 @@
++from __future__ import annotations
++
++import json
++import os
++from pathlib import Path
++import stat
++import sys
++
++import pytest
++
++ROOT = Path(__file__).resolve().parents[2]
++RUNTIME_ROOT = ROOT / "client/runtime"
++if str(RUNTIME_ROOT) not in sys.path:
++    sys.path.insert(0, str(RUNTIME_ROOT))
++
++from clientflow_runtime import display_runtime as runtime_module  # noqa: E402
++from clientflow_runtime.display_shared_file import atomic_write_shared_json  # noqa: E402
++
++
++def _configure_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, Path]:
++    state = tmp_path / "state"
++    runtime = tmp_path / "run"
++    monkeypatch.setattr(runtime_module, "STATE_DIR", state)
++    monkeypatch.setattr(runtime_module, "RUNTIME_DIR", runtime)
++    monkeypatch.setattr(runtime_module, "CONFIG_PATH", state / "configuration.json")
++    monkeypatch.setattr(runtime_module, "STATUS_PATH", state / "runtime-status.json")
++    monkeypatch.setattr(runtime_module, "SOCKET_PATH", runtime / "runtime.sock")
++    monkeypatch.setattr(runtime_module, "PID_PATH", runtime / "browser.pid")
++    monkeypatch.setattr(runtime_module, "PROFILE_DIR", state / "browser-profile")
++    return state, runtime
++
++
++def test_atomic_json_can_publish_with_explicit_shared_group(tmp_path: Path):
++    target = tmp_path / "state.json"
++    atomic_write_shared_json(target, {"ok": True}, mode=0o640, group_gid=os.getgid())
++
++    metadata = target.stat()
++    assert stat.S_IMODE(metadata.st_mode) == 0o640
++    assert metadata.st_gid == os.getgid()
++    assert json.loads(target.read_text(encoding="utf-8")) == {"ok": True}
++
++
++def test_display_runtime_restores_shared_boundary_and_socket_group(monkeypatch, tmp_path):
++    state, runtime_dir = _configure_paths(monkeypatch, tmp_path)
++    state.mkdir()
++    runtime_dir.mkdir()
++    (state / "configuration.json").write_text(
++        json.dumps({"schema_version": 1, "revision": 1, "kiosk_url": "https://example.test/"}),
++        encoding="utf-8",
++    )
++    (state / "runtime-status.json").write_text("{}", encoding="utf-8")
++
++    shared_gid = os.getgid()
++    monkeypatch.setattr(
++        runtime_module.DisplayRuntime,
++        "_control_group_gid",
++        staticmethod(lambda: shared_gid),
++    )
++
++    runtime = runtime_module.DisplayRuntime()
++    runtime._prepare_shared_permissions()
++
++    for directory in (state, runtime_dir):
++        metadata = directory.stat()
++        assert stat.S_IMODE(metadata.st_mode) == 0o750
++        assert metadata.st_gid == shared_gid
++    for path in (state / "configuration.json", state / "runtime-status.json"):
++        metadata = path.stat()
++        assert stat.S_IMODE(metadata.st_mode) == 0o640
++        assert metadata.st_gid == shared_gid
++
++    runtime.browser_requested = True
++    runtime._status("failed", error="browser_exited", exit_code=-5)
++    failed = json.loads((state / "runtime-status.json").read_text(encoding="utf-8"))
++    assert failed["state"] == "failed"
++    assert failed["browser_requested"] is True
++    assert (state / "runtime-status.json").stat().st_gid == shared_gid
++
++    stopped = runtime.stop_browser()
++    assert stopped == {"stopped": True, "was_running": False}
++    assert runtime.browser_requested is False
++    status_payload = json.loads((state / "runtime-status.json").read_text(encoding="utf-8"))
++    assert status_payload["state"] == "stopped"
++    assert status_payload["browser_requested"] is False
++
++    server = runtime._open_server_socket()
++    try:
++        socket_metadata = (runtime_dir / "runtime.sock").stat()
++        assert stat.S_IMODE(socket_metadata.st_mode) == 0o660
++        assert socket_metadata.st_gid == shared_gid
++    finally:
++        server.close()
++        (runtime_dir / "runtime.sock").unlink(missing_ok=True)
++
++
++def test_display_runtime_unit_keeps_kiosk_primary_group_and_control_supplementary():
++    unit = (ROOT / "client/systemd/clientflow-display-runtime.service").read_text(encoding="utf-8")
++    service_lines = [line.strip() for line in unit.splitlines() if line.strip()]
++
++    assert "User=@CLIENTFLOW_KIOSK_USER@" in service_lines
++    assert "Group=clientflow-display-control" not in service_lines
++    supplementary = next(line for line in service_lines if line.startswith("SupplementaryGroups="))
++    groups = set(supplementary.split("=", 1)[1].split())
++    assert {"clientflow-display-control", "video", "render", "audio"}.issubset(groups)
+diff --git a/client/runtime/clientflow_runtime/display_runtime.py b/client/runtime/clientflow_runtime/display_runtime.py
+index 8b6bf53..ce3fa2a 100644
+--- a/client/runtime/clientflow_runtime/display_runtime.py
++++ b/client/runtime/clientflow_runtime/display_runtime.py
+@@ -1,6 +1,7 @@
+ """Unprivileged Display runtime for the canonical Google Chrome kiosk process."""
+ from __future__ import annotations
+ 
++import grp
+ import json
+ import os
+ from pathlib import Path
+@@ -15,7 +16,7 @@ import time
+ from typing import Any
+ from urllib.parse import urlsplit
+ 
+-from .atomic import atomic_write_json
++from .display_shared_file import atomic_write_shared_json
+ from .logging_utils import configure_logging
+ from .unix_rpc import RpcError, encode_message, read_message
+ 
+@@ -27,6 +28,7 @@ STATUS_PATH = STATE_DIR / "runtime-status.json"
+ PID_PATH = RUNTIME_DIR / "browser.pid"
+ PROFILE_DIR = STATE_DIR / "browser-profile"
+ CHROME_BINARY = Path("/usr/bin/google-chrome-stable")
++CONTROL_GROUP_NAME = os.getenv("CLIENTFLOW_DISPLAY_CONTROL_GROUP", "clientflow-display-control")
+ _ALLOWED_CONFIGURATION_KEYS = {"schema_version", "revision", "kiosk_url"}
+ 
+ 
+@@ -37,6 +39,26 @@ class DisplayRuntime:
+         self.configuration: dict[str, Any] = self._load_configuration()
+         self.browser_requested = bool(self.configuration.get("kiosk_url"))
+         self.next_start_attempt = 0.0
++        self.shared_group_gid: int | None = None
++
++    @staticmethod
++    def _control_group_gid() -> int:
++        try:
++            return grp.getgrnam(CONTROL_GROUP_NAME).gr_gid
++        except KeyError as exc:
++            raise RuntimeError("Display control-gruppen mangler") from exc
++
++    def _prepare_shared_permissions(self) -> None:
++        gid = self._control_group_gid()
++        for directory in (STATE_DIR, RUNTIME_DIR):
++            directory.mkdir(parents=True, exist_ok=True)
++            os.chown(directory, -1, gid)
++            os.chmod(directory, 0o750)
++        for path, mode in ((CONFIG_PATH, 0o640), (STATUS_PATH, 0o640)):
++            if path.exists():
++                os.chown(path, -1, gid)
++                os.chmod(path, mode)
++        self.shared_group_gid = gid
+ 
+     def _load_configuration(self) -> dict[str, Any]:
+         try:
+@@ -55,10 +77,11 @@ class DisplayRuntime:
+             "configuration_revision": self.configuration.get("revision") if self.configuration else None,
+             "state": state,
+             "browser_pid": self.browser.pid if self.browser and self.browser.poll() is None else None,
++            "browser_requested": bool(self.browser_requested),
+             "updated_at": time.time(),
+             **details,
+         }
+-        atomic_write_json(STATUS_PATH, payload, mode=0o640)
++        atomic_write_shared_json(STATUS_PATH, payload, mode=0o640, group_gid=self.shared_group_gid)
+ 
+     @staticmethod
+     def _normalize_kiosk_url(value: Any) -> str | None:
+@@ -106,7 +129,7 @@ class DisplayRuntime:
+         if configuration["revision"] == current_revision and self.configuration and configuration != self.configuration:
+             raise ValueError("Displaykonfigurationens revision matcher ikke det allerede anvendte indhold")
+         changed = configuration != self.configuration
+-        atomic_write_json(CONFIG_PATH, configuration, mode=0o640)
++        atomic_write_shared_json(CONFIG_PATH, configuration, mode=0o640, group_gid=self.shared_group_gid)
+         self.configuration = configuration
+         if changed:
+             if configuration["kiosk_url"]:
+@@ -364,17 +387,30 @@ class DisplayRuntime:
+                 "state": "running" if self.browser and self.browser.poll() is None else "stopped",
+                 "pid": self.browser.pid if self.browser and self.browser.poll() is None else None,
+                 "configuration_revision": self.configuration.get("revision") if self.configuration else None,
++                "browser_requested": bool(self.browser_requested),
+             }
+         raise ValueError("Ukendt displayruntimehandling")
+ 
+-    def run(self) -> int:
+-        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
++    def _open_server_socket(self) -> socket.socket:
++        if self.shared_group_gid is None:
++            raise RuntimeError("Display control-gruppen er ikke initialiseret")
+         SOCKET_PATH.unlink(missing_ok=True)
+         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+-        server.bind(str(SOCKET_PATH))
+-        os.chmod(SOCKET_PATH, 0o660)
+-        server.listen(8)
+-        server.setblocking(False)
++        try:
++            server.bind(str(SOCKET_PATH))
++            os.chown(SOCKET_PATH, -1, self.shared_group_gid)
++            os.chmod(SOCKET_PATH, 0o660)
++            server.listen(8)
++            server.setblocking(False)
++            return server
++        except Exception:
++            server.close()
++            SOCKET_PATH.unlink(missing_ok=True)
++            raise
++
++    def run(self) -> int:
++        self._prepare_shared_permissions()
++        server = self._open_server_socket()
+         selector = selectors.DefaultSelector()
+         selector.register(server, selectors.EVENT_READ)
+         if self.configuration.get("kiosk_url"):
+diff --git a/client/runtime/clientflow_runtime/display_shared_file.py b/client/runtime/clientflow_runtime/display_shared_file.py
+new file mode 100644
+index 0000000..3eba4ad
+--- /dev/null
++++ b/client/runtime/clientflow_runtime/display_shared_file.py
+@@ -0,0 +1,42 @@
++"""Display-only atomic files that preserve the local control-group boundary."""
++from __future__ import annotations
++
++import json
++import os
++from pathlib import Path
++import tempfile
++from typing import Any
++
++
++def atomic_write_shared_json(
++    path: Path,
++    value: Any,
++    *,
++    mode: int,
++    group_gid: int | None,
++) -> None:
++    if group_gid is not None and (
++        isinstance(group_gid, bool) or not isinstance(group_gid, int) or group_gid < 0
++    ):
++        raise ValueError("group_gid skal være et ikke-negativt gid")
++
++    path.parent.mkdir(parents=True, exist_ok=True)
++    data = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2).encode("utf-8") + b"\n"
++    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
++    temporary_path = Path(temporary)
++    try:
++        if group_gid is not None:
++            os.fchown(fd, -1, group_gid)
++        os.fchmod(fd, mode)
++        with os.fdopen(fd, "wb", closefd=True) as handle:
++            handle.write(data)
++            handle.flush()
++            os.fsync(handle.fileno())
++        os.replace(temporary_path, path)
++        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
++        try:
++            os.fsync(directory_fd)
++        finally:
++            os.close(directory_fd)
++    finally:
++        temporary_path.unlink(missing_ok=True)
+diff --git a/client/systemd/clientflow-display-runtime.service b/client/systemd/clientflow-display-runtime.service
+index e72af38..64bc398 100644
+--- a/client/systemd/clientflow-display-runtime.service
++++ b/client/systemd/clientflow-display-runtime.service
+@@ -7,8 +7,7 @@ Requires=clientflow-display-platform-prepare.service
+ [Service]
+ Type=simple
+ User=@CLIENTFLOW_KIOSK_USER@
+-Group=clientflow-display-control
+-SupplementaryGroups=video render audio
++SupplementaryGroups=clientflow-display-control video render audio
+ ExecStart=/opt/clientflow/active/runtime/bin/clientflow-display-runtime
+ Restart=on-failure
+ RestartSec=5s
+diff --git a/frontend/src/pages/clientdetailspage/ClientDetailsActionsSection.jsx b/frontend/src/pages/clientdetailspage/ClientDetailsActionsSection.jsx
+index be0b0cb..6aed653 100644
+--- a/frontend/src/pages/clientdetailspage/ClientDetailsActionsSection.jsx
++++ b/frontend/src/pages/clientdetailspage/ClientDetailsActionsSection.jsx
+@@ -28,6 +28,7 @@ import DesktopWindowsIcon from "@mui/icons-material/DesktopWindows";
+ import { useTheme } from "@mui/material/styles";
+ import { useAuth } from "../../auth/AuthProvider";
+ import { getActiveClientflowDeployment } from "../../api";
++import { getBrowserProcessActionDisabledInfo } from "./displayActionPolicy.mjs";
+ 
+ /*
+   DetailsActionsSection.jsx
+@@ -390,6 +391,7 @@ export default function ClientDetailsActionsSection({
+   liveStep = null,
+   liveChromeStatus = null,
+   chromeRunning = null,
++  browserRequested = null,
+   clientStatus = null,
+   pendingOsUpdate = false,
+   serviceUbuntuUpdateStatus = null,
+@@ -564,6 +566,8 @@ export default function ClientDetailsActionsSection({
+     ? false
+     : null;
+ 
++  const explicitBrowserRequested = typeof browserRequested === "boolean" ? browserRequested : null;
++
+   const anyLoading = Object.values(actionLoading).some(Boolean);
+ 
+   // v7.1.34: display_wake_complete er terminalt og display-only.
+@@ -720,8 +724,12 @@ export default function ClientDetailsActionsSection({
+ 
+       if (key === "wakeup") return { disabled: true, reason: "Klienten er allerede vågen" };
+       if (key === "sleep" && sleepActionPending) return { disabled: true, reason: "Dvale er allerede sendt" };
+-      if (key === "start" && chromeIsRunning === true) return { disabled: true, reason: "Kiosk browser kører allerede" };
+-      if (key === "stop" && chromeIsRunning === false) return { disabled: true, reason: "Kiosk browser er allerede stoppet" };
++      const browserProcessInfo = getBrowserProcessActionDisabledInfo(
++        key,
++        chromeIsRunning,
++        explicitBrowserRequested
++      );
++      if (browserProcessInfo) return browserProcessInfo;
+ 
+       return { disabled: false, reason: null };
+     },
+@@ -739,6 +747,7 @@ export default function ClientDetailsActionsSection({
+       isSleeping,
+       sleepActionPending,
+       chromeIsRunning,
++      explicitBrowserRequested,
+     ]
+   );
+ 
+@@ -856,10 +865,7 @@ export default function ClientDetailsActionsSection({
+       disabled: isDisabledByState("stop"),
+       disabledTooltip: getDisabledTooltip("stop", "Stop kiosk browser"),
+       lockDuringBusy: true,
+-      tooltip:
+-        chromeIsRunning === false
+-          ? "Kiosk browser er allerede stoppet"
+-          : "Stop kiosk browser",
++      tooltip: "Stop kiosk browser",
+     },
+     {
+       key: "sleep",
+diff --git a/frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx b/frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx
+index 632d342..e375fb8 100644
+--- a/frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx
++++ b/frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx
+@@ -898,6 +898,9 @@ export default function ClientDetailsPage({
+       ? client.chromeRunning
+       : null
+   );
++  const [liveBrowserRequested, setLiveBrowserRequested] = useState(
++    typeof client?.browser_requested === "boolean" ? client.browser_requested : null
++  );
+   const [liveStep, setLiveStep]      = useState(client?.chrome_step ?? null);
+   const liveStepRef                  = useRef(client?.chrome_step ?? null);
+   const liveStepTimestampRef         = useRef(client?.chrome_last_updated ?? null);
+@@ -973,6 +976,11 @@ export default function ClientDetailsPage({
+       liveChromeRunningRef.current = client.chromeRunning;
+       setLiveChromeRunning(client.chromeRunning);
+     }
++    if (typeof client?.browser_requested === "boolean") {
++      setLiveBrowserRequested(client.browser_requested);
++    } else {
++      setLiveBrowserRequested(null);
++    }
+     setLiveDisplayResolution(pickDisplayResolutionFields(client));
+     setLiveNetworkStatus(pickNetworkFields(client));
+     setLiveUpdateFields(pickUpdateFields(client));
+@@ -1110,6 +1118,10 @@ export default function ClientDetailsPage({
+             setLiveChromeRunning(polledChromeRunning);
+           }
+ 
++          if (typeof data?.browser_requested === "boolean") {
++            setLiveBrowserRequested(data.browser_requested);
++          }
++
+           if (data?.uptime != null) {
+             const parsed = parseInt(String(data.uptime), 10);
+             if (!isNaN(parsed) && parsed >= 0) {
+@@ -1405,6 +1417,7 @@ export default function ClientDetailsPage({
+       chrome_step: liveStep ?? client?.chrome_step ?? null,
+       last_chrome_step: liveStep ?? client?.last_chrome_step ?? client?.chrome_step ?? null,
+       chrome_running: liveChromeRunning,
++      browser_requested: liveBrowserRequested,
+     }),
+     [
+       client,
+@@ -1420,6 +1433,7 @@ export default function ClientDetailsPage({
+       liveChromeColor,
+       liveStep,
+       liveChromeRunning,
++      liveBrowserRequested,
+       liveLivestreamStatus,
+       liveLivestreamProcessStatus,
+       liveLivestreamDesiredState,
+@@ -1486,6 +1500,7 @@ export default function ClientDetailsPage({
+               liveStep={liveStep}
+               liveChromeStatus={liveChromeStatus}
+               chromeRunning={liveChromeRunning}
++              browserRequested={liveBrowserRequested}
+               clientStatus={client?.status}
+               pendingOsUpdate={liveClient?.pending_os_update}
+               serviceUbuntuUpdateStatus={liveClient?.service_ubuntu_update_status}
+diff --git a/frontend/src/pages/clientdetailspage/displayActionPolicy.mjs b/frontend/src/pages/clientdetailspage/displayActionPolicy.mjs
+new file mode 100644
+index 0000000..87efb3a
+--- /dev/null
++++ b/frontend/src/pages/clientdetailspage/displayActionPolicy.mjs
+@@ -0,0 +1,13 @@
++export function getBrowserProcessActionDisabledInfo(key, chromeIsRunning, browserRequested) {
++  if (key === "start" && chromeIsRunning === true) {
++    return { disabled: true, reason: "Kiosk browser kører allerede" };
++  }
++
++  // A stopped process is not enough to disable Stop: the runtime can still have
++  // browser_requested=true and be retrying after a crash or waiting for session.
++  if (key === "stop" && browserRequested === false) {
++    return { disabled: true, reason: "Kiosk browser er allerede stoppet" };
++  }
++
++  return null;
++}
+diff --git a/frontend/tests/displayActionPolicy.test.mjs b/frontend/tests/displayActionPolicy.test.mjs
+new file mode 100644
+index 0000000..0aa1dd9
+--- /dev/null
++++ b/frontend/tests/displayActionPolicy.test.mjs
+@@ -0,0 +1,31 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++
++import { getBrowserProcessActionDisabledInfo } from "../src/pages/clientdetailspage/displayActionPolicy.mjs";
++
++
++test("failed/stopped process remains stoppable while runtime still requests browser", () => {
++  assert.equal(getBrowserProcessActionDisabledInfo("stop", false, true), null);
++});
++
++
++test("unknown request state does not infer stop-disabled from process absence", () => {
++  assert.equal(getBrowserProcessActionDisabledInfo("stop", false, null), null);
++});
++
++
++test("explicit browser_requested=false disables redundant stop", () => {
++  assert.deepEqual(getBrowserProcessActionDisabledInfo("stop", false, false), {
++    disabled: true,
++    reason: "Kiosk browser er allerede stoppet",
++  });
++});
++
++
++test("running process still disables redundant start", () => {
++  assert.deepEqual(getBrowserProcessActionDisabledInfo("start", true, true), {
++    disabled: true,
++    reason: "Kiosk browser kører allerede",
++  });
++  assert.equal(getBrowserProcessActionDisabledInfo("start", false, true), null);
++});
