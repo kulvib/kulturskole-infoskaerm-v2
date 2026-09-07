@@ -107,11 +107,38 @@ restart_target() {
   echo "$TARGET genstartet."
 }
 
+unlock_lockdown() {
+  [[ "$(id -u)" -eq 0 ]] || die "unlock kræver sudo/root"
+  local helper="/opt/clientflow/active/runtime/bin/clientflow-kiosk-lockdown"
+  [[ -x "$helper" ]] || die "canonical kiosk-lockdown helper mangler"
+  "$helper" rollback
+  echo "Kiosk lockdown slået fra lokalt. Backend desired-state ændres ikke."
+}
+
+menu() {
+  echo "ClientFlow recovery menu"
+  echo "1) Status"
+  echo "2) Slå kiosk-lockdown fra"
+  echo "3) Genstart ClientFlow services"
+  echo "4) Lav support bundle"
+  echo "5) Afslut"
+  read -r -p "Vælg: " choice
+  case "$choice" in
+    1) status ;;
+    2) unlock_lockdown ;;
+    3) restart_target ;;
+    4) bundle ;;
+    *) exit 0 ;;
+  esac
+}
+
 case "$CMD" in
   status) status ;;
+  unlock) unlock_lockdown ;;
   bundle) bundle ;;
   restart) restart_target ;;
+  menu) menu ;;
   *)
-    die "brug: clientflow-recovery status|bundle|restart"
+    die "brug: clientflow-recovery status|unlock|bundle|restart|menu"
     ;;
 esac

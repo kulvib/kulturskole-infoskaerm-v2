@@ -12,6 +12,7 @@ from ..display_control import (
     apply_display_command_completion,
     apply_display_command_failure,
     reconcile_display_configuration,
+    reconcile_kiosk_lockdown,
 )
 from ..calendar_control import build_display_calendar_delivery
 from ..system_control import apply_status_power_observation, apply_system_command_completion
@@ -75,10 +76,10 @@ def _status(domain: str, client_id: int, body: StatusBody, authorization: str | 
         )
         if domain == "display":
             reconcile_display_configuration(
-                session,
-                client_id=client_id,
-                agent_version=body.agent_version,
-                status_payload=body.status_payload,
+                session, client_id=client_id, agent_version=body.agent_version, status_payload=body.status_payload,
+            )
+            reconcile_kiosk_lockdown(
+                session, client_id=client_id, agent_version=body.agent_version, status_payload=body.status_payload,
             )
         elif domain == "status":
             apply_status_power_observation(

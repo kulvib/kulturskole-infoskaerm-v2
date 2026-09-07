@@ -21,14 +21,18 @@ from .display_local_control import (
 )
 from .logging_utils import configure_logging
 from .net import DomainTransport, TransportError, backoff_seconds
-from .unix_rpc import RpcError
+from .unix_rpc import RpcError, call
 
 STATE_DIR = Path(os.getenv("CLIENTFLOW_CALENDAR_STATE_DIR", "/var/lib/clientflow/calendar"))
 CACHE_PATH = STATE_DIR / "schedule.json"
 STATUS_PATH = STATE_DIR / "status.json"
-POLL_SECONDS = max(15.0, float(os.getenv("CLIENTFLOW_CALENDAR_POLL_SECONDS", "60")))
-EVALUATE_SECONDS = max(0.5, float(os.getenv("CLIENTFLOW_CALENDAR_EVALUATE_SECONDS", "1")))
-RECONCILE_SECONDS = max(5.0, float(os.getenv("CLIENTFLOW_CALENDAR_RECONCILE_SECONDS", "30")))
+POLL_SECONDS = max(15.0, float(os.getenv("CLIENTFLOW_CALENDAR_POLL_SECONDS", "15")))
+EVALUATE_SECONDS = max(5.0, float(os.getenv("CLIENTFLOW_CALENDAR_EVALUATE_SECONDS", "30")))
+BOOT_GRACE_SECONDS = max(0.0, float(os.getenv("CLIENTFLOW_CALENDAR_BOOT_GRACE_SECONDS", "90")))
+WAKE_REBOOT_DELAY_SECONDS = max(0.0, float(os.getenv("CLIENTFLOW_CALENDAR_WAKE_REBOOT_DELAY_SECONDS", "15")))
+WAKE_REBOOT_COOLDOWN_SECONDS = max(0.0, float(os.getenv("CLIENTFLOW_CALENDAR_WAKE_REBOOT_COOLDOWN_SECONDS", "300")))
+SCHEDULER_STATE_PATH = STATE_DIR / "scheduler-state.json"
+CALENDAR_REBOOT_SOCKET = os.getenv("CLIENTFLOW_CALENDAR_REBOOT_SOCKET", "/run/clientflow/calendar-reboot.sock")
 SCHEMA_VERSION = 1
 
 
@@ -187,21 +191,77 @@ def _calendar_boundary_since(plan: dict[str, Any], since: datetime, now: datetim
     return False
 
 
-def _should_enforce(
-    *,
-    manual_override: bool,
-    last_schedule_state: str | None,
+def _load_scheduler_state() -> dict[str, Any]:
+    try:
+        value = json.loads(SCHEDULER_STATE_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        value = {}
+    if not isinstance(value, dict):
+        value = {}
+    last = str(value.get("last_schedule_state") or "").strip().lower()
+    if last not in {"on", "off"}:
+        last = None
+    try:
+        last_reboot = float(value.get("last_wake_reboot_at") or 0.0)
+    except (TypeError, ValueError):
+        last_reboot = 0.0
+    return {
+        "schema_version": 1,
+        "last_schedule_state": last,
+        "last_schedule_applied_at": value.get("last_schedule_applied_at"),
+        "last_wake_reboot_at": max(0.0, last_reboot),
+    }
+
+
+def _save_scheduler_state(state: dict[str, Any]) -> None:
+    atomic_write_json(SCHEDULER_STATE_PATH, state, mode=0o600)
+
+
+def _request_calendar_reboot() -> dict[str, Any]:
+    if WAKE_REBOOT_DELAY_SECONDS:
+        time.sleep(WAKE_REBOOT_DELAY_SECONDS)
+    return call(CALENDAR_REBOOT_SOCKET, {"schema_version": 1, "action": "reboot"}, timeout=10.0)
+
+
+def _apply_calendar_state(
     desired: str,
-    last_enforce_at: float,
-    now_mono: float,
-) -> bool:
-    if manual_override:
-        return False
-    return (
-        last_schedule_state is None
-        or desired != last_schedule_state
-        or (now_mono - last_enforce_at) >= RECONCILE_SECONDS
-    )
+    *,
+    state: dict[str, Any],
+    now_epoch: float,
+    initial: bool = False,
+    startup_off_enforcement: bool = False,
+) -> None:
+    if desired == "off":
+        # display_local_control owns the exact legacy sleep sequence:
+        # stop browser -> 10 second countdown -> display off.
+        with display_control_lock():
+            set_display_power("off")
+        return
+    if desired != "on":
+        raise CalendarPlanError("Ukendt calendar desired state")
+    if initial:
+        # First known ON after activation/service initialization is a baseline,
+        # not an OFF->ON calendar wake.  This avoids an approval-time reboot.
+        return
+    with display_control_lock():
+        set_display_power("on")
+    last_reboot = float(state.get("last_wake_reboot_at") or 0.0)
+    if now_epoch - last_reboot < WAKE_REBOOT_COOLDOWN_SECONDS:
+        with display_control_lock():
+            runtime_action("start_browser", payload={"source": "calendar"})
+        return
+    # Commit the cooldown boundary before crossing the reboot boundary so a
+    # service restart cannot create a reboot loop.
+    state["last_wake_reboot_at"] = now_epoch
+    _save_scheduler_state(state)
+    try:
+        _request_calendar_reboot()
+    except (RpcError, OSError, RuntimeError, ValueError):
+        # Keep the display useful if the narrow reboot broker is unavailable.
+        with display_control_lock():
+            runtime_action("start_browser", payload={"source": "calendar"})
+        raise
+
 
 
 def _calendar_preview(plan: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
@@ -234,19 +294,6 @@ def _publish_calendar_preview(plan: dict[str, Any], logger) -> None:
         runtime_action("set_calendar_preview", payload=_calendar_preview(plan))
     except (RpcError, OSError, RuntimeError, ValueError):
         logger.warning("calendar_preview_publish_failed", extra={"event": "local_gui"})
-
-
-def _apply_transition(state: str) -> None:
-    with display_control_lock():
-        if state == "on":
-            set_display_power("on")
-            runtime_action("start_browser", payload={"source": "calendar"})
-            return
-        if state == "off":
-            runtime_action("stop_browser", payload={"source": "calendar"})
-            set_display_power("off")
-            return
-    raise CalendarPlanError("Ukendt calendar desired state")
 
 
 def _timezone_label(now: datetime) -> str:
@@ -291,12 +338,13 @@ def main() -> int:
     plan = _read_cache(client_id=credential.client_id)
     if plan is not None:
         _publish_calendar_preview(plan, logger)
+    scheduler = _load_scheduler_state()
     last_fetch_at: float | None = None
     last_transition_at: float | None = None
-    last_schedule_state: str | None = None
-    last_enforce_at = 0.0
     next_fetch = 0.0
     fetch_attempt = 0
+    service_started_mono = time.monotonic()
+    startup_calendar_state_enforced = False
 
     while True:
         now_mono = time.monotonic()
@@ -317,14 +365,19 @@ def main() -> int:
 
             if plan is None:
                 _write_status(
-                    state="degraded",
-                    plan=None,
-                    desired=None,
-                    last_fetch_at=last_fetch_at,
-                    last_transition_at=last_transition_at,
-                    error=error or "Ingen gyldig cached calendar",
+                    state="degraded", plan=None, desired=None, last_fetch_at=last_fetch_at,
+                    last_transition_at=last_transition_at, error=error or "Ingen gyldig cached calendar",
                 )
                 time.sleep(EVALUATE_SECONDS)
+                continue
+
+            elapsed = time.monotonic() - service_started_mono
+            if elapsed < BOOT_GRACE_SECONDS:
+                _write_status(
+                    state="boot_grace", plan=plan, desired=None, last_fetch_at=last_fetch_at,
+                    last_transition_at=last_transition_at, error=error,
+                )
+                time.sleep(min(EVALUATE_SECONDS, max(1.0, BOOT_GRACE_SECONDS - elapsed)))
                 continue
 
             now_local = datetime.now().astimezone()
@@ -336,56 +389,53 @@ def main() -> int:
                 if _calendar_boundary_since(plan, override_local, now_local):
                     clear_calendar_manual_override()
                     manual_override = False
-            now_mono = time.monotonic()
-            should_enforce = _should_enforce(
-                manual_override=manual_override,
-                last_schedule_state=last_schedule_state,
-                desired=desired,
-                last_enforce_at=last_enforce_at,
-                now_mono=now_mono,
-            )
-            if should_enforce:
-                try:
-                    _apply_transition(desired)
-                except (RpcError, OSError, RuntimeError, ValueError) as exc:
-                    error = f"calendar_transition_failed: {exc}"
-                    _write_status(
-                        state="degraded",
-                        plan=plan,
-                        desired=desired,
-                        last_fetch_at=last_fetch_at,
-                        last_transition_at=last_transition_at,
-                        error=error,
-                        manual_override=manual_override,
+
+            last_schedule_state = scheduler.get("last_schedule_state")
+            changed = False
+            if not manual_override:
+                # One-time startup OFF enforcement closes the legacy boot hole:
+                # Chrome may have started during boot even when persisted state is OFF.
+                if (
+                    not startup_calendar_state_enforced
+                    and desired == "off"
+                    and last_schedule_state == "off"
+                ):
+                    _apply_calendar_state(
+                        "off", state=scheduler, now_epoch=time.time(), startup_off_enforcement=True
                     )
-                    logger.exception("calendar_transition_failed", extra={"event": desired})
-                    time.sleep(max(1.0, EVALUATE_SECONDS))
-                    continue
+                    startup_calendar_state_enforced = True
+                    changed = True
+                elif last_schedule_state not in {"on", "off"}:
+                    _apply_calendar_state(desired, state=scheduler, now_epoch=time.time(), initial=True)
+                    startup_calendar_state_enforced = True
+                    changed = True
+                elif desired != last_schedule_state:
+                    _apply_calendar_state(desired, state=scheduler, now_epoch=time.time())
+                    startup_calendar_state_enforced = True
+                    changed = True
+                else:
+                    startup_calendar_state_enforced = True
+
+            if changed:
+                scheduler["last_schedule_state"] = desired
+                scheduler["last_schedule_applied_at"] = time.time()
+                _save_scheduler_state(scheduler)
                 last_transition_at = time.time()
-                last_enforce_at = time.monotonic()
                 logger.info("calendar_transition_applied", extra={"event": desired})
-            last_schedule_state = desired
 
             _write_status(
-                state="running",
-                plan=plan,
-                desired=desired,
-                last_fetch_at=last_fetch_at,
-                last_transition_at=last_transition_at,
-                error=error,
-                manual_override=manual_override,
+                state="running", plan=plan, desired=desired, last_fetch_at=last_fetch_at,
+                last_transition_at=last_transition_at, error=error, manual_override=manual_override,
             )
+            time.sleep(EVALUATE_SECONDS)
+        except (RpcError, OSError, RuntimeError, ValueError) as exc:
+            error = f"calendar_transition_failed: {exc}"
+            _write_status(
+                state="degraded", plan=plan, desired=None, last_fetch_at=last_fetch_at,
+                last_transition_at=last_transition_at, error=error,
+            )
+            logger.exception("calendar_transition_failed", extra={"event": "calendar"})
             time.sleep(EVALUATE_SECONDS)
         except KeyboardInterrupt:
             return 0
-        except Exception as exc:
-            logger.exception("calendar_loop_failed")
-            _write_status(
-                state="degraded",
-                plan=plan,
-                desired=last_schedule_state,
-                last_fetch_at=last_fetch_at,
-                last_transition_at=last_transition_at,
-                error=f"calendar_loop_failed: {exc}",
-            )
-            time.sleep(2.0)
+

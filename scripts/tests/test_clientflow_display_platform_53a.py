@@ -170,15 +170,21 @@ def test_v2_kiosk_baseline_ports_legacy_golden_behaviour_without_chrome_kiosk_mo
         ("org.gnome.desktop.screensaver", "idle-activation-enabled", "false"),
         ("org.gnome.desktop.session", "idle-delay", "uint32 0"),
         ("org.gnome.desktop.lockdown", "disable-lock-screen", "true"),
-        ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
         ("org.gnome.desktop.lockdown", "disable-user-switching", "false"),
         ("org.gnome.desktop.lockdown", "disable-log-out", "false"),
-        ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
         ("org.gnome.settings-daemon.plugins.power", "idle-dim", "false"),
         ("org.gnome.settings-daemon.plugins.power", "power-button-action", "'nothing'"),
         ("org.gnome.desktop.notifications", "show-banners", "false"),
     }
     assert expected <= settings
+    assert ("org.gnome.desktop.lockdown", "disable-command-line", "true") not in settings
+    assert ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]") not in settings
+
+    from clientflow_runtime import kiosk_lockdown
+
+    optional = set(kiosk_lockdown.OPTIONAL_GSETTINGS)
+    assert ("org.gnome.desktop.lockdown", "disable-command-line", "true") in optional
+    assert ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]") in optional
 
     runtime = (ROOT / "client/runtime/clientflow_runtime/display_runtime.py").read_text(encoding="utf-8")
     assert '"--start-fullscreen"' in runtime

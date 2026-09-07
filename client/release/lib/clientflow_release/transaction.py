@@ -612,7 +612,9 @@ def _validated_kiosk_user(value: str) -> str:
     value = str(value or "").strip()
     if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", value):
         raise TransactionError("kiosk-user i managed definition er ugyldig")
-    if value == "root" or value.startswith("clientflow"):
+    if value == "root":
+        raise TransactionError("kiosk-user i managed definition er ugyldig")
+    if value.startswith("clientflow") and value != "clientflow-kiosk":
         raise TransactionError("kiosk-user i managed definition er ugyldig")
     return value
 

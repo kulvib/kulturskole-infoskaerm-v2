@@ -1807,7 +1807,7 @@ async def trigger_os_update(
         raise HTTPException(status_code=404, detail="Client not found")
     _require_admin_client_access(user, client)
     _require_no_active_clientflow_deployment(session, id)
-    _require_system_ready(session, client)
+    presence = _require_system_ready(session, client)
 
     lock_system_client(session, id)
     _require_no_active_clientflow_deployment(session, id)
@@ -1821,7 +1821,10 @@ async def trigger_os_update(
         session,
         client_id=id,
         command_type="update_os",
-        payload={"source": "control_room"},
+        payload={
+            "source": "control_room",
+            "requested_boot_id": presence.status.boot_id,
+        },
         requested_by_user_id=getattr(user, "id", None),
         ttl_seconds=10_800,
         idempotency_prefix="control-room-os-update",
@@ -2098,10 +2101,8 @@ def _validate_client_update_privileges(user, client: Client, fields: set[str]) -
                 raise HTTPException(status_code=403, detail="Skærmopløsning kan kun ændres af superadministrator eller administrator for egen organisation")
 
     if DESKTOP_LOCKDOWN_DESIRED_FIELDS & fields:
-        raise HTTPException(
-            status_code=409,
-            detail="Kiosk lockdown er ikke en understøttet canonical ClientFlow-handling",
-        )
+        if principal_is_client(user) or not getattr(user, "is_superadmin", False):
+            raise HTTPException(status_code=403, detail="Kiosk lockdown kan kun ændres af superadministrator")
 
 
 def _validate_client_update_command_availability(session, user, client: Client, client_update: ClientUpdate, fields: set[str]) -> None:

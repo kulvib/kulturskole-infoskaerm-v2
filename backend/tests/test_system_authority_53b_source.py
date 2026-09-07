@@ -155,14 +155,29 @@ def test_53b_frontend_uses_system_endpoints_and_system_projection_fields() -> No
 
 
 
-def test_53b_os_update_reports_reboot_requirement_without_auto_reboot_or_fake_progress() -> None:
+def test_53b_os_update_preserves_fixed_function_reboot_boundary_and_no_fake_progress() -> None:
     helper = read("client/libexec/update-os")
+    broker = read("client/runtime/clientflow_runtime/system_broker.py")
     control = read("backend/service1/system_control.py")
 
     assert 'CLIENTFLOW_REBOOT_REQUIRED=1' in helper
     assert 'CLIENTFLOW_REBOOT_REQUIRED=0' in helper
     assert '/var/run/reboot-required' in helper
+    assert 'full-upgrade' in helper
+    assert 'autoremove' in helper
     assert 'systemctl' not in helper
+    assert '_journal_mark_reboot_requested' in broker
+    assert '_cross_update_reboot_boundary()' in broker
+    assert '"--ignore-inhibitors", "reboot"' in broker
+    assert '_display_transition("reboot")' in broker
+    assert '[ _fixed_binary("systemctl")' not in broker  # formatting-independent guard below
+    assert '"--no-block", "--ignore-inhibitors", "reboot"' in broker
     assert '"claimed": ("installing", "os_update_installing", "Ubuntu-opdatering kører", None)' in control
     assert 'if "CLIENTFLOW_REBOOT_REQUIRED=1" in output:' in control
     assert '"ubuntu_update_reboot_required": reboot_required' in control
+    clients = read("backend/service1/routers/clients.py")
+    shared = read("backend/service1/shared_domain.py")
+    assert '"requested_boot_id": presence.status.boot_id' in clients
+    assert 'row.command_type == "update_os"' in shared
+    assert 'current_boot_id != requested_boot_id' in shared
+    assert 'row.status = "queued"' in shared

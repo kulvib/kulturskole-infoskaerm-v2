@@ -13,10 +13,12 @@ import {
   DialogTitle,
   Divider,
   Grid,
+  FormControlLabel,
   LinearProgress,
   IconButton,
   MenuItem,
   Stack,
+  Switch,
   Tab,
   Tabs,
   TextField,
@@ -1112,8 +1114,9 @@ function isCanonicalKioskUrl(value) {
   const raw = String(value || "").trim();
   if (!raw) return true;
   if (raw.length > 2048) return false;
+  const candidate = raw.includes("://") ? raw : `https://${raw}`;
   try {
-    const parsed = new URL(raw);
+    const parsed = new URL(candidate);
     if (parsed.username || parsed.password || !parsed.hostname) return false;
     if (parsed.protocol === "https:") return true;
     return parsed.protocol === "http:" && ["localhost", "127.0.0.1"].includes(parsed.hostname.toLowerCase());
@@ -1795,6 +1798,7 @@ function getConfigFormFromClient(client) {
     locality: client?.locality || "",
     kiosk_url: client?.kiosk_url || "",
     browser_refresh_interval_sec: String(client?.browser_refresh_interval_sec ?? 900),
+    desktop_lockdown_enabled: client?.desktop_lockdown_enabled === true,
     organization_id: getOrganizationId(client) ? String(getOrganizationId(client)) : "",
   };
 }
@@ -1863,6 +1867,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     form.locality !== initialForm.locality ||
     form.kiosk_url !== initialForm.kiosk_url ||
     String(form.browser_refresh_interval_sec || "") !== String(initialForm.browser_refresh_interval_sec || "") ||
+    form.desktop_lockdown_enabled !== initialForm.desktop_lockdown_enabled ||
     String(form.organization_id || "") !== String(initialForm.organization_id || "")
   ), [form, initialForm]);
 
@@ -1876,6 +1881,9 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
 
   const setField = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
+  };
+  const setBooleanField = (field) => (event) => {
+    setForm((prev) => ({ ...prev, [field]: event.target.checked }));
   };
 
   const getChangedPayload = React.useCallback(() => {
@@ -1914,6 +1922,10 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     }
 
 
+    if (isSuperadmin && form.desktop_lockdown_enabled !== initialForm.desktop_lockdown_enabled) {
+      payload.desktop_lockdown_enabled = !!form.desktop_lockdown_enabled;
+    }
+
     if (canChangeOrganization && String(form.organization_id || "") !== String(initialForm.organization_id || "")) {
       const nextOrganizationId = form.organization_id || null;
       payload.organization_id = nextOrganizationId && /^\d+$/.test(String(nextOrganizationId))
@@ -1923,7 +1935,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
 
 
     return payload;
-  }, [form, initialForm, canEditClientName, canEditKioskUrlAndLocality, canChangeOrganization]);
+  }, [form, initialForm, canEditClientName, canEditKioskUrlAndLocality, canChangeOrganization, isSuperadmin]);
 
   const hasChanges = React.useMemo(() => {
     try {
@@ -2185,7 +2197,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                     value={form.kiosk_url}
                     onChange={setField("kiosk_url")}
                     disabled={saving || !canEditKioskUrlAndLocality}
-                    helperText={canEditKioskUrlAndLocality ? "HTTPS kræves. HTTP er kun tilladt til localhost eller 127.0.0.1." : "Du har kun læseadgang til kiosk URL"}
+                    helperText={canEditKioskUrlAndLocality ? "Domæne uden scheme normaliseres til HTTPS. HTTP er kun tilladt til localhost eller 127.0.0.1." : "Du har kun læseadgang til kiosk URL"}
                     sx={textFieldSx}
                   />
                 </Grid>
@@ -2256,6 +2268,30 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                 Administrative handlinger på den lokale Ubuntu-klient. Kiosk-brugeren får ikke sudo/administrator-rettigheder.
               </Typography>
               <Grid container spacing={1.25}>
+                <Grid size={12}>
+                  <Box sx={{ p: 1.2, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={!!form.desktop_lockdown_enabled}
+                          onChange={setBooleanField("desktop_lockdown_enabled")}
+                          disabled={saving || !isSuperadmin}
+                        />
+                      }
+                      label="Kiosk lockdown"
+                      sx={{ color: TEXT, m: 0 }}
+                    />
+                    <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.4 }}>
+                      {client?.desktop_lockdown_status === "applied"
+                        ? "Aktiv på kiosk-brugeren"
+                        : client?.desktop_lockdown_status === "error"
+                          ? `Fejl: ${client?.desktop_lockdown_message || "ukendt fejl"}`
+                          : form.desktop_lockdown_enabled
+                            ? "Ønsket Til – afventer eller anvendes af klienten"
+                            : "Fra – lokal admin/cfadmin påvirkes ikke"}
+                    </Typography>
+                  </Box>
+                </Grid>
                 {isSuperadmin && (
                   <>
                     <Grid size={12}>

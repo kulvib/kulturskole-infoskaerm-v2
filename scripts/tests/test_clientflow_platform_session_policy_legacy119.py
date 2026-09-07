@@ -99,7 +99,11 @@ def test_kiosk_session_policy_only_mutates_for_active_local_kiosk(monkeypatch, t
     )
     gsettings_calls = []
     audio_calls = []
-    monkeypatch.setattr(module, "_apply_gsettings", lambda value: gsettings_calls.append(value))
+    monkeypatch.setattr(
+        module,
+        "_apply_gsettings",
+        lambda value, *, lockdown_quicksettings=False: gsettings_calls.append((value, lockdown_quicksettings)),
+    )
     monkeypatch.setattr(module, "_apply_audio", lambda value: audio_calls.append(value))
 
     module.enforce()
@@ -107,7 +111,7 @@ def test_kiosk_session_policy_only_mutates_for_active_local_kiosk(monkeypatch, t
     assert [str(executables["nmcli"]), "radio", "wifi", "on"] in calls
     assert [str(executables["rfkill"]), "block", "bluetooth"] in calls
     assert [str(executables["powerprofilesctl"]), "set", "balanced"] in calls
-    assert gsettings_calls == [record]
+    assert gsettings_calls == [(record, False)]
     assert audio_calls == [record]
 
     calls.clear()
@@ -133,7 +137,7 @@ def test_kiosk_session_policy_source_contains_audio_and_gnome_baseline():
     ):
         assert needle in source
     assert "clientflow-kiosk" in source
-    enforce_source = source[source.index("def enforce()") : source.index("def main()") ]
+    enforce_source = source[source.index("def enforce(") : source.index("def main()") ]
     assert "cfadmin" not in enforce_source
     assert "OnUnitActiveSec=5min" in timer
     assert "Persistent=true" in timer

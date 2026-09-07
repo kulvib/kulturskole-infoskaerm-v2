@@ -32,6 +32,7 @@ SOCKET_PATH = os.getenv("CLIENTFLOW_DISPLAY_RUNTIME_SOCKET", "/run/clientflow/di
 STATUS_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_STATUS_PATH", "/var/lib/clientflow/display-runtime/runtime-status.json"))
 CONFIG_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_CONFIG_PATH", "/var/lib/clientflow/display-runtime/configuration.json"))
 RESOLUTION_STATUS_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_RESOLUTION_PATH", "/var/lib/clientflow/display-runtime/display-resolution.json"))
+RESOLUTION_DESIRED_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_RESOLUTION_DESIRED_PATH", "/var/lib/clientflow/display-runtime/display-resolution-desired.json"))
 GUI_STATUS_PATH = Path(os.getenv("CLIENTFLOW_GUI_STATUS_PATH", "/var/lib/clientflow/display-runtime/local-gui-status.json"))
 CALENDAR_PREVIEW_PATH = Path(os.getenv("CLIENTFLOW_CALENDAR_PREVIEW_PATH", "/var/lib/clientflow/display-runtime/calendar-preview.json"))
 PUBLIC_CLIENT_PATH = Path(os.getenv("CLIENTFLOW_PUBLIC_CLIENT_PATH", "/var/lib/clientflow/client-public.json"))
@@ -294,6 +295,8 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             ("Hostname", "hostname"),
             ("ClientFlow version", "version"),
             ("Backend-status", "backend"),
+            ("Backend sync", "backend_sync"),
+            ("Kalender service", "calendar_service"),
             ("Oppetid", "uptime"),
             ("ClientFlow update", "update"),
             ("Ubuntu/System", "ubuntu_update"),
@@ -314,7 +317,9 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             ("Auto refresh", "browser_refresh", False),
             ("Kiosk browser status", "display", False),
             ("Display power", "power", False),
-            ("Skærmopløsning", "resolution", False),
+            ("Aktuel skærm", "resolution_current", False),
+            ("Backend-valgt", "resolution_desired", False),
+            ("Skærmstatus", "resolution_status", False),
             ("Browser Guard", "browser_guard", False),
         )
         for row, (label, key, copyable) in enumerate(kiosk_fields):
@@ -440,6 +445,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             name_locality = f"{client_name} / {locality}" if locality else client_name
             configuration = _read_json(CONFIG_PATH)
             resolution = _read_json(RESOLUTION_STATUS_PATH)
+            resolution_desired = _read_json(RESOLUTION_DESIRED_PATH)
             network = _network_snapshot()
 
             self._set("client_id", client_id)
@@ -447,6 +453,8 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             self._set("hostname", socket.gethostname())
             self._set("version", _version())
             self._set("backend", _service_state("clientflow-status-agent.service"))
+            self._set("backend_sync", _service_state("clientflow-display-agent.service"))
+            self._set("calendar_service", _service_state("clientflow-calendar.service"))
             self._set("uptime", _uptime())
             self._set("update", _service_state("clientflow-updater.timer"))
             self._set("ubuntu_update", _service_state("clientflow-system-broker.socket"))
@@ -458,15 +466,26 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             self._set("kiosk_url", str(configuration.get("kiosk_url") or "-"))
             refresh_seconds = int(configuration.get("browser_refresh_interval_sec") or 0)
             self._set("browser_refresh", "slået fra" if refresh_seconds == 0 else f"{refresh_seconds} sek.")
+            power_state = str(runtime.get("display_power") or "unknown")
+            if power_state == "off":
+                browser_status = "Dvale – online, skærm slukket"
             self._set("display", browser_status)
-            self._set("power", str(runtime.get("display_power") or "unknown"))
+            self._set("power", "Dvale – online, skærm slukket" if power_state == "off" else power_state)
             if resolution.get("ok"):
-                self._set(
-                    "resolution",
-                    f"{resolution.get('output') or '-'} · {resolution.get('width') or '?'}×{resolution.get('height') or '?'} · {resolution.get('refresh_rate') or '?'} Hz",
-                )
+                current_resolution = f"{resolution.get('output') or '-'} · {resolution.get('width') or '?'}×{resolution.get('height') or '?'} · {resolution.get('refresh_rate') or '?'} Hz"
             else:
-                self._set("resolution", str(resolution.get("error") or "ikke detekteret")[:120])
+                current_resolution = str(resolution.get("error") or "ikke detekteret")[:120]
+            self._set("resolution_current", current_resolution)
+            desired_mode = str(resolution_desired.get("mode") or "").lower()
+            if desired_mode == "auto":
+                desired_resolution = "Automatisk / foretrukken skærmtilstand"
+            elif desired_mode == "fixed":
+                desired_resolution = f"{resolution_desired.get('width') or '?'}×{resolution_desired.get('height') or '?'} · {resolution_desired.get('refresh_rate') or 'standard'} Hz"
+            else:
+                desired_resolution = "Ikke valgt endnu"
+            self._set("resolution_desired", desired_resolution)
+            resolution_action = str(resolution.get("action") or "unknown")
+            self._set("resolution_status", f"{resolution_action} · {'OK' if resolution.get('ok') else 'fejl/afventer'}")
             self._set("browser_guard", _service_state("clientflow-browser-guard.service"))
 
             self._set("network_active", network["active_connection"])

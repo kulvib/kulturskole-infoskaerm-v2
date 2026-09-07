@@ -17,12 +17,12 @@ from .models import Client
 
 PRESENCE_DOMAINS = ("status", "display", "system")
 ONLINE_OBSERVED_STATE = "online"
-SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS = 30
+SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS = 15
 # Presence is deliberately code-owned: a deployment-time environment override would let
 # server freshness drift away from the client runtime cadence without changing either
-# side's reviewed protocol. Three missed nominal reports is the canonical liveness
+# side's reviewed protocol. Eight missed nominal reports is the canonical liveness
 # policy for shared Status/Display/System presence.
-SHARED_DOMAIN_MISSED_REPORT_LIMIT = 3
+SHARED_DOMAIN_MISSED_REPORT_LIMIT = 8
 PRESENCE_TIMEOUT_SECONDS = (
     SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS * SHARED_DOMAIN_MISSED_REPORT_LIMIT
 )

@@ -38,19 +38,24 @@ def test_53c_calendar_agent_uses_display_credential_local_wall_clock_and_cache()
     assert "datetime.now().astimezone()" in agent
     assert "Europe/Copenhagen" not in agent
     assert "Domain.SYSTEM" not in agent
-    assert "reboot" not in agent.lower()
+    assert "systemctl" not in agent.lower()
     assert "shutdown" not in agent.lower()
+    assert 'CALENDAR_REBOOT_SOCKET' in agent
 
 
-def test_53c_calendar_transitions_preserve_historical_display_semantics_without_system_reboot() -> None:
+def test_53c_calendar_transitions_preserve_legacy_boot_baseline_wake_reboot_and_cooldown() -> None:
     agent = read("client/runtime/clientflow_runtime/calendar_agent.py")
-    transition = agent[agent.index("def _apply_transition("):agent.index("def _timezone_label", agent.index("def _apply_transition("))]
-
-    on_block = transition[transition.index('if state == "on"'):transition.index('if state == "off"')]
-    assert on_block.index('set_display_power("on")') < on_block.index('runtime_action("start_browser", payload={"source": "calendar"})')
-    off_block = transition[transition.index('if state == "off"'):]
-    assert off_block.index('runtime_action("stop_browser", payload={"source": "calendar"})') < off_block.index('set_display_power("off")')
-    assert "display_control_lock()" in transition
+    assert 'CLIENTFLOW_CALENDAR_POLL_SECONDS", "15"' in agent
+    assert 'CLIENTFLOW_CALENDAR_EVALUATE_SECONDS", "30"' in agent
+    assert 'CLIENTFLOW_CALENDAR_BOOT_GRACE_SECONDS", "90"' in agent
+    assert 'CLIENTFLOW_CALENDAR_WAKE_REBOOT_DELAY_SECONDS", "15"' in agent
+    assert 'CLIENTFLOW_CALENDAR_WAKE_REBOOT_COOLDOWN_SECONDS", "300"' in agent
+    assert 'if initial:' in agent
+    assert 'set_display_power("off")' in agent
+    assert 'set_display_power("on")' in agent
+    assert '_request_calendar_reboot()' in agent
+    assert 'runtime_action("start_browser", payload={"source": "calendar"})' in agent
+    assert 'startup_calendar_state_enforced' in agent
 
 
 def test_53c_calendar_and_manual_display_commands_share_one_local_control_lock() -> None:
@@ -127,4 +132,4 @@ def test_53c_manual_display_override_is_boot_bound_and_apply_configuration_is_no
     assert 'apply_configuration' not in apply_block.split('record_calendar_manual_override', 1)[0].rsplit('if context.command_type in', 1)[-1]
     assert "_calendar_boundary_since" in calendar_agent
     assert "clear_calendar_manual_override()" in calendar_agent
-    assert "RECONCILE_SECONDS" in calendar_agent
+    assert "_calendar_boundary_since" in calendar_agent

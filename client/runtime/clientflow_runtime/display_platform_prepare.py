@@ -35,6 +35,7 @@ KIOSK_DISABLED_AUTOSTARTS = (
     "ubuntu-report-on-upgrade.desktop",
     "update-notifier-crash.desktop",
     "software-properties-gtk.desktop",
+    "firefox.desktop",
 )
 KIOSK_BLOCKED_DESKTOP_IDS = (
     "org.gnome.Settings.desktop",
@@ -393,13 +394,10 @@ def _gsettings_commands() -> Iterable[tuple[str, str, str]]:
         ("org.gnome.desktop.screensaver", "ubuntu-lock-on-suspend", "false"),
         ("org.gnome.desktop.session", "idle-delay", "uint32 0"),
         ("org.gnome.desktop.lockdown", "disable-lock-screen", "true"),
-        ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
         # Preserve the legacy technician escape hatch: the kiosk user may log
         # out/switch user so cfadmin can be selected at GDM.
         ("org.gnome.desktop.lockdown", "disable-user-switching", "false"),
         ("org.gnome.desktop.lockdown", "disable-log-out", "false"),
-        ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
-        ("org.gnome.shell", "favorite-apps", "[]"),
         ("org.gnome.settings-daemon.plugins.color", "night-light-enabled", "false"),
         ("org.gnome.desktop.interface", "color-scheme", "'default'"),
         ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type", "'nothing'"),
@@ -468,23 +466,81 @@ def _prepare_kiosk_autostarts(home: Path, *, uid: int, gid: int) -> None:
     _prepare_user_popup_autostarts(home, uid=uid, gid=gid)
 
 
-def _prepare_firefox_popup_policy(path: Path | None = None) -> None:
+def _prepare_firefox_popup_policy(path: Path | None = None, *, install_path: Path | None = None) -> None:
     target = path or FIREFOX_POLICY_PATH
     policy = {
         "policies": {
             "DisableAppUpdate": True,
+            "DisableFirefoxAccounts": True,
             "DisableFirefoxStudies": True,
+            "DisablePocket": True,
             "DisableTelemetry": True,
             "DontCheckDefaultBrowser": True,
+            "NoDefaultBookmarks": True,
             "OverrideFirstRunPage": "",
             "OverridePostUpdatePage": "",
+            "OfferToSaveLogins": False,
+            "PasswordManagerEnabled": False,
+            "Preferences": {
+                "browser.shell.checkDefaultBrowser": {"Value": False, "Status": "locked"},
+                "browser.startup.homepage_override.mstone": {"Value": "ignore", "Status": "locked"},
+                "browser.startup.page": {"Value": 0, "Status": "locked"},
+                "browser.sessionstore.resume_from_crash": {"Value": False, "Status": "locked"},
+                "browser.tabs.warnOnClose": {"Value": False, "Status": "locked"},
+                "browser.aboutwelcome.enabled": {"Value": False, "Status": "locked"},
+                "trailhead.firstrun.didSeeAboutWelcome": {"Value": True, "Status": "locked"},
+                "dom.webnotifications.enabled": {"Value": False, "Status": "locked"},
+                "permissions.default.desktop-notification": {"Value": 2, "Status": "locked"},
+                "datareporting.healthreport.uploadEnabled": {"Value": False, "Status": "locked"},
+                "toolkit.telemetry.enabled": {"Value": False, "Status": "locked"},
+                "extensions.pocket.enabled": {"Value": False, "Status": "locked"},
+            },
         }
     }
-    _atomic_write_text(
-        target,
-        json.dumps(policy, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
-        mode=0o644,
-    )
+    payload = json.dumps(policy, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+    _atomic_write_text(target, payload, mode=0o644)
+    install_target = install_path or Path("/usr/lib/firefox/distribution/policies.json")
+    install_target.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(install_target, payload, mode=0o644)
+
+
+FIREFOX_USER_PREFS = (
+    'user_pref("browser.shell.checkDefaultBrowser", false);',
+    'user_pref("browser.startup.homepage_override.mstone", "ignore");',
+    'user_pref("browser.startup.page", 0);',
+    'user_pref("browser.sessionstore.resume_from_crash", false);',
+    'user_pref("browser.tabs.warnOnClose", false);',
+    'user_pref("browser.aboutwelcome.enabled", false);',
+    'user_pref("trailhead.firstrun.didSeeAboutWelcome", true);',
+    'user_pref("dom.webnotifications.enabled", false);',
+    'user_pref("permissions.default.desktop-notification", 2);',
+    'user_pref("datareporting.healthreport.uploadEnabled", false);',
+    'user_pref("toolkit.telemetry.enabled", false);',
+    'user_pref("extensions.pocket.enabled", false);',
+)
+
+
+def _prepare_existing_firefox_profiles(home: Path, *, uid: int, gid: int) -> None:
+    root = home / ".mozilla/firefox"
+    if not root.is_dir():
+        return
+    for profile in root.iterdir():
+        if not profile.is_dir() or not (".default" in profile.name or ".release" in profile.name):
+            continue
+        path = profile / "user.js"
+        _atomic_write_text(path, "\n".join(FIREFOX_USER_PREFS) + "\n", mode=0o644)
+        os.chown(path, uid, gid)
+
+
+def _prepare_apport_disabled(path: Path = Path("/etc/default/apport"), *, disable_service: bool = True) -> None:
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    if re.search(r"(?m)^enabled=", text):
+        text = re.sub(r"(?m)^enabled=.*$", "enabled=0", text)
+    else:
+        text = text.rstrip() + ("\n" if text.strip() else "") + "enabled=0\n"
+    _atomic_write_text(path, text, mode=0o644)
+    if disable_service:
+        subprocess.run(["/usr/bin/systemctl", "disable", "--now", "apport.service"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
 def _prepare_human_popup_baseline(kiosk_user: str, *, cfadmin_user: str = CFADMIN_USER) -> None:
@@ -499,7 +555,14 @@ def _prepare_human_popup_baseline(kiosk_user: str, *, cfadmin_user: str = CFADMI
                 f"Human account home mangler eller har forkert ejerskab: {username}"
             )
         _prepare_user_popup_autostarts(home, uid=record.pw_uid, gid=record.pw_gid)
+        _prepare_existing_firefox_profiles(home, uid=record.pw_uid, gid=record.pw_gid)
+        subprocess.run(
+            ["/usr/bin/pkill", "-u", username, "-f", "update-notifier|update-manager|gnome-software|snap-store|apport-gtk|package-system-locked|software-properties-gtk"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+    _prepare_apport_disabled()
     _prepare_firefox_popup_policy()
+    subprocess.run(["/usr/bin/pkill", "-f", "/usr/lib/update-notifier/package-system-locked"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
 def _prepare_kiosk_application_lockdown(home: Path, *, uid: int, gid: int) -> None:
@@ -613,9 +676,6 @@ def _prepare_graphical_kiosk(kiosk_user: str) -> bool:
     _prepare_accounts_service(kiosk_user)
     _prepare_gnome_settings(kiosk_user, home)
     _prepare_human_popup_baseline(kiosk_user)
-    _prepare_kiosk_application_lockdown(home, uid=record.pw_uid, gid=record.pw_gid)
-    _prepare_kiosk_binary_acl(kiosk_user)
-    _prepare_kiosk_polkit_policy(kiosk_user)
     return gdm_changed
 
 

@@ -29,13 +29,19 @@ test("Ubuntu action copy represents package installation, not a check-only actio
   assert.doesNotMatch(info, /Tjek\/opdater Ubuntu/);
 });
 
-test("orphaned kiosk lockdown control is removed from the frontend", () => {
+test("optional kiosk lockdown is a superadmin desired-state control", () => {
   const info = read("src/pages/clientdetailspage/ClientDetailsInfoSection.jsx");
-  const page = read("src/pages/clientdetailspage/ClientDetailsPage.jsx");
-  const combined = info + page;
-  assert.doesNotMatch(combined, /Kiosk lockdown/);
-  assert.doesNotMatch(combined, /desktop_lockdown_enabled/);
-  assert.doesNotMatch(combined, /desktop_lockdown_status/);
+  assert.match(info, /Kiosk lockdown/);
+  assert.match(info, /desktop_lockdown_enabled/);
+  assert.match(info, /desktop_lockdown_status/);
+  assert.match(info, /payload\.desktop_lockdown_enabled/);
+  assert.match(info, /disabled=\{saving \|\| !isSuperadmin\}/);
+});
+
+test("kiosk URL accepts a bare hostname and validates it as HTTPS", () => {
+  const info = read("src/pages/clientdetailspage/ClientDetailsInfoSection.jsx");
+  assert.match(info, /raw\.includes\(":\/\/"\) \? raw : `https:\/\/\$\{raw\}`/);
+  assert.match(info, /Domæne uden scheme normaliseres til HTTPS/);
 });
 
 test("diagnostic labels point to canonical units instead of obsolete agents", () => {

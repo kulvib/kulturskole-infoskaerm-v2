@@ -13,8 +13,12 @@ import socket
 import stat
 import subprocess
 import time
+import asyncio
+import urllib.request
 from typing import Any
 from urllib.parse import urlsplit
+
+import websockets
 
 from .atomic import atomic_write_json
 from .display_shared_file import atomic_write_shared_json
@@ -30,6 +34,9 @@ STATUS_PATH = STATE_DIR / "runtime-status.json"
 PID_PATH = RUNTIME_DIR / "browser.pid"
 PROFILE_DIR = STATE_DIR / "browser-profile"
 CHROME_BINARY = Path("/usr/bin/google-chrome-stable")
+CHROME_DEBUG_URL = os.getenv("CLIENTFLOW_CHROME_DEBUG_URL", "http://127.0.0.1:9222/json")
+CHROME_CDP_STARTUP_TIMEOUT_SECONDS = float(os.getenv("CLIENTFLOW_CHROME_CDP_STARTUP_TIMEOUT_SECONDS", "12"))
+EARLY_KIOSK_CSS = '/* ClientFlow Kiosk Protection v3.7.0 - CSS hard hide */\n\n/* Cookie Information / Consent Studio */\n#coiOverlay,\n#coiConsentBanner,\n#coi-banner-wrapper,\n#coiPage-1,\n#coiPage-2,\n.coi-overlay,\n.coi-banner__wrapper,\n.coi-banner__page,\n.coi-banner__summary,\n[class*="coi-banner" i],\n[id^="coi" i],\n[class^="coi" i],\n[class*=" coi" i],\niframe[src*="cookieinformation" i],\niframe[src*="consent.cookieinformation" i],\niframe[title*="cookie" i],\niframe[title*="consent" i],\niframe[name*="cookie" i],\niframe[id*="cookie" i],\niframe[class*="cookie" i],\n\n/* Cookiebot / Usercentrics Cookiebot */\n#CybotCookiebotDialog,\n#CybotCookiebotDialogBodyUnderlay,\n#CybotCookiebotDialogBody,\n#CookiebotWidget,\n#CookiebotWidgetUnderlay,\n.CybotCookiebotDialog,\n[id^="CybotCookiebot" i],\n[class*="CybotCookiebot" i],\niframe[src*="cookiebot" i],\n\n/* Usercentrics */\n#usercentrics-root,\n[data-testid="uc-app-container"],\n[data-testid="uc-overlay"],\n#uc-center-container,\n#uc-banner-centered,\n#uc-banner-modal,\n.uc-banner,\n.uc-overlay,\niframe[src*="usercentrics" i],\n\n/* OneTrust / Didomi / Quantcast */\n#onetrust-banner-sdk,\n#onetrust-consent-sdk,\n.ot-sdk-container,\n.ot-sdk-row,\n.didomi-popup-container,\n.didomi-consent-popup,\n.qc-cmp2-container,\n.qc-cmp2-summary-section,\n.cc-window,\niframe[src*="onetrust" i],\niframe[src*="didomi" i],\niframe[src*="quantcast" i],\n\n/* Generic cookie/consent roots */\n.cookie-banner,\n.cookie-consent,\n.cookie-box,\n.cookie-notice,\n.consent-banner,\n.consent-modal,\n.CookieConsent,\n.cookiescript_injected,\n[id*="cookie-banner" i],\n[id*="cookie-consent" i],\n[class*="cookie-banner" i],\n[class*="cookie-consent" i],\n[class*="consent-banner" i],\n[class*="consent-modal" i],\n\n/* ClientFlow JS markers */\n[data-clientflow-kiosk-hidden] {\n  display: none !important;\n  visibility: hidden !important;\n  pointer-events: none !important;\n  opacity: 0 !important;\n}\n\n/* Countdown bar */\n#tm-kiosk-bar,\n#tm-kiosk-text {\n  display: block !important;\n  pointer-events: none !important;\n  z-index: 2147483647 !important;\n}\n\n:fullscreen #tm-kiosk-bar,\n:fullscreen #tm-kiosk-text,\n:-webkit-full-screen #tm-kiosk-bar,\n:-webkit-full-screen #tm-kiosk-text {\n  display: none !important;\n  visibility: hidden !important;\n  opacity: 0 !important;\n}\n'
 CONTROL_GROUP_NAME = os.getenv("CLIENTFLOW_DISPLAY_CONTROL_GROUP", "clientflow-display-control")
 _ALLOWED_CONFIGURATION_KEYS = {"schema_version", "revision", "kiosk_url", "browser_refresh_interval_sec"}
 BOOT_START_COUNTDOWN_SECONDS = 10
@@ -43,6 +50,7 @@ CALENDAR_PREVIEW_PATH = STATE_DIR / "calendar-preview.json"
 LOCAL_GUI_STATUS_PATH = STATE_DIR / "local-gui-status.json"
 LOCAL_DISPLAY_POWER_PATH = STATE_DIR / "local-display-power.json"
 DISPLAY_RESOLUTION_PATH = STATE_DIR / "display-resolution.json"
+DISPLAY_RESOLUTION_DESIRED_PATH = STATE_DIR / "display-resolution-desired.json"
 LOCAL_GUI_SCRIPT = Path("/opt/clientflow/active/client-runtime/libexec/local-gui")
 SYSTEM_PYTHON = Path("/usr/bin/python3")
 
@@ -169,6 +177,8 @@ class DisplayRuntime:
             return None
         if len(raw) > 2048:
             raise ValueError("kiosk_url er for lang")
+        if "://" not in raw:
+            raw = f"https://{raw}"
         try:
             parsed = urlsplit(raw)
             _ = parsed.port
@@ -441,9 +451,81 @@ class DisplayRuntime:
             "--overscroll-history-navigation=0",
             "--autoplay-policy=no-user-gesture-required",
             "--disable-features=Translate,TranslateUI,ChromeWhatsNewUI,PrivacySandboxSettings4,AutofillServerCommunication,PasswordManagerOnboarding,OptimizationHints,MediaRouter",
-            str(kiosk_url),
+            "about:blank",
         ]
         return command, environment
+
+    @staticmethod
+    def _early_protection_script() -> str:
+        css = json.dumps(EARLY_KIOSK_CSS)
+        return f"""(() => {{
+  const css = {css};
+  const install = () => {{
+    try {{
+      if (!document.documentElement) return;
+      let style = document.getElementById('clientflow-early-kiosk-protection');
+      if (!style) {{
+        style = document.createElement('style');
+        style.id = 'clientflow-early-kiosk-protection';
+        style.textContent = css;
+        document.documentElement.appendChild(style);
+      }}
+    }} catch (_) {{}}
+  }};
+  install();
+  try {{ new MutationObserver(install).observe(document, {{childList:true, subtree:true}}); }} catch (_) {{}}
+  try {{ document.addEventListener('readystatechange', install, true); }} catch (_) {{}}
+}})();"""
+
+    @staticmethod
+    async def _cdp_register_and_navigate(ws_url: str, kiosk_url: str) -> None:
+        async with websockets.connect(
+            ws_url, max_size=10_000_000, open_timeout=4, close_timeout=1
+        ) as ws:
+            await ws.send(json.dumps({
+                "id": 1,
+                "method": "Page.addScriptToEvaluateOnNewDocument",
+                "params": {"source": DisplayRuntime._early_protection_script()},
+            }))
+            while True:
+                payload = json.loads(await asyncio.wait_for(ws.recv(), timeout=4))
+                if payload.get("id") == 1:
+                    if "error" in payload:
+                        raise RuntimeError(f"Chrome early-protection blev afvist: {payload['error']}")
+                    break
+            await ws.send(json.dumps({
+                "id": 2,
+                "method": "Page.navigate",
+                "params": {"url": kiosk_url},
+            }))
+            while True:
+                payload = json.loads(await asyncio.wait_for(ws.recv(), timeout=4))
+                if payload.get("id") == 2:
+                    if "error" in payload or (payload.get("result") or {}).get("errorText"):
+                        raise RuntimeError("Chrome kiosk-navigation fejlede efter early-protection")
+                    break
+
+    def _install_early_protection_and_navigate(self, kiosk_url: str) -> None:
+        deadline = time.monotonic() + max(1.0, CHROME_CDP_STARTUP_TIMEOUT_SECONDS)
+        last_error: Exception | None = None
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(CHROME_DEBUG_URL, timeout=2) as response:
+                    tabs = json.loads(response.read().decode("utf-8", errors="replace"))
+                if not isinstance(tabs, list):
+                    raise RuntimeError("Chrome DevTools target-list er ugyldig")
+                page = next(
+                    (item for item in tabs if isinstance(item, dict) and item.get("type") == "page" and item.get("webSocketDebuggerUrl")),
+                    None,
+                )
+                if page is None:
+                    raise RuntimeError("Chrome DevTools page-target er endnu ikke klar")
+                asyncio.run(self._cdp_register_and_navigate(str(page["webSocketDebuggerUrl"]), kiosk_url))
+                return
+            except Exception as exc:
+                last_error = exc
+                time.sleep(0.2)
+        raise RuntimeError(f"Chrome early-protection kunne ikke etableres: {last_error}")
 
     def start_browser(self) -> dict[str, Any]:
         self.browser_requested = True
@@ -466,6 +548,25 @@ class DisplayRuntime:
             self.next_start_attempt = time.monotonic() + 5.0
             self._status("waiting_session", error=str(exc)[:240])
             raise
+        try:
+            kiosk_url = str(self.configuration.get("kiosk_url") or "")
+            self._install_early_protection_and_navigate(kiosk_url)
+        except Exception as exc:
+            process = self.browser
+            self.browser = None
+            if process is not None and process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    process.wait(timeout=5)
+                except Exception:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except Exception:
+                        pass
+            PID_PATH.unlink(missing_ok=True)
+            self.next_start_attempt = time.monotonic() + 5.0
+            self._status("failed", error=f"early_protection_failed: {exc}"[:240])
+            raise RuntimeError("Chrome early-protection fejlede") from exc
         PID_PATH.write_text(f"{self.browser.pid}\n", encoding="ascii")
         self.next_start_attempt = 0.0
         self._status("running")
@@ -528,6 +629,13 @@ class DisplayRuntime:
             reason="display_power_off",
         )
         return {"countdown": True, "seconds": DISPLAY_SLEEP_COUNTDOWN_SECONDS}
+
+    def record_system_transition(self, step: str) -> dict[str, Any]:
+        step = str(step or "").strip().lower()
+        if step not in {"shutdown_chrome", "system_rebooting", "system_shutting_down"}:
+            raise ValueError("Ugyldigt System transition-step")
+        self._status("stopped", step=step)
+        return {"recorded": True, "step": step}
 
     def _local_gui_environment(self) -> dict[str, str]:
         environment = self._graphical_environment()
@@ -660,6 +768,22 @@ class DisplayRuntime:
         return (str(chosen.get("output") or "") or None, int(width), int(height), float(refresh) if refresh is not None else None)
 
     def apply_display_resolution(self, payload: dict[str, Any]) -> dict[str, Any]:
+        atomic_write_shared_json(
+            DISPLAY_RESOLUTION_DESIRED_PATH,
+            {
+                "schema_version": 1,
+                "mode": str(payload.get("mode") or "auto").strip().lower(),
+                "preset": str(payload.get("preset") or "auto").strip().lower(),
+                "width": payload.get("width"),
+                "height": payload.get("height"),
+                "refresh_rate": payload.get("refresh_rate"),
+                "rotation": str(payload.get("rotation") or "normal").strip().lower(),
+                "output": str(payload.get("output") or "").strip() or None,
+                "updated_at": time.time(),
+            },
+            mode=0o640,
+            group_gid=self.shared_group_gid,
+        )
         environment = self._graphical_environment()
         mode = str(payload.get("mode") or "auto").strip().lower()
         rotation = str(payload.get("rotation") or "normal").strip().lower()
@@ -750,6 +874,11 @@ class DisplayRuntime:
             return self.record_display_power(str(payload.get("state") or ""))
         if action == "display_sleep_countdown":
             return self.display_sleep_countdown()
+        if action == "record_system_transition":
+            payload = request.get("payload")
+            if not isinstance(payload, dict):
+                raise ValueError("payload skal være et objekt")
+            return self.record_system_transition(str(payload.get("step") or ""))
         if action == "status":
             return {
                 "state": "running" if self.browser and self.browser.poll() is None else "stopped",
@@ -800,8 +929,16 @@ class DisplayRuntime:
                     code = self.browser.returncode
                     self.browser = None
                     PID_PATH.unlink(missing_ok=True)
-                    self.next_start_attempt = time.monotonic() + 5.0
-                    self._status("failed", exit_code=code, error="browser_exited")
+                    if code == 0:
+                        # Legacy contract: an uncommanded clean Chrome exit is a
+                        # manual close and must remain closed until an explicit
+                        # backend/GUI/calendar/runtime start request arrives.
+                        self.browser_requested = False
+                        self.next_start_attempt = 0.0
+                        self._status("stopped", step="chrome_closed_manual", exit_code=code)
+                    else:
+                        self.next_start_attempt = time.monotonic() + 5.0
+                        self._status("failed", exit_code=code, error="browser_exited")
                 if self.local_gui and self.local_gui.poll() is not None:
                     code = self.local_gui.returncode
                     self.local_gui = None

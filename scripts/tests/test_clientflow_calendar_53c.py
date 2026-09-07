@@ -170,7 +170,7 @@ def test_calendar_manual_override_expires_at_next_actual_schedule_boundary() -> 
     )
 
 
-def test_calendar_reconcile_respects_manual_override_and_recovers_without_state_change(monkeypatch) -> None:
+def test_calendar_legacy_lifecycle_constants_and_persistent_state(tmp_path, monkeypatch) -> None:
     import sys
 
     runtime_root = str(ROOT / "client/runtime")
@@ -178,39 +178,61 @@ def test_calendar_reconcile_respects_manual_override_and_recovers_without_state_
         sys.path.insert(0, runtime_root)
     from clientflow_runtime import calendar_agent
 
-    monkeypatch.setattr(calendar_agent, "RECONCILE_SECONDS", 30.0)
-    assert calendar_agent._should_enforce(
-        manual_override=True,
-        last_schedule_state="off",
-        desired="off",
-        last_enforce_at=0.0,
-        now_mono=999.0,
-    ) is False
-    assert calendar_agent._should_enforce(
-        manual_override=False,
-        last_schedule_state=None,
-        desired="off",
-        last_enforce_at=0.0,
-        now_mono=1.0,
-    ) is True
-    assert calendar_agent._should_enforce(
-        manual_override=False,
-        last_schedule_state="off",
-        desired="on",
-        last_enforce_at=100.0,
-        now_mono=101.0,
-    ) is True
-    assert calendar_agent._should_enforce(
-        manual_override=False,
-        last_schedule_state="off",
-        desired="off",
-        last_enforce_at=100.0,
-        now_mono=129.9,
-    ) is False
-    assert calendar_agent._should_enforce(
-        manual_override=False,
-        last_schedule_state="off",
-        desired="off",
-        last_enforce_at=100.0,
-        now_mono=130.0,
-    ) is True
+    assert calendar_agent.POLL_SECONDS == 15.0
+    assert calendar_agent.EVALUATE_SECONDS == 30.0
+    assert calendar_agent.BOOT_GRACE_SECONDS == 90.0
+    assert calendar_agent.WAKE_REBOOT_DELAY_SECONDS == 15.0
+    assert calendar_agent.WAKE_REBOOT_COOLDOWN_SECONDS == 300.0
+
+    monkeypatch.setattr(calendar_agent, "SCHEDULER_STATE_PATH", tmp_path / "scheduler-state.json")
+    state = calendar_agent._load_scheduler_state()
+    assert state["last_schedule_state"] is None
+    state["last_schedule_state"] = "off"
+    state["last_wake_reboot_at"] = 123.0
+    calendar_agent._save_scheduler_state(state)
+    restored = calendar_agent._load_scheduler_state()
+    assert restored["last_schedule_state"] == "off"
+    assert restored["last_wake_reboot_at"] == 123.0
+
+
+def test_calendar_first_on_is_baseline_off_is_enforced_and_wake_reboots(monkeypatch):
+    import sys
+
+    runtime_root = str(ROOT / "client/runtime")
+    if runtime_root not in sys.path:
+        sys.path.insert(0, runtime_root)
+    from clientflow_runtime import calendar_agent
+
+    actions = []
+    class _Lock:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+    monkeypatch.setattr(calendar_agent, "display_control_lock", lambda: _Lock())
+    monkeypatch.setattr(calendar_agent, "set_display_power", lambda state: actions.append(("power", state)))
+    monkeypatch.setattr(calendar_agent, "runtime_action", lambda action, payload=None: actions.append((action, payload)))
+    monkeypatch.setattr(calendar_agent, "_save_scheduler_state", lambda state: actions.append(("save", dict(state))))
+    monkeypatch.setattr(calendar_agent, "_request_calendar_reboot", lambda: actions.append(("reboot", None)))
+
+    state = {"last_schedule_state": None, "last_wake_reboot_at": 0.0}
+    calendar_agent._apply_calendar_state("on", state=state, now_epoch=1000.0, initial=True)
+    assert actions == []
+
+    calendar_agent._apply_calendar_state("off", state=state, now_epoch=1000.0, initial=True)
+    assert actions == [("power", "off")]
+    actions.clear()
+
+    state = {"last_schedule_state": "off", "last_wake_reboot_at": 0.0}
+    calendar_agent._apply_calendar_state("on", state=state, now_epoch=1000.0)
+    assert actions[0] == ("power", "on")
+    assert actions[-1] == ("reboot", None)
+    assert state["last_wake_reboot_at"] == 1000.0
+
+    actions.clear()
+    state = {"last_schedule_state": "off", "last_wake_reboot_at": 900.0}
+    calendar_agent._apply_calendar_state("on", state=state, now_epoch=1000.0)
+    assert actions == [("power", "on"), ("start_browser", {"source": "calendar"})]
+
+
+def test_calendar_reboot_broker_ignores_session_inhibitors_like_legacy():
+    broker = (ROOT / "client/runtime/clientflow_runtime/calendar_reboot_broker.py").read_text(encoding="utf-8")
+    assert '["/usr/bin/systemctl", "--no-block", "--ignore-inhibitors", "reboot"]' in broker
