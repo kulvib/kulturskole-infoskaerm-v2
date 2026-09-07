@@ -1,5 +1,0 @@
-backend/service1/display_control.py
-backend/tests/test_clientflow_display_runtime_integration.py
-backend/tests/test_clientflow_readiness_contracts.py
-scripts/tests/test_clientflow_kiosk_lockdown_parity.py
-scripts/tests/test_clientflow_platform_session_policy_legacy119.py
