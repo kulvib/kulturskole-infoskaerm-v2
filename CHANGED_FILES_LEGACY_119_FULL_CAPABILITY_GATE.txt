@@ -1,6 +1,0 @@
-.github/workflows/ci.yml
-CLIENTFLOW_LEGACY_119_PARITY_REVIEW.md
-LEGACY_119_FULL_CAPABILITY_GATE.md
-client/legacy-client-parity.json
-scripts/tests/test_clientflow_legacy_client_parity.py
-scripts/verify_clientflow_legacy119_capability_gate.py
