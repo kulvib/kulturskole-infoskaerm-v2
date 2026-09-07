@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
-from types import SimpleNamespace
-
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
