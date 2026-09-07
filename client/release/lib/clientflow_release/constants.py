@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from clientflow_release_format.constants import (
+    ARTIFACT_TYPE_RUNTIME_RELEASE,
+    CHANNEL,
+    DOMAIN_NAMES,
+    INSTALL_MODE_FRESH,
+    INSTALL_MODE_UPDATE,
+    INTEGRITY_ALGORITHM,
+    MANIFEST_SCHEMA,
+    MAX_FRESH_INSTALLER_BYTES,
+    MAX_BUNDLE_BYTES,
+    MAX_MANIFEST_BYTES,
+    MAX_MEMBER_BYTES,
+    MAX_PATH_LENGTH,
+    MAX_PAYLOAD_BYTES,
+    MAX_PAYLOAD_FILES,
+    PRODUCT,
+)
+
+DEFAULT_INSTALL_ROOT = Path("/opt/clientflow")
+DEFAULT_ETC_ROOT = Path("/etc/clientflow")
+DEFAULT_STATE_ROOT = Path("/var/lib/clientflow/release")
+DEFAULT_INCOMING_ROOT = Path("/var/lib/clientflow/system-agent/incoming")
+MANAGED_UNIT_PREFIX = "clientflow-"
+
+__all__ = [
+    "ARTIFACT_TYPE_RUNTIME_RELEASE",
+    "CHANNEL",
+    "DEFAULT_ETC_ROOT",
+    "DEFAULT_INCOMING_ROOT",
+    "DEFAULT_INSTALL_ROOT",
+    "DEFAULT_STATE_ROOT",
+    "DOMAIN_NAMES",
+    "INSTALL_MODE_FRESH",
+    "INSTALL_MODE_UPDATE",
+    "INTEGRITY_ALGORITHM",
+    "MANAGED_UNIT_PREFIX",
+    "MANIFEST_SCHEMA",
+    "MAX_FRESH_INSTALLER_BYTES",
+    "MAX_BUNDLE_BYTES",
+    "MAX_MANIFEST_BYTES",
+    "MAX_MEMBER_BYTES",
+    "MAX_PATH_LENGTH",
+    "MAX_PAYLOAD_BYTES",
+    "MAX_PAYLOAD_FILES",
+    "PRODUCT",
+]
