@@ -109,7 +109,7 @@ def test_local_gui_contains_operational_parity_fields_without_credentials() -> N
 
     for label in (
         "Handlinger", "Systeminfo", "Kioskinfo", "Netværksinfo",
-        "Kiosk URL", "Auto refresh", "Skærmopløsning", "Browser Guard",
+        "Kiosk URL", "Auto refresh", "Aktuel skærm", "Backend-valgt", "Skærmstatus", "Browser Guard",
         "Admin terminal", "Aktiv forbindelse", "Aktiv IP", "Aktiv MAC",
         "WiFi IP", "WiFi MAC", "LAN IP", "LAN MAC", "Kalender – næste 7 dage",
     ):

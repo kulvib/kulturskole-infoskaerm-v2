@@ -135,6 +135,6 @@ def test_global_client_online_is_exactly_status_domain_presence() -> None:
     offline_display = DomainPresence(domain="display", is_online=False, reason="missing_status")
     offline_system = DomainPresence(domain="system", is_online=False, reason="missing_status")
 
-    assert PRESENCE_TIMEOUT_SECONDS == 90
+    assert PRESENCE_TIMEOUT_SECONDS == 120
     assert ClientPresence(status=online_status, display=offline_display, system=offline_system).is_online is True
     assert ClientPresence(status=offline_status, display=online_display, system=online_system).is_online is False

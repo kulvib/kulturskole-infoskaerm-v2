@@ -58,15 +58,21 @@ def test_status_snapshot_projects_canonical_version_network_and_real_unit_health
     assert client.service_ubuntu_update_status == "active"
 
 
-def test_lockdown_desired_mutation_fails_closed_until_canonical_consumer_exists():
+def test_lockdown_desired_mutation_requires_superadmin_now_that_canonical_consumer_exists():
+    clients._validate_client_update_privileges(
+        SimpleNamespace(is_superadmin=True, role="superadmin"),
+        SimpleNamespace(),
+        {"desktop_lockdown_enabled"},
+    )
+
     with pytest.raises(HTTPException) as exc:
         clients._validate_client_update_privileges(
-            SimpleNamespace(is_superadmin=True, role="superadmin"),
+            SimpleNamespace(is_superadmin=False, role="admin"),
             SimpleNamespace(),
             {"desktop_lockdown_enabled"},
         )
-    assert exc.value.status_code == 409
-    assert "ikke en understøttet canonical" in str(exc.value.detail)
+    assert exc.value.status_code == 403
+    assert "kun ændres af superadministrator" in str(exc.value.detail)
 
 
 @pytest.mark.parametrize("state", ["shutdown", "rebooting", "updating"])

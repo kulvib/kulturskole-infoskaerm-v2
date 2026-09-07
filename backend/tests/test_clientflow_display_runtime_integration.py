@@ -74,6 +74,12 @@ def test_display_configuration_starts_browser_and_survives_runtime_recreation(mo
     monkeypatch.setattr(runtime_module.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(runtime_module.os, "killpg", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runtime_module.time, "sleep", lambda _seconds: None)
+    navigated: list[str] = []
+    monkeypatch.setattr(
+        runtime_module.DisplayRuntime,
+        "_install_early_protection_and_navigate",
+        lambda self, url: navigated.append(url),
+    )
 
     kiosk_url = "https://infoskaerm.example.test/client/4242"
     runtime = runtime_module.DisplayRuntime()
@@ -109,7 +115,8 @@ def test_display_configuration_starts_browser_and_survives_runtime_recreation(mo
     assert "--ozone-platform=wayland" in first_command
     assert "--start-fullscreen" in first_command
     assert "--kiosk" not in first_command
-    assert first_command[-1] == kiosk_url
+    assert first_command[-1] == "about:blank"
+    assert navigated == [kiosk_url]
     assert first_env["WAYLAND_DISPLAY"] == "wayland-0"
     assert first_env["XDG_SESSION_TYPE"] == "wayland"
 
@@ -121,7 +128,8 @@ def test_display_configuration_starts_browser_and_survives_runtime_recreation(mo
     started = recreated.start_browser()
     assert started["started"] is True
     assert recreated.browser is not None and recreated.browser.pid == 5102
-    assert launched[1][0][-1] == kiosk_url
+    assert launched[1][0][-1] == "about:blank"
+    assert navigated == [kiosk_url, kiosk_url]
 
 
 def test_graphical_environment_requires_exact_local_wayland_session(monkeypatch, tmp_path):

@@ -30,13 +30,13 @@ def test_presence_lease_is_three_code_owned_canonical_shared_domain_periods():
     status_agent = read_repo("client/runtime/clientflow_runtime/status_agent.py")
     runtime_constants = read_repo("client/runtime/clientflow_runtime/constants.py")
     command_agent = read_repo("client/runtime/clientflow_runtime/command_agent.py")
-    assert 'SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS = 30' in presence
-    assert 'SHARED_DOMAIN_MISSED_REPORT_LIMIT = 3' in presence
+    assert 'SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS = 15' in presence
+    assert 'SHARED_DOMAIN_MISSED_REPORT_LIMIT = 8' in presence
     assert 'SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS * SHARED_DOMAIN_MISSED_REPORT_LIMIT' in presence
     assert 'CLIENTFLOW_STATUS_LIVENESS_TIMEOUT_SECONDS' not in presence
     assert 'CLIENTFLOW_STATUS_LIVENESS_TIMEOUT_SECONDS' not in render
     assert 'CLIENTFLOW_ONLINE_TIMEOUT_SECONDS' not in render
-    assert "SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS = 30" in runtime_constants
+    assert "SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS = 15" in runtime_constants
     assert "time.sleep(SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS)" in status_agent
     assert "now - self._last_status < SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS" in command_agent
     assert "CLIENTFLOW_STATUS_INTERVAL_SECONDS" not in status_agent

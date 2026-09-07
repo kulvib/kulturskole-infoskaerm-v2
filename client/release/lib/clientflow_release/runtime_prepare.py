@@ -20,6 +20,7 @@ ACTIVE_RUNTIME_PYTHON = "/opt/clientflow/active/runtime/bin/python"
 CLIENTFLOW_ENTRYPOINTS = (
     "clientflow-status-agent",
     "clientflow-calendar",
+    "clientflow-calendar-reboot-broker",
     "clientflow-display-agent",
     "clientflow-display-runtime",
     "clientflow-display-power-broker",
@@ -30,6 +31,9 @@ CLIENTFLOW_ENTRYPOINTS = (
     "clientflow-platform-prepare",
     "clientflow-time-integrity",
     "clientflow-kiosk-session-policy",
+    "clientflow-kiosk-quicksettings-guard",
+    "clientflow-kiosk-lockdown",
+    "clientflow-kiosk-lockdown-broker",
     "clientflow-power-event-marker",
     "clientflow-livestream-agent",
     "clientflow-livestream-broker",

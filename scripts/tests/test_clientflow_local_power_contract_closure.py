@@ -126,15 +126,19 @@ def test_status_and_system_domains_share_only_nonsecret_power_evidence():
     assert "/etc/clientflow/credentials" not in module
 
 
-def test_obsolete_lockdown_control_is_not_exposed_by_frontend():
+def test_legacy_kiosk_lockdown_control_is_exposed_as_superadmin_desired_state():
     info = (ROOT / "frontend/src/pages/clientdetailspage/ClientDetailsInfoSection.jsx").read_text(encoding="utf-8")
-    page = (ROOT / "frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx").read_text(encoding="utf-8")
-    api = (ROOT / "frontend/src/api/api.js").read_text(encoding="utf-8")
+    clients = (ROOT / "backend/service1/routers/clients.py").read_text(encoding="utf-8")
+    display = (ROOT / "backend/service1/display_control.py").read_text(encoding="utf-8")
+    agent = (ROOT / "client/runtime/clientflow_runtime/display_agent.py").read_text(encoding="utf-8")
 
-    combined = info + page + api
-    assert "Kiosk lockdown" not in combined
-    assert "desktop_lockdown_enabled" not in combined
-    assert "desktop_lockdown_status" not in combined
+    assert "Kiosk lockdown" in info
+    assert "desktop_lockdown_enabled" in info
+    assert "isSuperadmin" in info
+    assert "desktop_lockdown_enabled" in clients
+    assert "Kiosk lockdown kan kun ændres af superadministrator" in clients
+    assert "set_kiosk_lockdown" in display
+    assert "set_kiosk_lockdown" in agent
     assert "client_update_" not in info
 
 

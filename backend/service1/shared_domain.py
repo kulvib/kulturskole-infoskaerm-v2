@@ -258,6 +258,10 @@ def _reconcile_command_state(
         )
         .with_for_update()
     ).all()
+    current_boot_id = None
+    if domain == "system":
+        client = session.get(Client, client_id)
+        current_boot_id = str(getattr(client, "last_boot_id", "") or "") if client is not None else None
     for row in rows:
         if row.expires_at <= now:
             row.status = "expired"
@@ -271,6 +275,24 @@ def _reconcile_command_state(
                     session, client_id=client_id, command_id=row.id, error_message=row.error_message
                 )
             continue
+        if row.status == "claimed" and domain == "system" and row.command_type == "update_os":
+            payload = row.payload if isinstance(row.payload, dict) else {}
+            requested_boot_id = str(payload.get("requested_boot_id") or "")
+            if requested_boot_id and current_boot_id and current_boot_id != requested_boot_id:
+                # Status is the boot authority. Requeue immediately after a real
+                # boot so the System agent can reclaim the exact command and let
+                # the broker complete from its durable reboot_requested journal.
+                if row.attempt_count >= row.max_attempts:
+                    row.status = "failed"
+                    row.completed_at = now
+                    row.error_code = "boot_recovery_attempts_exhausted"
+                    row.error_message = "OS-update kunne ikke genoptages efter reboot"
+                else:
+                    row.status = "queued"
+                    row.available_at = now
+                _clear_claim(row)
+                session.add(row)
+                continue
         if row.status == "claimed" and row.lease_expires_at is not None and row.lease_expires_at <= now:
             if row.attempt_count >= row.max_attempts:
                 row.status = "failed"

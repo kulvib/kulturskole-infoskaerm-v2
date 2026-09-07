@@ -105,16 +105,24 @@ def _user_command(record: pwd.struct_passwd, command: list[str]) -> list[str]:
     ]
 
 
-def _apply_gsettings(record: pwd.struct_passwd) -> None:
+def _apply_gsettings(record: pwd.struct_passwd, *, lockdown_quicksettings: bool = False) -> None:
     runtime_dir = Path(f"/run/user/{record.pw_uid}")
     bus = runtime_dir / "bus"
     if not bus.exists():
         print("CLIENTFLOW_KIOSK_SESSION_POLICY_OPTIONAL: session bus ikke klar", flush=True)
         return
-    for schema, key, value in (
+    settings = [
         ("org.gnome.settings-daemon.plugins.color", "night-light-enabled", "false"),
         ("org.gnome.desktop.interface", "color-scheme", "'default'"),
-    ):
+    ]
+    if lockdown_quicksettings:
+        settings.extend(
+            [
+                ("org.gnome.desktop.notifications", "show-banners", "true"),
+                ("org.gnome.desktop.notifications", "show-in-lock-screen", "false"),
+            ]
+        )
+    for schema, key, value in settings:
         _run(_user_command(record, [str(GSETTINGS), "set", schema, key, value]))
 
 
@@ -131,7 +139,7 @@ def _apply_audio(record: pwd.struct_passwd) -> None:
     _run([*base, "set-volume", "@DEFAULT_AUDIO_SINK@", "0.60"])
 
 
-def enforce() -> None:
+def enforce(*, lockdown_quicksettings: bool = False) -> None:
     if os.geteuid() != 0:
         raise KioskSessionPolicyError("Kiosk session-policy kræver root")
     for binary in (RUNUSER, GSETTINGS, NMCLI, RFKILL):
@@ -150,6 +158,8 @@ def enforce() -> None:
         raise KioskSessionPolicyError("Canonical kiosk-account contract er ugyldig")
 
     # System-level quick-settings are only reasserted while kiosk owns seat0.
+    if lockdown_quicksettings:
+        _run([str(NMCLI), "networking", "on"])
     _run([str(NMCLI), "radio", "wifi", "on"])
     _run([str(RFKILL), "block", "bluetooth"])
 
@@ -158,7 +168,7 @@ def enforce() -> None:
     else:
         print("CLIENTFLOW_KIOSK_SESSION_POLICY_OPTIONAL: powerprofilesctl mangler", flush=True)
 
-    _apply_gsettings(record)
+    _apply_gsettings(record, lockdown_quicksettings=lockdown_quicksettings)
     _apply_audio(record)
     print(f"CLIENTFLOW_KIOSK_SESSION_POLICY_OK: session={session_id}", flush=True)
 

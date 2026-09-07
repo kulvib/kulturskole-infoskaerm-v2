@@ -1,7 +1,7 @@
 [Unit]
 Description=ClientFlow local calendar scheduler for Display
-After=network-online.target clientflow-display-runtime.service clientflow-display-power-broker.socket
-Wants=network-online.target clientflow-display-runtime.service clientflow-display-power-broker.socket
+After=network-online.target clientflow-display-runtime.service clientflow-display-power-broker.socket clientflow-calendar-reboot-broker.socket
+Wants=network-online.target clientflow-display-runtime.service clientflow-display-power-broker.socket clientflow-calendar-reboot-broker.socket
 ConditionPathExists=/etc/clientflow/credentials/display.json
 
 [Service]
@@ -32,6 +32,7 @@ MemoryDenyWriteExecute=yes
 RestrictRealtime=yes
 SystemCallArchitectures=native
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+Environment=CLIENTFLOW_CALENDAR_REBOOT_SOCKET=/run/clientflow/calendar-reboot.sock
 
 [Install]
 WantedBy=clientflow.target

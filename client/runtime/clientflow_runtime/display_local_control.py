@@ -109,8 +109,9 @@ def set_display_power(state: str) -> dict[str, Any]:
     if state not in {"on", "off"}:
         raise ValueError("Display power state skal være on eller off")
     if state == "off":
-        # Canonical product rule: display sleep has a visible 10..1 pre-power countdown.
-        # V2 deliberately keeps browser and display-power as separate authorities.
+        # Product contract: display sleep closes the kiosk browser first, then
+        # presents the visible 10..1 countdown before physical display power-off.
+        call(RUNTIME_SOCKET, {"action": "stop_browser", "payload": {"source": "display_sleep"}})
         call(RUNTIME_SOCKET, {"action": "display_sleep_countdown"})
     result = call(POWER_SOCKET, {"action": "set_display_power", "state": state})
     record_power_state(state)

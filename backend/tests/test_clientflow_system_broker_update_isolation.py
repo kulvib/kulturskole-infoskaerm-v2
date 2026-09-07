@@ -40,7 +40,7 @@ def test_system_broker_retains_reboot_and_shutdown_fixed_function_contract(monke
     command_id = "00000000-0000-4000-8000-000000000001"
 
     assert system_broker._prepare("reboot", {}, client_id=42, command_id=command_id) == {
-        "command": ["/usr/bin/systemctl", "--no-block", "reboot"],
+        "command": ["/usr/bin/systemctl", "--no-block", "--ignore-inhibitors", "reboot"],
         "timeout": 10,
     }
     assert system_broker._prepare("shutdown", {}, client_id=42, command_id=command_id) == {
@@ -122,3 +122,70 @@ def test_system_broker_boot_change_never_auto_completes_non_disruptive_action(
     system_broker.BOOT_ID_PATH.write_text(second_boot + "\n", encoding="ascii")
     with pytest.raises(system_broker.SystemCommandInDoubt, match="system_command_in_doubt"):
         system_broker._journal_begin(42, command_id, "change_hostname")
+
+
+def test_update_os_reboot_requested_journal_recovers_after_boot_change(monkeypatch, tmp_path):
+    first_boot = "11111111-1111-4111-8111-111111111111"
+    second_boot = "22222222-2222-4222-8222-222222222222"
+    _bind_temp_journal(monkeypatch, tmp_path, boot_id=first_boot)
+    command_id = "00000000-0000-4000-8000-000000000096"
+
+    lock_fd, completed = system_broker._journal_begin(42, command_id, "update_os")
+    assert completed is None
+    system_broker._journal_mark_reboot_requested(
+        lock_fd,
+        client_id=42,
+        command_id=command_id,
+        result={
+            "exit_code": 0,
+            "reboot_required": True,
+            "reboot_requested": True,
+            "requested_boot_id": first_boot,
+        },
+    )
+    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    os.close(lock_fd)
+
+    system_broker.BOOT_ID_PATH.write_text(second_boot + "\n", encoding="ascii")
+    lock_fd, completed = system_broker._journal_begin(42, command_id, "update_os")
+    try:
+        assert completed["recovered_after_boot_change"] is True
+        assert completed["reboot_required"] is True
+        assert completed["previous_boot_id"] == first_boot
+        assert completed["observed_boot_id"] == second_boot
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+def test_update_reboot_boundary_never_returns_success_before_boot(monkeypatch):
+    calls = []
+    monkeypatch.setattr(system_broker, "_fixed_binary", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        system_broker,
+        "_run",
+        lambda command, **kwargs: calls.append((command, kwargs)) or {"exit_code": 0, "output": ""},
+    )
+    with pytest.raises(system_broker.SystemCommandInDoubt, match="system_reboot_returned_without_boot_boundary"):
+        system_broker._cross_update_reboot_boundary()
+    assert calls == [(["/usr/bin/systemctl", "--ignore-inhibitors", "reboot"], {"timeout": 7200})]
+
+
+def test_power_transition_stops_browser_then_waits_status_then_final_status(monkeypatch):
+    calls = []
+    sleeps = []
+    monkeypatch.setattr(system_broker, "call", lambda socket, payload, **kwargs: calls.append(payload) or {"ok": True})
+    monkeypatch.setattr(system_broker.time, "sleep", lambda seconds: sleeps.append(seconds))
+    system_broker._display_transition("reboot")
+    assert [item["action"] for item in calls] == ["stop_browser", "record_system_transition", "record_system_transition"]
+    assert calls[1]["payload"]["step"] == "shutdown_chrome"
+    assert calls[2]["payload"]["step"] == "system_rebooting"
+    assert sleeps == [5.0, 5.0]
+
+
+def test_update_os_helper_uses_full_upgrade_autoremove_and_never_calls_systemctl():
+    helper = (ROOT / "client/libexec/update-os").read_text(encoding="utf-8")
+    assert "full-upgrade" in helper
+    assert "autoremove" in helper
+    assert "CLIENTFLOW_REBOOT_REQUIRED=1" in helper
+    assert "systemctl" not in helper

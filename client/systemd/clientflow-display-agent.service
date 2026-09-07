@@ -1,7 +1,8 @@
 [Unit]
 Description=ClientFlow display domain command agent
-After=network-online.target clientflow-display-runtime.service
+After=network-online.target clientflow-display-runtime.service clientflow-kiosk-lockdown-broker.socket
 Wants=network-online.target
+Requires=clientflow-kiosk-lockdown-broker.socket
 ConditionPathExists=/etc/clientflow/credentials/display.json
 
 [Service]

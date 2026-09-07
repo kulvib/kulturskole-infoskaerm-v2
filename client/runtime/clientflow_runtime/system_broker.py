@@ -18,6 +18,7 @@ from .atomic import atomic_write_json
 from .config import ConfigurationError, load_secure_json
 from .server import serve_forever
 from .socket_activation import activated_socket
+from .unix_rpc import call
 from .power_lifecycle import clear_system_intent, record_system_intent
 
 _HOSTNAME_RE = re.compile(r"^(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -33,6 +34,9 @@ JOURNAL_LOCK_PATH = STATE_DIR / "command-journal.lock"
 JOURNAL_RETENTION_SECONDS = 90 * 24 * 60 * 60
 BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 BOOT_BOUNDARY_ACTIONS = frozenset({"reboot", "shutdown"})
+DISPLAY_RUNTIME_SOCKET = os.getenv("CLIENTFLOW_DISPLAY_RUNTIME_SOCKET", "/run/clientflow/display/runtime.sock")
+POWER_PREPARE_DELAY_SECONDS = 5.0
+POWER_FINAL_DELAY_SECONDS = 5.0
 
 ALLOWED_ACTIONS = frozenset({
     "update_os",
@@ -228,6 +232,23 @@ def _journal_begin(client_id: int, command_id: str, action: str) -> tuple[int, d
                 raise SystemCommandInDoubt("system_command_binding_mismatch")
             if existing.get("state") == "completed" and isinstance(existing.get("result"), dict):
                 return lock_fd, dict(existing["result"])
+            if existing.get("state") == "reboot_requested" and action == "update_os":
+                previous_boot_id = str(existing.get("boot_id") or "")
+                current_boot_id = _current_boot_id()
+                pending_result = existing.get("pending_result")
+                if previous_boot_id and previous_boot_id != current_boot_id and isinstance(pending_result, dict):
+                    result = {
+                        **dict(pending_result),
+                        "recovered_after_boot_change": True,
+                        "previous_boot_id": previous_boot_id,
+                        "observed_boot_id": current_boot_id,
+                    }
+                    existing.update({"state": "completed", "result": result, "updated_at": now})
+                    existing.pop("pending_result", None)
+                    journal[key] = existing
+                    atomic_write_json(JOURNAL_PATH, journal, mode=0o600)
+                    return lock_fd, dict(result)
+                raise SystemCommandInDoubt("system_command_in_doubt")
             if existing.get("state") == "started" and action in BOOT_BOUNDARY_ACTIONS:
                 previous_boot_id = str(existing.get("boot_id") or "")
                 current_boot_id = _current_boot_id()
@@ -292,9 +313,75 @@ def _journal_finish(
         os.close(lock_fd)
 
 
+def _journal_mark_reboot_requested(
+    lock_fd: int,
+    *,
+    client_id: int,
+    command_id: str,
+    result: dict[str, Any],
+) -> None:
+    now = time.time()
+    journal = _prune_journal(_load_journal(), now)
+    key = _journal_key(client_id, command_id)
+    entry = journal.get(key)
+    if entry is None or entry.get("action") != "update_os":
+        raise SystemCommandInDoubt("system_command_journal_binding_lost")
+    entry.update({
+        "state": "reboot_requested",
+        "boot_id": _current_boot_id(),
+        "pending_result": dict(result),
+        "updated_at": now,
+    })
+    journal[key] = entry
+    atomic_write_json(JOURNAL_PATH, journal, mode=0o600)
+
+
+def _display_transition(action: str) -> None:
+    final_step = "system_rebooting" if action == "reboot" else "system_shutting_down"
+    try:
+        call(DISPLAY_RUNTIME_SOCKET, {"action": "stop_browser"}, timeout=15.0)
+        call(
+            DISPLAY_RUNTIME_SOCKET,
+            {"action": "record_system_transition", "payload": {"step": "shutdown_chrome"}},
+            timeout=5.0,
+        )
+    except Exception:
+        # Power authority remains System; a restarting Display runtime must not
+        # turn a canonical reboot/shutdown into a deadlock.
+        pass
+    time.sleep(POWER_PREPARE_DELAY_SECONDS)
+    try:
+        call(
+            DISPLAY_RUNTIME_SOCKET,
+            {"action": "record_system_transition", "payload": {"step": final_step}},
+            timeout=5.0,
+        )
+    except Exception:
+        pass
+    time.sleep(POWER_FINAL_DELAY_SECONDS)
+
+
+def _output_requests_reboot(result: dict[str, Any]) -> bool:
+    return "CLIENTFLOW_REBOOT_REQUIRED=1" in str(result.get("output") or "")
+
+
+def _cross_update_reboot_boundary() -> None:
+    """Request a reboot without permitting pre-boot command success.
+
+    A successful reboot normally terminates this broker before systemctl can
+    return. If it does return while this process is still alive, the physical
+    boot boundary was not proven and the command must remain fail-closed.
+    """
+    _run(
+        [_fixed_binary("systemctl"), "--ignore-inhibitors", "reboot"],
+        timeout=7200,
+    )
+    raise SystemCommandInDoubt("system_reboot_returned_without_boot_boundary")
+
+
 def _prepare(action: str, payload: dict[str, Any], *, client_id: int, command_id: str) -> dict[str, Any]:
     if action == "reboot":
-        return {"command": [_fixed_binary("systemctl"), "--no-block", "reboot"], "timeout": 10}
+        return {"command": [_fixed_binary("systemctl"), "--no-block", "--ignore-inhibitors", "reboot"], "timeout": 10}
     if action == "shutdown":
         return {"command": [_fixed_binary("systemctl"), "--no-block", "poweroff"], "timeout": 10}
     if action == "change_hostname":
@@ -357,26 +444,42 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
             requested_boot_id=(str(payload.get("requested_boot_id")) if payload.get("requested_boot_id") else None),
         )
     try:
-        result = _execute(prepared)
-    except Exception as exc:
         if action in BOOT_BOUNDARY_ACTIONS:
+            _display_transition(action)
+        result = _execute(prepared)
+        if action == "update_os":
+            reboot_required = _output_requests_reboot(result)
+            result = {**result, "reboot_required": reboot_required}
+            if reboot_required:
+                requested_boot_id = _current_boot_id()
+                pending = {
+                    **result,
+                    "reboot_requested": True,
+                    "requested_boot_id": requested_boot_id,
+                }
+                _journal_mark_reboot_requested(
+                    lock_fd, client_id=client_id, command_id=command_id, result=pending
+                )
+                record_system_intent(
+                    action="reboot",
+                    command_id=command_id,
+                    source="update_os",
+                    requested_boot_id=requested_boot_id,
+                )
+                _display_transition("reboot")
+                # A successful update+reboot is completed only after a later
+                # boot-id change reclaims this exact command from the durable
+                # reboot_requested journal. This call must not return success.
+                _cross_update_reboot_boundary()
+    except Exception as exc:
+        if action in BOOT_BOUNDARY_ACTIONS or action == "update_os":
             clear_system_intent()
         _journal_finish(
-            lock_fd,
-            client_id=client_id,
-            command_id=command_id,
-            action=action,
-            result=None,
-            error=exc,
+            lock_fd, client_id=client_id, command_id=command_id, action=action, result=None, error=exc
         )
         raise SystemCommandInDoubt("system_command_in_doubt") from exc
     _journal_finish(
-        lock_fd,
-        client_id=client_id,
-        command_id=command_id,
-        action=action,
-        result=result,
-        error=None,
+        lock_fd, client_id=client_id, command_id=command_id, action=action, result=result, error=None
     )
     return result
 

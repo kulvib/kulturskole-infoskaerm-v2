@@ -487,7 +487,7 @@ def test_system_reboot_roundtrip_uses_real_route_agent_broker_and_boot_evidence(
     result = system_agent.build_handler(SimpleNamespace())(context)
     assert result["exit_code"] == 0
     assert executed == [
-        {"command": ["/usr/bin/systemctl", "--no-block", "reboot"], "timeout": 10}
+        {"command": ["/usr/bin/systemctl", "--no-block", "--ignore-inhibitors", "reboot"], "timeout": 10}
     ]
 
     completed = http.post(
@@ -518,6 +518,97 @@ def test_system_reboot_roundtrip_uses_real_route_agent_broker_and_boot_evidence(
         assert row.status == "succeeded"
         assert row.client_id == CLIENT_ID
         assert row.domain == "system"
+
+
+def test_os_update_reboot_reconnect_reclaims_exact_same_command(operational_http):
+    http, engine = operational_http
+    first_boot = "11111111-1111-4111-8111-111111111111"
+    second_boot = "22222222-2222-4222-8222-222222222222"
+
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
+    assert approved.status_code == 200, approved.text
+
+    status_token_response = _token(http, "status")
+    system_token_response = _token(http, "system")
+    assert status_token_response.status_code == 200, status_token_response.text
+    assert system_token_response.status_code == 200, system_token_response.text
+    status_token = status_token_response.json()["access_token"]
+    system_token = system_token_response.json()["access_token"]
+
+    status = _put_status(http, "status", status_token, boot_id=first_boot)
+    assert status.status_code == 200, status.text
+    system_status = http.put(
+        f"/api/system-agent/clients/{CLIENT_ID}/status",
+        headers={"Authorization": f"Bearer {system_token}"},
+        json={
+            "schema_version": 1,
+            "observed_state": "online",
+            "status_payload": {"broker_socket": True},
+            "agent_version": "1.3.10",
+            "boot_id": first_boot,
+        },
+    )
+    assert system_status.status_code == 200, system_status.text
+
+    requested = http.post(f"/api/clients/{CLIENT_ID}/os-update")
+    assert requested.status_code == 200, requested.text
+    command_id = requested.json()["command_id"]
+
+    first_claim = http.post(
+        f"/api/system-agent/clients/{CLIENT_ID}/commands/claim",
+        headers={"Authorization": f"Bearer {system_token}"},
+        json={"lease_seconds": 300},
+    )
+    assert first_claim.status_code == 200, first_claim.text
+    claimed_a = first_claim.json()["claimed"]
+    assert claimed_a is not None
+    assert claimed_a["command"]["id"] == command_id
+    assert claimed_a["command"]["command_type"] == "update_os"
+    assert claimed_a["command"]["payload"]["requested_boot_id"] == first_boot
+    assert claimed_a["command"]["attempt_count"] == 1
+
+    # A real reboot is authoritative only when canonical Status reports a new
+    # boot identity. The old claim must then be invalidated and the exact same
+    # durable command made available for broker-journal resume.
+    reconnect = _put_status(http, "status", status_token, boot_id=second_boot)
+    assert reconnect.status_code == 200, reconnect.text
+
+    second_claim = http.post(
+        f"/api/system-agent/clients/{CLIENT_ID}/commands/claim",
+        headers={"Authorization": f"Bearer {system_token}"},
+        json={"lease_seconds": 300},
+    )
+    assert second_claim.status_code == 200, second_claim.text
+    claimed_b = second_claim.json()["claimed"]
+    assert claimed_b is not None
+    assert claimed_b["command"]["id"] == command_id
+    assert claimed_b["command"]["payload"]["requested_boot_id"] == first_boot
+    assert claimed_b["command"]["attempt_count"] == 2
+    assert claimed_b["claim_token"] != claimed_a["claim_token"]
+
+    recovered_result = {
+        "exit_code": 0,
+        "reboot_required": True,
+        "reboot_requested": True,
+        "recovered_after_boot_change": True,
+        "previous_boot_id": first_boot,
+        "observed_boot_id": second_boot,
+    }
+    completed = http.post(
+        f"/api/system-agent/clients/{CLIENT_ID}/commands/{command_id}/complete",
+        headers={"Authorization": f"Bearer {system_token}"},
+        json={"claim_token": claimed_b["claim_token"], "result": recovered_result},
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["status"] == "succeeded"
+
+    with Session(engine) as session:
+        row = session.get(ClientCommand, command_id)
+        assert row is not None
+        assert row.status == "succeeded"
+        assert row.attempt_count == 2
+        assert row.result == recovered_result
+
 
 
 def test_display_commissioning_uses_canonical_desired_state_and_real_apply_configuration(operational_http):

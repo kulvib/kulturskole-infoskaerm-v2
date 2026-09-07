@@ -24,7 +24,7 @@ DISPLAY_CONFIGURATION_V1_SCHEMA = 1
 DISPLAY_MIN_COMMAND_AGENT_VERSION = "1.3.5"
 DISPLAY_CONFIGURATION_V2_MIN_AGENT_VERSION = "1.3.12"
 DISPLAY_CONTROL_COMMANDS = frozenset(
-    {"start_browser", "stop_browser", "reset_browser", "set_display_power", "detect_resolution", "apply_resolution"}
+    {"start_browser", "stop_browser", "reset_browser", "set_display_power", "detect_resolution", "apply_resolution", "set_kiosk_lockdown"}
 )
 DISPLAY_COMMAND_TO_LEGACY_ACTION = {
     "start_browser": "start",
@@ -74,6 +74,8 @@ def normalize_kiosk_url(value: Any) -> str | None:
         return None
     if len(raw) > 2048:
         raise HTTPException(status_code=400, detail="Kiosk URL er for lang")
+    if "://" not in raw:
+        raw = f"https://{raw}"
     try:
         parsed = urlsplit(raw)
         # Accessing .port validates malformed/non-numeric ports.
@@ -333,13 +335,97 @@ def reconcile_display_configuration(
     )
 
 
+
+def reconcile_kiosk_lockdown(
+    session: Session,
+    *,
+    client_id: int,
+    agent_version: str | None,
+    status_payload: dict[str, Any] | None,
+) -> ClientCommand | None:
+    """Converge durable backend lockdown desired-state through Display domain."""
+    if not display_agent_supports_commands(agent_version):
+        return None
+    client = session.get(Client, client_id)
+    if client is None:
+        return None
+    payload = status_payload if isinstance(status_payload, dict) else {}
+    observed_raw = payload.get("kiosk_lockdown")
+    observed_present = isinstance(observed_raw, dict)
+    observed = observed_raw if observed_present else {}
+    observed_status = str(observed.get("status") or "unknown").strip().lower()
+    observed_message = str(observed.get("message") or "")[:1000] or None
+    observed_desired = observed.get("desired") if isinstance(observed.get("desired"), bool) else None
+    previous_status = str(getattr(client, "desktop_lockdown_status", "") or "").strip().lower()
+    if observed_status in {"applied", "disabled", "applying", "rolling_back", "error", "unknown"}:
+        client.desktop_lockdown_status = observed_status
+        client.desktop_lockdown_message = observed_message
+        if observed_status in {"applied", "disabled"} and previous_status != observed_status:
+            client.desktop_lockdown_last_applied_at = utcnow()
+        session.add(client)
+
+    desired = bool(getattr(client, "desktop_lockdown_enabled", False))
+
+    # Legacy/default contract is lockdown disabled. A Display status from a client
+    # that has not yet published the canonical kiosk_lockdown observation must not
+    # manufacture a disable command merely because the backend default is false.
+    # Explicit desired=True, or an explicit pending disable request, still converges
+    # as soon as the Display agent supports canonical commands.
+    if not observed_present and not desired and previous_status != "pending":
+        return None
+
+    active = _active_display_commands(session, client_id)
+    if observed_desired is desired and observed_status == ("applied" if desired else "disabled"):
+        for row in active:
+            if row.command_type == "set_kiosk_lockdown" and row.status == "queued":
+                row.status = "cancelled"
+                row.completed_at = utcnow()
+                row.error_code = "lockdown_already_observed"
+                row.error_message = "Kiosk lockdown matcher allerede backend desired-state"
+                session.add(row)
+        return None
+
+    for row in active:
+        if row.command_type != "set_kiosk_lockdown":
+            continue
+        if (row.payload or {}).get("enabled") is desired:
+            return row
+        if row.status == "queued":
+            row.status = "cancelled"
+            row.completed_at = utcnow()
+            row.error_code = "lockdown_superseded"
+            row.error_message = "Et nyere Kiosk-lockdown ønske er gældende"
+            session.add(row)
+
+    client.desktop_lockdown_status = "pending"
+    client.desktop_lockdown_message = (
+        "Afventer klient: kiosk lockdown anvendes på kiosk-brugeren"
+        if desired else "Afventer klient: kiosk lockdown rulles tilbage på kiosk-brugeren"
+    )
+    session.add(client)
+    return queue_display_command(
+        session, client_id=client_id, command_type="set_kiosk_lockdown",
+        payload={"enabled": desired}, requested_by_user_id=None, ttl_seconds=600,
+        idempotency_prefix=f"kiosk-lockdown-{int(desired)}",
+    )
+
 def apply_display_command_completion(session: Session, *, client_id: int, command_id: str) -> None:
     command = session.get(ClientCommand, command_id)
     if command is None or command.client_id != client_id or command.domain != DISPLAY_DOMAIN:
         return
+    client = session.get(Client, client_id)
+    if command.command_type == "set_kiosk_lockdown":
+        if client is None:
+            return
+        result = command.result if isinstance(command.result, dict) else {}
+        enabled = bool((command.payload or {}).get("enabled"))
+        client.desktop_lockdown_status = str(result.get("status") or ("applied" if enabled else "disabled"))[:80]
+        client.desktop_lockdown_message = str(result.get("message") or "")[:1000] or None
+        client.desktop_lockdown_last_applied_at = utcnow()
+        session.add(client)
+        return
     if command.command_type not in {"detect_resolution", "apply_resolution"}:
         return
-    client = session.get(Client, client_id)
     if client is None:
         return
     result = command.result if isinstance(command.result, dict) else {}
@@ -380,9 +466,15 @@ def apply_display_command_failure(
     command = session.get(ClientCommand, command_id)
     if command is None or command.client_id != client_id or command.domain != DISPLAY_DOMAIN:
         return
+    client = session.get(Client, client_id)
+    if command.command_type == "set_kiosk_lockdown":
+        if client is not None:
+            client.desktop_lockdown_status = "error"
+            client.desktop_lockdown_message = str(error_message or "Kiosk lockdown command fejlede")[:1000]
+            session.add(client)
+        return
     if command.command_type not in {"detect_resolution", "apply_resolution"}:
         return
-    client = session.get(Client, client_id)
     if client is None:
         return
     client.display_resolution_status = "error"
@@ -435,7 +527,12 @@ def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
         chrome_running = None
 
     runtime_step = str(runtime.get("step") or "").strip().lower()
-    if runtime_step in {"clear_cookies", "countdown", "display_sleep_countdown"}:
+    if runtime_step == "chrome_closed_manual":
+        chrome_status = "Browser lukket manuelt"
+        chrome_color = "gray"
+        chrome_step = "chrome_closed_manual"
+        chrome_running = False
+    elif runtime_step in {"clear_cookies", "countdown", "display_sleep_countdown"}:
         chrome_step = runtime_step
         chrome_color = "orange"
         chrome_running = False if runtime_step == "clear_cookies" else chrome_running

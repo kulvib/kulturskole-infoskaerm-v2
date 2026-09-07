@@ -17,10 +17,11 @@ from .display_local_control import (
     set_display_power,
 )
 from .net import DomainTransport
-from .unix_rpc import RpcError
+from .unix_rpc import RpcError, call
 
 STATUS_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_STATUS_FILE", "/var/lib/clientflow/display-runtime/runtime-status.json"))
 CALENDAR_STATUS_PATH = Path(os.getenv("CLIENTFLOW_CALENDAR_STATUS_FILE", "/var/lib/clientflow/calendar/status.json"))
+KIOSK_LOCKDOWN_SOCKET = os.getenv("CLIENTFLOW_KIOSK_LOCKDOWN_SOCKET", "/run/clientflow/kiosk-lockdown.sock")
 
 
 def _handle(context: CommandContext) -> dict[str, Any]:
@@ -33,6 +34,11 @@ def _handle(context: CommandContext) -> dict[str, Any]:
                 result = set_display_power(state)
                 record_calendar_manual_override(context.command_type)
                 return result
+            if context.command_type == "set_kiosk_lockdown":
+                enabled = context.payload.get("enabled")
+                if not isinstance(enabled, bool):
+                    raise CommandRejected("invalid_kiosk_lockdown", "enabled skal være boolean")
+                return call(KIOSK_LOCKDOWN_SOCKET, {"schema_version": 1, "action": "set_kiosk_lockdown", "enabled": enabled}, timeout=90)
             if context.command_type in {"apply_configuration", "start_browser", "stop_browser", "reset_browser", "detect_resolution", "apply_resolution"}:
                 result = runtime_action(
                     context.command_type,
@@ -59,11 +65,19 @@ def _read_object(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _lockdown_status() -> dict[str, Any]:
+    try:
+        return call(KIOSK_LOCKDOWN_SOCKET, {"schema_version": 1, "action": "status_kiosk_lockdown"}, timeout=5)
+    except (OSError, RpcError) as exc:
+        return {"schema_version": 1, "status": "unknown", "message": str(exc)[:300], "desired": None}
+
+
 def _status() -> dict[str, Any]:
     return {
         "runtime": _read_object(STATUS_PATH),
         "display_power": _read_object(POWER_STATE_PATH),
         "calendar": _read_object(CALENDAR_STATUS_PATH),
+        "kiosk_lockdown": _lockdown_status(),
     }
 
 
