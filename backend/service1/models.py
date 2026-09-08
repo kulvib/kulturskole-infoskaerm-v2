@@ -767,6 +767,16 @@ class EnrollmentToken(SQLModel, table=True):
     used_by_client_id: Optional[int] = Field(default=None, foreign_key="client.id")
     organization_id: Optional[int] = Field(default=None, foreign_key="organization.id")
 
+    # Immutable creation-time fresh-install release binding. Historical rows
+    # remain nullable after migration and are deliberately not rebound.
+    fresh_install_release_id: Optional[str] = Field(default=None, max_length=160)
+    fresh_install_version: Optional[str] = Field(default=None, max_length=32)
+    fresh_install_release_sequence: Optional[int] = None
+    fresh_install_bundle_sha256: Optional[str] = Field(default=None, max_length=64)
+    fresh_install_bundle_size: Optional[int] = None
+    fresh_install_approval_reference: Optional[str] = Field(default=None, max_length=200)
+    fresh_install_candidate_sha256: Optional[str] = Field(default=None, max_length=64)
+    fresh_install_source_commit: Optional[str] = Field(default=None, max_length=40)
 
     note: Optional[str] = None
 

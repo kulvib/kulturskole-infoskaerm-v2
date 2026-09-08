@@ -33,7 +33,7 @@ import {
   getEnrollmentTokens,
   revokeEnrollmentToken,
 } from "../../api";
-import { buildFreshInstallDownloadCommand } from "../../utils/clientflowFreshInstall";
+import { freshInstallOperatorCode } from "../../utils/clientflowFreshInstall";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import { embeddedPageShellSx } from "../../utils/layoutStyles";
 
@@ -241,10 +241,7 @@ export default function EnrollmentTokensPage() {
 
   const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" });
 
-  const freshInstallCommand = useMemo(
-    () => buildFreshInstallDownloadCommand(newCode),
-    [newCode],
-  );
+  const operatorCode = useMemo(() => freshInstallOperatorCode(newCode), [newCode]);
 
   const showSnackbar = useCallback((message, severity = "success") => {
     setSnackbar({ open: true, message, severity });
@@ -460,11 +457,11 @@ export default function EnrollmentTokensPage() {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={!!newCode} onClose={() => setNewCode(null)} maxWidth="md" fullWidth>
-        <DialogTitle>Canonical fresh-install handoff oprettet</DialogTitle>
+      <Dialog open={!!newCode} onClose={() => setNewCode(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>Installationskode oprettet</DialogTitle>
         <DialogContent>
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            Installationskoden og den signerede fresh-install authorization er one-time capabilities og er kun tilgængelige i dette svar. Handoff-blokken indeholder dem ikke; kopiér dem separat og indsæt dem kun ved de skjulte Ubuntu-prompts.
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Kunden skal kun bruge den korte CF-kode i <strong>Aktiver ClientFlow</strong>. Den signerede fresh-install authorization og exact release-binding hentes internt af bootstrap-flowet og vises ikke til operatøren.
           </Alert>
 
           <Paper variant="outlined" sx={{ p: 2, bgcolor: "rgba(15,23,42,0.42)", display: "flex", alignItems: "center", gap: 1 }}>
@@ -477,54 +474,23 @@ export default function EnrollmentTokensPage() {
                 wordBreak: "break-all",
               }}
             >
-              {newCode?.code}
+              {operatorCode}
             </Typography>
-            <IconButton onClick={() => handleCopy(newCode?.code)}>
+            <IconButton onClick={() => handleCopy(operatorCode)}>
               <ContentCopyIcon />
             </IconButton>
           </Paper>
 
           <Stack spacing={0.6} sx={{ mt: 2 }}>
-            <Typography variant="body2"><strong>Release:</strong> {newCode?.release_id || "-"}</Typography>
-            <Typography variant="body2" sx={{ wordBreak: "break-all" }}><strong>Approved bundle SHA-256:</strong> {newCode?.bundle_sha256 || "-"}</Typography>
-            <Typography variant="body2"><strong>Approved bundle size:</strong> {newCode?.bundle_size ?? "-"}</Typography>
-            <Typography variant="body2"><strong>Approval:</strong> {newCode?.release_approval_reference || "-"}</Typography>
-            <Typography variant="body2" sx={{ wordBreak: "break-all" }}><strong>Source commit:</strong> {newCode?.source_commit || "-"}</Typography>
+            <Typography variant="body2"><strong>Bundet release:</strong> {newCode?.release_id || "-"}</Typography>
+            <Typography variant="body2" sx={{ color: "text.secondary" }}>
+              Releasebindingen er fastlåst ved oprettelsen af koden. Senere catalog-ændringer må ikke ændre denne installation.
+            </Typography>
             <Typography variant="body2" sx={{ color: "text.secondary" }}>Udløber: {formatDateTime(newCode?.expires_at)}</Typography>
           </Stack>
-
-          <Typography variant="subtitle2" sx={{ mt: 2.5, mb: 1, fontWeight: 900 }}>
-            Ubuntu: download og verificér exact approved bundle
-          </Typography>
-          <Paper
-            component="pre"
-            variant="outlined"
-            sx={{
-              p: 2,
-              m: 0,
-              maxHeight: 360,
-              overflow: "auto",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-              fontSize: "0.78rem",
-              bgcolor: "rgba(15,23,42,0.42)",
-            }}
-          >
-            {freshInstallCommand}
-          </Paper>
-          <Alert severity="info" sx={{ mt: 2 }}>
-            Handoff-blokken er non-secret og gemmer ikke one-time capabilities i shell history. Efter blokken er indlæst køres <code>clientflow_fresh_install_download</code>; indsæt installationskoden og authorization ved de skjulte prompts. Downloaden verificerer hele bundle-SHA-256, hvorefter den eksisterende procedure fortsættes fra <code>CLIENTFLOW_RELEASE_PROCEDURE.md</code> afsnit 5. Kiosk-bruger og manuel aktivering gættes eller udføres ikke automatisk.
-          </Alert>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => handleCopy(newCode?.code)} startIcon={<ContentCopyIcon />}>Kopiér kode</Button>
-          <Button onClick={() => handleCopy(newCode?.fresh_install_authorization)} startIcon={<ContentCopyIcon />} disabled={!newCode?.fresh_install_authorization}>
-            Kopiér authorization
-          </Button>
-          <Button onClick={() => handleCopy(freshInstallCommand)} startIcon={<ContentCopyIcon />} disabled={!freshInstallCommand}>
-            Kopiér non-secret handoff
-          </Button>
+          <Button onClick={() => handleCopy(operatorCode)} startIcon={<ContentCopyIcon />}>Kopiér kode</Button>
           <Button variant="contained" onClick={() => setNewCode(null)}>Luk</Button>
         </DialogActions>
       </Dialog>

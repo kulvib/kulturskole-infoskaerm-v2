@@ -21,6 +21,8 @@ The topology has four distinct authorities:
 4. The release catalog selects policy. It never replaces the exact 51M bytes or
    51H/51I approval provenance.
 
+The normal customer path is code-only: the short CF enrollment code is the only human-transported capability. Its exact approved release binding is persisted on the enrollment row at creation time. `/api/enrollment/fresh-install-bootstrap` may re-issue the signed authorization only from that stored binding; it must never resolve the current catalog for an existing code. Historical unbound codes fail closed.
+
 A fresh-install authorization is a short-lived signed capability, not a release
 artifact. It records one exact already-verified 51M release identity and is
 bound to one existing enrollment token. The capability cannot create, replace

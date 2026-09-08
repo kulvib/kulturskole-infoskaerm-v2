@@ -112,6 +112,14 @@ The approved `1.3.0/1201` source predates the privileged update-controller: its 
 
 Do not merge catalog promotion before publication. A selected release with no matching immutable artifact, or a compatibility range that claims an unavailable bootstrap path, is a release-chain failure.
 
+### Canonical customer fresh-install path (code-only)
+
+For normal customer installation, the installation/preparation media supplies the repo-owned `client/bootstrap/clientflow-fresh-install` helper as **Aktiver ClientFlow**. The operator enters only the short CF enrollment code plus local client name/locality/network marker. The helper has no release selector and no alternate artifact authority: it exchanges the code with `/api/enrollment/fresh-install-bootstrap`, receives the token's durable creation-time exact-release binding plus signed authorization internally, downloads through `/api/enrollment/fresh-install-artifact`, verifies exact approved whole-bundle SHA-256/size and the embedded installer, and passes the code + authorization directly to the consuming installer over stdin. The authorization is never displayed or persisted.
+
+When the first run stops at `pending_manual_activation`, the same **Aktiver ClientFlow** helper is opened again after backend approval. It reads the root-owned pending install-state and invokes the already materialized stable updater with the exact original release-id and approval-reference; it does not ask for or reuse the consumed CF-code. The updater still performs the canonical backend client-approval proof before runtime mutation.
+
+The detailed shell blocks in sections 5-7 remain an engineering/release-verification description of the same trust boundary; they are **not** the normal customer/operator handoff. Historical enrollment rows without a durable 55A release binding must fail closed and be revoked/recreated; they must never be rebound to the current catalog.
+
 ## 5. Materialize a pinned fresh-install bootstrap before executing installer code
 
 The approved bundle SHA-256 is the external trust anchor. The fresh installer is **not** a second loose trust artifact: schema 8 embeds its exact bytes inside the approved bundle.

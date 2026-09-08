@@ -216,7 +216,22 @@ class EnrollmentTokenCreated(BaseModel):
     release_approval_reference: str
     release_candidate_sha256: str
     source_commit: str
-    fresh_install_authorization: str
+
+
+class FreshInstallBootstrapRequest(BaseModel):
+    enrollment_code: str = PydanticField(min_length=1, max_length=128)
+
+
+class FreshInstallBootstrapResponse(BaseModel):
+    authorization: str
+    release_id: str
+    version: str
+    release_sequence: int
+    bundle_sha256: str
+    bundle_size: int
+    release_approval_reference: str
+    release_candidate_sha256: str
+    source_commit: str
     artifact_url: str = FRESH_INSTALL_ARTIFACT_URL
 
 
@@ -525,6 +540,25 @@ def _active_token_for_code(session: Session, code: str) -> EnrollmentToken:
     return token
 
 
+def _token_fresh_install_binding(token: EnrollmentToken) -> dict[str, object]:
+    try:
+        return _normalize_fresh_install_binding_fields(
+            release_id=token.fresh_install_release_id,
+            version=token.fresh_install_version,
+            release_sequence=token.fresh_install_release_sequence,
+            bundle_sha256=token.fresh_install_bundle_sha256,
+            bundle_size=token.fresh_install_bundle_size,
+            release_approval_reference=token.fresh_install_approval_reference,
+            release_candidate_sha256=token.fresh_install_candidate_sha256,
+            source_commit=token.fresh_install_source_commit,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Installationskoden mangler en durable exact-release binding og skal tilbagekaldes og oprettes igen",
+        ) from exc
+
+
 @router.post("/admin/enrollment-tokens", response_model=EnrollmentTokenCreated, status_code=201)
 def create_enrollment_token(
     request: Request,
@@ -549,6 +583,14 @@ def create_enrollment_token(
         expires_at=utcnow() + timedelta(hours=data.expires_in_hours),
         created_by_user_id=admin.id,
         organization_id=resolved_organization_id,
+        fresh_install_release_id=snapshot["target_release_id"],
+        fresh_install_version=snapshot["target_version"],
+        fresh_install_release_sequence=int(snapshot["target_release_sequence"]),
+        fresh_install_bundle_sha256=snapshot["bundle_sha256"],
+        fresh_install_bundle_size=int(snapshot["bundle_size"]),
+        fresh_install_approval_reference=snapshot["release_approval_reference"],
+        fresh_install_candidate_sha256=snapshot["release_candidate_sha256"],
+        fresh_install_source_commit=snapshot["source_commit"],
         note=data.note,
     )
     session.add(token)
@@ -556,16 +598,6 @@ def create_enrollment_token(
     if token.id is None:
         session.rollback()
         raise HTTPException(status_code=500, detail="Installationskoden kunne ikke oprettes")
-    try:
-        authorization = issue_fresh_install_authorization(
-            enrollment_token_id=int(token.id),
-            expires_at=token.expires_at,
-            snapshot=snapshot,
-        )
-    except ClientFlowFreshInstallAuthorizationError as exc:
-        session.rollback()
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
     add_audit_log(
         session,
         action="enrollment_token_created",
@@ -599,7 +631,52 @@ def create_enrollment_token(
         release_approval_reference=snapshot["release_approval_reference"],
         release_candidate_sha256=snapshot["release_candidate_sha256"],
         source_commit=snapshot["source_commit"],
-        fresh_install_authorization=authorization,
+    )
+
+
+@router.post("/enrollment/fresh-install-bootstrap", response_model=FreshInstallBootstrapResponse)
+def fresh_install_bootstrap(
+    request: Request,
+    data: FreshInstallBootstrapRequest,
+    session: Session = Depends(get_session),
+):
+    enforce_request_rate_limit(
+        request,
+        bucket="enrollment-fresh-install-bootstrap",
+        max_attempts=12,
+        window_seconds=60,
+        detail="For mange fresh-install bootstrapforsøg. Prøv igen senere.",
+    )
+    token = _active_token_for_code(session, data.enrollment_code)
+    binding = _token_fresh_install_binding(token)
+    snapshot = {
+        "target_release_id": binding["release_id"],
+        "target_version": binding["version"],
+        "target_release_sequence": binding["release_sequence"],
+        "bundle_sha256": binding["bundle_sha256"],
+        "bundle_size": binding["bundle_size"],
+        "release_approval_reference": binding["release_approval_reference"],
+        "release_candidate_sha256": binding["release_candidate_sha256"],
+        "source_commit": binding["source_commit"],
+    }
+    try:
+        authorization = issue_fresh_install_authorization(
+            enrollment_token_id=int(token.id),
+            expires_at=token.expires_at,
+            snapshot=snapshot,
+        )
+    except ClientFlowFreshInstallAuthorizationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return FreshInstallBootstrapResponse(
+        authorization=authorization,
+        release_id=str(binding["release_id"]),
+        version=str(binding["version"]),
+        release_sequence=int(binding["release_sequence"]),
+        bundle_sha256=str(binding["bundle_sha256"]),
+        bundle_size=int(binding["bundle_size"]),
+        release_approval_reference=str(binding["release_approval_reference"]),
+        release_candidate_sha256=str(binding["release_candidate_sha256"]),
+        source_commit=str(binding["source_commit"]),
     )
 
 

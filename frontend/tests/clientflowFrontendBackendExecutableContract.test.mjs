@@ -54,8 +54,6 @@ function enrollmentFixture() {
     release_approval_reference: "contract/approved",
     release_candidate_sha256: "b".repeat(64),
     source_commit: "c".repeat(40),
-    fresh_install_authorization: "cf-fresh-v1.payload.signature",
-    artifact_url: "/api/enrollment/fresh-install-artifact",
   };
 }
 

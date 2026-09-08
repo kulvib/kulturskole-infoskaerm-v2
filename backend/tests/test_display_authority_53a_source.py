@@ -24,16 +24,19 @@ def test_53a_remains_reviewed_predecessor_under_53b_system_authority():
     assert 'op.drop_column("client", "kiosk_url")' in migration
     assert 'op.drop_column("client", "browser_refresh_interval_sec")' in migration
     assert 'class DisplayDesiredConfiguration(SQLModel, table=True):' in model
-    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20260829_54a_display_parity"'
-    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260829_54a_display_parity"' in runner
-    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260829_54a_display_parity"' in runner
+    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20260908_55a_enroll_binding"'
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260908_55a_enroll_binding"' in runner
+    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260908_55a_enroll_binding"' in runner
     assert 'REVIEWED_DISPLAY_AUTHORITY_REVISION = "20260823_53a_display_authority"' in runner
     assert 'display_authority_revision = script.get_revision(REVIEWED_DISPLAY_AUTHORITY_REVISION)' in runner
     assert 'display_authority_revision.down_revision != REVIEWED_CLIENT_LIVENESS_REVISION' in runner
     assert 'REVIEWED_SYSTEM_AUTHORITY_REVISION = "20260823_53b_system_authority"' in runner
     assert 'system_authority_revision = script.get_revision(REVIEWED_SYSTEM_AUTHORITY_REVISION)' in runner
     assert 'system_authority_revision.down_revision != REVIEWED_DISPLAY_AUTHORITY_REVISION' in runner
-    assert 'head != REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION' in runner
+    assert 'REVIEWED_ENROLLMENT_BINDING_REVISION = "20260908_55a_enroll_binding"' in runner
+    assert 'enrollment_binding_revision = script.get_revision(REVIEWED_ENROLLMENT_BINDING_REVISION)' in runner
+    assert 'enrollment_binding_revision.down_revision != REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION' in runner
+    assert 'head != REVIEWED_ENROLLMENT_BINDING_REVISION' in runner
 
 
 def test_client_aggregate_no_longer_has_display_config_storage_fields():
