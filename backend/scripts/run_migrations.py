@@ -65,6 +65,7 @@ from clientflow_deployment_schema_contract import (
     CLIENTFLOW_DEPLOYMENT_TABLES,
 )
 from client_liveness_schema_contract import CLIENT_LIVENESS_RETIRED_CLIENT_COLUMNS
+from enrollment_binding_schema_contract import ENROLLMENT_BINDING_COLUMNS
 
 ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = ROOT / "alembic.ini"
@@ -73,7 +74,7 @@ ADVISORY_LOCK_KEY = -614927384150371204
 # Baseline adoption is deliberately reviewed only for this exact graph. If a
 # later migration changes the head, the adoption path fails closed until the
 # baseline delta is reviewed again.
-REVIEWED_BASELINE_ADOPTION_HEAD = "20260829_54a_display_parity"
+REVIEWED_BASELINE_ADOPTION_HEAD = "20260908_55a_enroll_binding"
 REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 
 # Production was observed at this Alembic label before Step 40A was deployed,
@@ -82,7 +83,7 @@ REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 # 39A schema; otherwise deployment fails closed without stamping or DDL.
 RECOVERABLE_LEGACY_REVISION = "20260730_41a"
 RECOVERABLE_LEGACY_TARGET = "20260717_39a_livestream_leases"
-REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260829_54a_display_parity"
+REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260908_55a_enroll_binding"
 REVIEWED_LIVESTREAM_V2_PREDECESSOR = "20260814_40a_livestream_control"
 REVIEWED_LIVESTREAM_V2_REVISION = "20260814_41a_livestream_v2"
 REVIEWED_TERMINAL_V2_REVISION = "20260816_42a_terminal_v2"
@@ -100,6 +101,7 @@ REVIEWED_CLIENT_LIVENESS_REVISION = "20260822_52a_client_liveness"
 REVIEWED_DISPLAY_AUTHORITY_REVISION = "20260823_53a_display_authority"
 REVIEWED_SYSTEM_AUTHORITY_REVISION = "20260823_53b_system_authority"
 REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION = "20260829_54a_display_parity"
+REVIEWED_ENROLLMENT_BINDING_REVISION = "20260908_55a_enroll_binding"
 LIVESTREAM_V2_TABLES = frozenset({
     "livestream_v2_agent_status",
     "livestream_v2_command",
@@ -491,6 +493,23 @@ def _without_canonical_foundations_schema(
     return cleaned_columns, cleaned_constraints, cleaned_indexes
 
 
+def _without_enrollment_binding_schema(
+    columns: dict[str, dict],
+    constraints: dict[str, str],
+    indexes: dict[str, str],
+) -> tuple[dict[str, dict], dict[str, str], dict[str, str]]:
+    """Remove Step 55A's enrollment release-binding columns from a head contract."""
+    cleaned_columns = {table: dict(values) for table, values in columns.items()}
+    enrollment_columns = dict(cleaned_columns["enrollmenttoken"])
+    missing = sorted(set(ENROLLMENT_BINDING_COLUMNS) - set(enrollment_columns))
+    if missing:
+        raise RuntimeError(f"Head-kontrakten mangler Step 55A enrollment-kolonner: {missing}")
+    for column_name in ENROLLMENT_BINDING_COLUMNS:
+        enrollment_columns.pop(column_name)
+    cleaned_columns["enrollmenttoken"] = enrollment_columns
+    return cleaned_columns, dict(constraints), dict(indexes)
+
+
 def _baseline_schema_contract() -> tuple[dict[str, dict], dict[str, str], dict[str, str]]:
     """Return the exact frozen schema immediately before Step 34A.
 
@@ -510,10 +529,13 @@ def _baseline_schema_contract() -> tuple[dict[str, dict], dict[str, str], dict[s
             "Display baseline-adoption er ikke gennemgået for den aktuelle Alembic-kæde"
         )
 
-    columns, constraints, indexes = _without_client_liveness_schema(
+    columns, constraints, indexes = _without_enrollment_binding_schema(
         {table: dict(values) for table, values in EXPECTED_COLUMNS.items()},
         dict(EXPECTED_CONSTRAINTS),
         dict(EXPECTED_INDEXES),
+    )
+    columns, constraints, indexes = _without_client_liveness_schema(
+        columns, constraints, indexes
     )
     columns, constraints, indexes = _without_clientflow_deployment_schema(
         columns, constraints, indexes
@@ -621,10 +643,13 @@ def _pre_livestream_control_schema_contract() -> tuple[dict[str, dict], dict[str
             "Legacy-revision reconciliation er ikke gennemgået for den aktuelle Alembic-kæde"
         )
 
-    columns, constraints, indexes = _without_client_liveness_schema(
+    columns, constraints, indexes = _without_enrollment_binding_schema(
         {table: dict(values) for table, values in EXPECTED_COLUMNS.items()},
         dict(EXPECTED_CONSTRAINTS),
         dict(EXPECTED_INDEXES),
+    )
+    columns, constraints, indexes = _without_client_liveness_schema(
+        columns, constraints, indexes
     )
     columns, constraints, indexes = _without_clientflow_deployment_schema(
         columns, constraints, indexes
@@ -921,6 +946,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
             display_authority_revision = script.get_revision(REVIEWED_DISPLAY_AUTHORITY_REVISION)
             system_authority_revision = script.get_revision(REVIEWED_SYSTEM_AUTHORITY_REVISION)
             display_operational_parity_revision = script.get_revision(REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION)
+            enrollment_binding_revision = script.get_revision(REVIEWED_ENROLLMENT_BINDING_REVISION)
             head_revision = script.get_revision(head)
             if any(
                 item is None
@@ -930,7 +956,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                     terminal_client_revision, remote_desktop_revision, client_activity_revision, lifecycle_revision,
                     database_contract_revision, canonical_foundations_revision, clientflow_deployment_revision,
                     clientflow_update_auth_revision, client_liveness_revision, display_authority_revision,
-                    system_authority_revision, display_operational_parity_revision, head_revision,
+                    system_authority_revision, display_operational_parity_revision, enrollment_binding_revision, head_revision,
                 )
             ):
                 raise RuntimeError("Legacy-revision reconciliation mangler kendte Alembic-noder")
@@ -952,10 +978,11 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                 or display_authority_revision.down_revision != REVIEWED_CLIENT_LIVENESS_REVISION
                 or system_authority_revision.down_revision != REVIEWED_DISPLAY_AUTHORITY_REVISION
                 or display_operational_parity_revision.down_revision != REVIEWED_SYSTEM_AUTHORITY_REVISION
-                or head != REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION
+                or enrollment_binding_revision.down_revision != REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION
+                or head != REVIEWED_ENROLLMENT_BINDING_REVISION
             ):
                 raise RuntimeError(
-                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B -> 52A -> 53A -> 53B -> 54A-kæde"
+                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B -> 52A -> 53A -> 53B -> 54A -> 55A-kæde"
                 )
             legacy_columns, legacy_constraints, legacy_indexes = (
                 _pre_livestream_control_schema_contract()

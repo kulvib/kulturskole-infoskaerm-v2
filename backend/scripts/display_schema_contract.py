@@ -1049,3 +1049,11 @@ EXPECTED_COLUMNS["display_desired_configuration"] = _display_columns
 EXPECTED_CONSTRAINTS.update(DISPLAY_OPERATIONAL_PARITY_CONSTRAINTS)
 # Replaced below after deterministic contract fingerprint calculation.
 EXPECTED_FINGERPRINT = "32dd4f09bb97b649a1e334bd5d86236fa18757edf4145320b4cfd86ccaf03fab"
+# Step 55A: durable exact-release binding owned by enrollment capability creation.
+from enrollment_binding_schema_contract import ENROLLMENT_BINDING_COLUMNS
+EXPECTED_HEAD_REVISION = "20260908_55a_enroll_binding"
+_enrollment_columns = dict(EXPECTED_COLUMNS["enrollmenttoken"])
+_enrollment_columns.update(ENROLLMENT_BINDING_COLUMNS)
+EXPECTED_COLUMNS["enrollmenttoken"] = _enrollment_columns
+# Replaced below after deterministic contract fingerprint calculation.
+EXPECTED_FINGERPRINT = "e2f89bed46e20fd2d015f8014a889e73eed3495664595ad2168202a1470a3540"

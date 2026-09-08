@@ -146,8 +146,8 @@ def test_step52a_drops_legacy_columns_and_is_the_reviewed_head():
     assert 'down_revision = "20260820_51b_update_auth"' in migration
     assert 'op.drop_column("client", "last_seen")' in migration
     assert 'op.drop_column("client", "isOnline")' in migration
-    assert contract.rsplit('EXPECTED_HEAD_REVISION = ', 1)[1].splitlines()[0] == '"20260829_54a_display_parity"'
-    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260829_54a_display_parity"' in runner
-    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260829_54a_display_parity"' in runner
+    assert contract.rsplit('EXPECTED_HEAD_REVISION = ', 1)[1].splitlines()[0] == '"20260908_55a_enroll_binding"'
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260908_55a_enroll_binding"' in runner
+    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260908_55a_enroll_binding"' in runner
     assert 'REVIEWED_CLIENT_LIVENESS_REVISION = "20260822_52a_client_liveness"' in runner
     assert "_without_client_liveness_schema" in runner

@@ -144,3 +144,24 @@ def test_same_helper_activates_pending_install_without_reusing_consumed_code(mon
     assert "clientflow-1.3.18-seq-1219" in command
     assert "CF-" not in " ".join(command)
     assert "authorization" not in " ".join(command).lower()
+
+
+def test_55a_is_wired_into_canonical_database_contract_and_migration_runner():
+    contract = (ROOT / "backend/scripts/display_schema_contract.py").read_text(encoding="utf-8")
+    delta = (ROOT / "backend/scripts/enrollment_binding_schema_contract.py").read_text(encoding="utf-8")
+    runner = (ROOT / "backend/scripts/run_migrations.py").read_text(encoding="utf-8")
+
+    assert 'EXPECTED_HEAD_REVISION = "20260908_55a_enroll_binding"' in contract
+    assert 'from enrollment_binding_schema_contract import ENROLLMENT_BINDING_COLUMNS' in contract
+    assert 'EXPECTED_COLUMNS["enrollmenttoken"] = _enrollment_columns' in contract
+    for field in (
+        "fresh_install_release_id", "fresh_install_version", "fresh_install_release_sequence",
+        "fresh_install_bundle_sha256", "fresh_install_bundle_size", "fresh_install_approval_reference",
+        "fresh_install_candidate_sha256", "fresh_install_source_commit",
+    ):
+        assert f'"{field}"' in delta
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260908_55a_enroll_binding"' in runner
+    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260908_55a_enroll_binding"' in runner
+    assert 'REVIEWED_ENROLLMENT_BINDING_REVISION = "20260908_55a_enroll_binding"' in runner
+    assert 'enrollment_binding_revision.down_revision != REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION' in runner
+    assert 'head != REVIEWED_ENROLLMENT_BINDING_REVISION' in runner

@@ -21,7 +21,7 @@ def test_54a_migration_extends_53b_and_keeps_refresh_under_display_authority() -
     assert 'down_revision = "20260823_53b_system_authority"' in migration
     assert '"browser_refresh_interval_sec"' in migration
     assert 'browser_refresh_interval_sec = 0 OR' in migration
-    assert 'EXPECTED_HEAD_REVISION = "20260829_54a_display_parity"' in contract
+    assert 'EXPECTED_HEAD_REVISION = "20260908_55a_enroll_binding"' in contract
     assert 'REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION = "20260829_54a_display_parity"' in runner
     assert 'display_operational_parity_revision.down_revision != REVIEWED_SYSTEM_AUTHORITY_REVISION' in runner
     assert 'if len(str(revision.revision)) > 32:' in validator
