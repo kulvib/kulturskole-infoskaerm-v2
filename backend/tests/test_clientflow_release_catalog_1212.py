@@ -83,11 +83,13 @@ def test_catalog_1219_matches_current_source_and_allows_only_next_staged_identit
     assert release["release_id"] == "clientflow-1.3.18-seq-1219"
     assert release["requires_reboot"] is True
 
-    assert source_sequence in {data["catalog_sequence"], data["catalog_sequence"] + 1}
-    if source_sequence == data["catalog_sequence"]:
-        assert source_tuple == selected_tuple
-    else:
-        assert source_tuple > selected_tuple
+    # The immutable 1.3.18/1219 release is already selected by the runtime
+    # catalog. Any later source bytes must therefore use the next staged
+    # source/build identity before a new candidate can be built.
+    assert source_version == "1.3.19"
+    assert source_sequence == 1220
+    assert source_sequence == data["catalog_sequence"] + 1
+    assert source_tuple > selected_tuple
 
     for field in (
         "bundle_sha256",
