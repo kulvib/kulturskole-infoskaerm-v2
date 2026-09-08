@@ -116,3 +116,56 @@ def test_catalog_1219_resolvers_select_1318_for_update_and_fresh_install() -> No
     assert fresh["installable"] is True
     assert "in_place_update" in update["install_modes"]
     assert "fresh_install" in fresh["install_modes"]
+
+
+@pytest.mark.parametrize("requested", [None, "", "   ", "latest", "LATEST", "stable", "StAbLe"])
+def test_release_resolver_rejects_implicit_latest_aliases(requested: str | None) -> None:
+    load_catalog.cache_clear()
+    with pytest.raises(ClientFlowCatalogError, match="konkret katalogversion"):
+        resolve_release(requested)
+
+
+def test_catalog_requires_explicit_default_fresh_install_version(tmp_path: Path, monkeypatch) -> None:
+    data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    data.pop("default_install_version", None)
+    test_catalog = tmp_path / "clientflow_release_catalog.json"
+    test_catalog.write_text(json.dumps(data), encoding="utf-8")
+
+    monkeypatch.setattr("service1.clientflow_releases.CATALOG_PATH", test_catalog)
+    load_catalog.cache_clear()
+    try:
+        with pytest.raises(ClientFlowCatalogError, match="mangler default_install_version"):
+            load_catalog()
+    finally:
+        load_catalog.cache_clear()
+
+
+def test_catalog_rejects_default_fresh_install_version_that_is_not_in_catalog(tmp_path: Path, monkeypatch) -> None:
+    data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    data["default_install_version"] = "9.9.9"
+    test_catalog = tmp_path / "clientflow_release_catalog.json"
+    test_catalog.write_text(json.dumps(data), encoding="utf-8")
+
+    monkeypatch.setattr("service1.clientflow_releases.CATALOG_PATH", test_catalog)
+    load_catalog.cache_clear()
+    try:
+        with pytest.raises(ClientFlowCatalogError, match="findes ikke i releasekataloget"):
+            load_catalog()
+    finally:
+        load_catalog.cache_clear()
+
+
+def test_catalog_rejects_default_that_is_not_fresh_installable(tmp_path: Path, monkeypatch) -> None:
+    data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    data["releases"][0]["installable"] = False
+    test_catalog = tmp_path / "clientflow_release_catalog.json"
+    test_catalog.write_text(json.dumps(data), encoding="utf-8")
+
+    monkeypatch.setattr("service1.clientflow_releases.CATALOG_PATH", test_catalog)
+    load_catalog.cache_clear()
+    try:
+        with pytest.raises(ClientFlowCatalogError, match="installérbar fresh-install release"):
+            load_catalog()
+    finally:
+        load_catalog.cache_clear()
+
