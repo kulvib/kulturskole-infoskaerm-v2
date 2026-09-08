@@ -147,13 +147,32 @@ def load_catalog() -> dict[str, Any]:
     latest_release = next((item for item in releases if item.get("version") == latest), None)
     if not latest_release or latest_release.get("status") != "stable":
         raise ClientFlowCatalogError("latest_stable peger ikke på en stabil release")
+
+    default_install = str(data.get("default_install_version") or "").strip()
+    if not default_install:
+        raise ClientFlowCatalogError("ClientFlow-versionskataloget mangler default_install_version")
+    default_release = next((item for item in releases if item.get("version") == default_install), None)
+    if default_release is None:
+        raise ClientFlowCatalogError("default_install_version findes ikke i releasekataloget")
+    default_status = str(default_release.get("status") or "").strip().lower()
+    default_modes = default_release.get("install_modes") or []
+    if (
+        default_status not in SELECTABLE_STATUSES
+        or default_release.get("installable") is not True
+        or "fresh_install" not in default_modes
+    ):
+        raise ClientFlowCatalogError("default_install_version peger ikke på en installérbar fresh-install release")
     return data
 
 
 def resolve_release(requested_version: str | None) -> dict[str, Any]:
     catalog = load_catalog()
-    requested = str(requested_version or "latest").strip().lower()
-    version = catalog["latest_stable"] if requested in {"", "latest", "stable"} else requested.lstrip("v")
+    requested = str(requested_version or "").strip()
+    if requested.lower() in {"", "latest", "stable"}:
+        raise ClientFlowCatalogError(
+            "ClientFlow deployment kræver en konkret katalogversion; implicit latest/stable er ikke tilladt"
+        )
+    version = requested.lstrip("vV")
     release = next((item for item in catalog["releases"] if item.get("version") == version), None)
     if release is None:
         raise ClientFlowCatalogError(f"ClientFlow-version {version} findes ikke")
@@ -165,9 +184,9 @@ def resolve_release(requested_version: str | None) -> dict[str, Any]:
 
 
 def resolve_fresh_install_release() -> dict[str, Any]:
-    """Resolve only the catalog's canonical default fresh-install target."""
+    """Resolve only the catalog's explicit canonical fresh-install target."""
     catalog = load_catalog()
-    version = str(catalog.get("default_install_version") or catalog["latest_stable"]).strip()
+    version = str(catalog["default_install_version"]).strip()
     release = next((item for item in catalog["releases"] if item.get("version") == version), None)
     if release is None:
         raise ClientFlowCatalogError("Default fresh-install version findes ikke i releasekataloget")
@@ -252,7 +271,7 @@ def public_catalog() -> dict[str, Any]:
     return {
         "catalog_sequence": catalog["catalog_sequence"],
         "latest_stable": catalog["latest_stable"],
-        "default_install_version": catalog.get("default_install_version") or catalog["latest_stable"],
+        "default_install_version": catalog["default_install_version"],
         "retention_policy": catalog.get("retention_policy") or {},
         "releases": releases,
     }

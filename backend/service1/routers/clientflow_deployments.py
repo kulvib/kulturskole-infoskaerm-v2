@@ -221,8 +221,6 @@ def create_clientflow_deployment(
     client = _client_or_404(session, client_id)
     _require_deployable_client(session, client)
     requested_version = str(body.target_version or "").strip()
-    if requested_version.lower() == "latest":
-        raise HTTPException(status_code=400, detail="ClientFlow deployment kræver en konkret katalogversion; 'latest' er ikke tilladt")
     repair_binding = None
     if body.pre_first_activation_repair:
         repair_binding = _pre_first_activation_repair_current(session, client)
