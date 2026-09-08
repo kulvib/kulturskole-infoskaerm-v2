@@ -287,9 +287,7 @@
         "bundle_size",
         "release_approval_reference",
         "release_candidate_sha256",
-        "source_commit",
-        "fresh_install_authorization",
-        "artifact_url"
+        "source_commit"
       ]
     },
     {
