@@ -350,6 +350,15 @@ def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed
     assert capability_response.status_code == 201, capability_response.text
     capability = capability_response.json()
     binding = _binding_from_capability(capability)
+    bootstrap_response = http.post(
+        "/api/enrollment/fresh-install-bootstrap",
+        json={"enrollment_code": capability["code"]},
+    )
+    assert bootstrap_response.status_code == 200, bootstrap_response.text
+    bootstrap = bootstrap_response.json()
+    assert _binding_from_capability(bootstrap) == binding
+    assert "fresh_install_authorization" not in capability
+    assert bootstrap["authorization"]
     assert binding == {
         "release_id": TEST_RELEASE_SNAPSHOT["target_release_id"],
         "version": TEST_RELEASE_SNAPSHOT["target_version"],
@@ -368,7 +377,7 @@ def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed
     resume_proof = derive_resume_proof(seed, install_id)
     claim_request = {
         "enrollment_code": capability["code"],
-        "fresh_install_authorization": capability["fresh_install_authorization"],
+        "fresh_install_authorization": bootstrap["authorization"],
         "fresh_install_binding": binding,
         "install_id": install_id,
         "credential_seed_b64": seed_b64,
@@ -664,6 +673,13 @@ def test_two_fresh_installations_have_disjoint_identities_and_cross_client_auth_
         assert capability_response.status_code == 201, capability_response.text
         capability = capability_response.json()
         binding = _binding_from_capability(capability)
+        bootstrap_response = http.post(
+            "/api/enrollment/fresh-install-bootstrap",
+            json={"enrollment_code": capability["code"]},
+        )
+        assert bootstrap_response.status_code == 200, bootstrap_response.text
+        bootstrap = bootstrap_response.json()
+        assert _binding_from_capability(bootstrap) == binding
         install_id = str(uuid.uuid4())
         seed_b64 = base64.urlsafe_b64encode(seed).rstrip(b"=").decode("ascii")
         resume_proof = derive_resume_proof(seed, install_id)
@@ -671,7 +687,7 @@ def test_two_fresh_installations_have_disjoint_identities_and_cross_client_auth_
             "/api/enrollment/claim",
             json={
                 "enrollment_code": capability["code"],
-                "fresh_install_authorization": capability["fresh_install_authorization"],
+                "fresh_install_authorization": bootstrap["authorization"],
                 "fresh_install_binding": binding,
                 "install_id": install_id,
                 "credential_seed_b64": seed_b64,

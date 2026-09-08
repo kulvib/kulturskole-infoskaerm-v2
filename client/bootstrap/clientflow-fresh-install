@@ -1,0 +1,268 @@
+#!/usr/bin/python3
+"""Canonical code-only ClientFlow fresh-install bootstrap.
+
+This preclaim helper is supplied by the installation media/preparation plane.
+It has no release selector. The short enrollment code is exchanged with the
+canonical backend for the token's durable exact-release binding and a signed
+one-time authorization. Claim remains the only consuming transaction.
+"""
+from __future__ import annotations
+
+import getpass
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import stat
+import sys
+import tarfile
+import tempfile
+import urllib.error
+import urllib.request
+
+BACKEND_URL = "https://api.display.planiq.dk"
+BOOTSTRAP_ENDPOINT = "/api/enrollment/fresh-install-bootstrap"
+DEFAULT_ARTIFACT_ENDPOINT = "/api/enrollment/fresh-install-artifact"
+RELEASE_ID_RE = re.compile(r"^clientflow-\d+\.\d+\.\d+-seq-[1-9]\d*$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+MAX_JSON_BYTES = 128 * 1024
+INSTALL_STATE = Path("/var/lib/clientflow/release/install-state.json")
+STABLE_UPDATER = Path("/usr/lib/clientflow/updater/clientflow-updater.pyz")
+
+
+def _post_json(path: str, body: dict[str, object], *, timeout: int = 30):
+    payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
+    request = urllib.request.Request(
+        BACKEND_URL + path,
+        data=payload,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
+def _read_json_response(response) -> dict[str, object]:
+    raw = response.read(MAX_JSON_BYTES + 1)
+    if len(raw) > MAX_JSON_BYTES:
+        raise RuntimeError("Bootstrap-svaret er for stort")
+    data = json.loads(raw.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise RuntimeError("Bootstrap-svaret har forkert format")
+    return data
+
+
+def _binding(data: dict[str, object]) -> dict[str, object]:
+    release_id = str(data.get("release_id") or "").strip()
+    bundle_sha256 = str(data.get("bundle_sha256") or "").strip().lower()
+    authorization = str(data.get("authorization") or "").strip()
+    artifact_url = str(data.get("artifact_url") or DEFAULT_ARTIFACT_ENDPOINT).strip()
+    try:
+        bundle_size = int(data.get("bundle_size"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Bootstrap-svaret mangler gyldig bundle-størrelse") from exc
+    approval = str(data.get("release_approval_reference") or "").strip()
+    if not RELEASE_ID_RE.fullmatch(release_id):
+        raise RuntimeError("Bootstrap-svaret mangler gyldig exact release-id")
+    if not SHA256_RE.fullmatch(bundle_sha256) or bundle_size < 1:
+        raise RuntimeError("Bootstrap-svaret mangler gyldig approved bundle-binding")
+    if not authorization or len(authorization) > 4096:
+        raise RuntimeError("Bootstrap-svaret mangler signed fresh-install authorization")
+    if not artifact_url.startswith("/api/enrollment/") or "://" in artifact_url:
+        raise RuntimeError("Bootstrap-svaret har ugyldig artifact-route")
+    if not approval:
+        raise RuntimeError("Bootstrap-svaret mangler release approval-reference")
+    return {
+        "release_id": release_id,
+        "bundle_sha256": bundle_sha256,
+        "bundle_size": bundle_size,
+        "authorization": authorization,
+        "artifact_url": artifact_url,
+        "release_approval_reference": approval,
+    }
+
+
+def _download_exact_bundle(code: str, binding: dict[str, object], directory: Path) -> Path:
+    body = {
+        "enrollment_code": code,
+        "authorization": binding["authorization"],
+        "expected_release_id": binding["release_id"],
+        "expected_bundle_sha256": binding["bundle_sha256"],
+    }
+    request = urllib.request.Request(
+        BACKEND_URL + str(binding["artifact_url"]),
+        data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Accept": "application/octet-stream"},
+        method="POST",
+    )
+    path = directory / "clientflow-approved.tar"
+    digest = hashlib.sha256()
+    size = 0
+    with urllib.request.urlopen(request, timeout=120) as response, path.open("xb") as output:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            output.write(chunk)
+            digest.update(chunk)
+            size += len(chunk)
+        output.flush()
+        os.fsync(output.fileno())
+    os.chmod(path, 0o400)
+    if size != int(binding["bundle_size"]):
+        raise RuntimeError(f"Approved bundle size mismatch: {size}")
+    if digest.hexdigest() != binding["bundle_sha256"]:
+        raise RuntimeError("Approved bundle SHA-256 mismatch")
+    return path
+
+
+def _materialize_installer(bundle: Path, binding: dict[str, object], directory: Path) -> Path:
+    with tarfile.open(bundle, mode="r:*") as archive:
+        manifest_member = archive.getmember("manifest.json")
+        if not manifest_member.isfile() or manifest_member.size > 1024 * 1024:
+            raise RuntimeError("Bundle manifest er ugyldigt")
+        manifest_file = archive.extractfile(manifest_member)
+        if manifest_file is None:
+            raise RuntimeError("Bundle manifest kan ikke læses")
+        manifest = json.loads(manifest_file.read().decode("utf-8"))
+        if str(manifest.get("release_id") or "") != binding["release_id"]:
+            raise RuntimeError("Bundle release-id matcher ikke bootstrap-bindingen")
+        fresh = manifest.get("fresh_installer")
+        if not isinstance(fresh, dict):
+            raise RuntimeError("Bundle mangler embedded fresh installer")
+        filename = str(fresh.get("file") or "")
+        if not re.fullmatch(r"clientflow-installer-\d+\.\d+\.\d+\.pyz", filename):
+            raise RuntimeError("Embedded installer-filnavn er ugyldigt")
+        expected_sha = str(fresh.get("sha256") or "").lower()
+        try:
+            expected_size = int(fresh.get("size"))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Embedded installer-størrelse er ugyldig") from exc
+        if not SHA256_RE.fullmatch(expected_sha) or expected_size < 1:
+            raise RuntimeError("Embedded installer-integritet er ugyldig")
+        member = archive.getmember(filename)
+        if not member.isfile() or member.size != expected_size:
+            raise RuntimeError("Embedded installer matcher ikke manifestet")
+        source = archive.extractfile(member)
+        if source is None:
+            raise RuntimeError("Embedded installer kan ikke læses")
+        data = source.read(expected_size + 1)
+        if len(data) != expected_size or hashlib.sha256(data).hexdigest() != expected_sha:
+            raise RuntimeError("Embedded installer SHA-256 mismatch")
+    installer = directory / filename
+    with installer.open("xb") as output:
+        output.write(data)
+        output.flush()
+        os.fsync(output.fileno())
+    os.chmod(installer, 0o500)
+    return installer
+
+
+def _existing_install_state() -> dict[str, object] | None:
+    try:
+        meta = INSTALL_STATE.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0 or (meta.st_mode & 0o077):
+        raise RuntimeError("Eksisterende ClientFlow install-state har ugyldig ownership/permissions")
+    raw = INSTALL_STATE.read_bytes()
+    if len(raw) > MAX_JSON_BYTES:
+        raise RuntimeError("Eksisterende ClientFlow install-state er for stor")
+    data = json.loads(raw.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise RuntimeError("Eksisterende ClientFlow install-state er ugyldig")
+    return data
+
+
+def _activate_pending(state: dict[str, object]) -> int | None:
+    status = str(state.get("status") or "")
+    if status == "activated":
+        print("ClientFlow er allerede aktiveret.")
+        return 0
+    if status != "pending_manual_activation":
+        return None
+    binding = state.get("fresh_install_binding")
+    if not isinstance(binding, dict):
+        raise RuntimeError("Pending installation mangler exact release-binding")
+    release_id = str(binding.get("release_id") or "").strip()
+    approval = str(binding.get("release_approval_reference") or "").strip()
+    if not RELEASE_ID_RE.fullmatch(release_id) or not approval:
+        raise RuntimeError("Pending installation har ugyldig exact release-binding")
+    if not STABLE_UPDATER.is_file():
+        raise RuntimeError("Pending installation mangler canonical stable updater")
+    result = subprocess.run([
+        sys.executable, "-I", str(STABLE_UPDATER), "activate",
+        "--release-id", release_id,
+        "--expected-release-approval-reference", approval,
+    ], check=False)
+    return int(result.returncode)
+
+
+def _prompt(label: str, *, required: bool = False) -> str:
+    while True:
+        value = input(label).strip()
+        if value or not required:
+            return value
+        print("Værdien må ikke være tom.", file=sys.stderr)
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        print("Aktiver ClientFlow skal køres med administratorrettigheder.", file=sys.stderr)
+        return 2
+    try:
+        existing = _existing_install_state()
+        if existing is not None:
+            activation_result = _activate_pending(existing)
+            if activation_result is not None:
+                return activation_result
+    except Exception as exc:
+        print(f"ClientFlow activation check fejlede: {exc}", file=sys.stderr)
+        return 1
+
+    code = getpass.getpass("CF-kode: ").strip().upper()
+    if not code:
+        print("CF-kode mangler.", file=sys.stderr)
+        return 2
+    name = _prompt("Klientnavn: ", required=True)
+    locality = _prompt("Lokation (valgfri): ")
+    network_uuid = _prompt("Midlertidig bootstrap-netværksprofil UUID (valgfri): ")
+
+    try:
+        with _post_json(BOOTSTRAP_ENDPOINT, {"enrollment_code": code}) as response:
+            binding = _binding(_read_json_response(response))
+        with tempfile.TemporaryDirectory(prefix="clientflow-fresh-install.", dir="/run") as tmp:
+            directory = Path(tmp)
+            os.chmod(directory, 0o700)
+            bundle = _download_exact_bundle(code, binding, directory)
+            installer = _materialize_installer(bundle, binding, directory)
+            command = [
+                sys.executable, "-I", str(installer), "install",
+                "--bundle", str(bundle),
+                "--expected-bundle-sha256", str(binding["bundle_sha256"]),
+                "--backend-url", BACKEND_URL,
+                "--fresh-install-authority-stdin",
+                "--name", name,
+            ]
+            if locality:
+                command += ["--locality", locality]
+            if network_uuid:
+                command += ["--bootstrap-network-connection-uuid", network_uuid]
+            authorities = f"{code}\n{binding['authorization']}\n".encode("utf-8")
+            result = subprocess.run(command, input=authorities, check=False)
+            return int(result.returncode)
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode("utf-8")).get("detail")
+        except Exception:
+            detail = None
+        print(str(detail or f"Backend afviste bootstrap ({exc.code})"), file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"ClientFlow fresh install fejlede: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

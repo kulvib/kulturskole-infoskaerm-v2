@@ -1,5 +1,13 @@
 # ClientFlow 1.3.1 — fresh installation from a canonical runtime release
 
+
+## Normal kundeinstallation
+
+Den normale installation bruger den repo-ejede preclaim-helper `client/bootstrap/clientflow-fresh-install`, som installationsmediet eksponerer som **Aktiver ClientFlow**. Operatøren indtaster kun den korte CF-kode samt lokale, ikke-hemmelige klientoplysninger. Exact release-binding og signed fresh-install authorization hentes internt fra backendens durable enrollment-binding og må ikke kopieres manuelt, skrives i shell history eller vælges via `latest`/`stable`. Claim er fortsat den eneste consuming transaction.
+
+Hvis første kørsel stopper ved `pending_manual_activation`, åbnes **Aktiver ClientFlow** igen efter backend-godkendelse. Den bruger den root-owned pending state og den allerede installerede stable updater; den konsumerede CF-kode skal ikke indtastes igen. Backend approval-proof er fortsat fail-closed før runtime mutation.
+
+De efterfølgende manuelle bootstrap-trin i dette dokument er engineering/release-verification af samme trust boundary, ikke normal kunde-UX.
 ## Sikkerhedsstatus
 
 ClientFlow 1.3.1 bruger en **keyless release-model**. Der oprettes, gemmes eller anvendes ingen privat eller offentlig release-signeringsnøgle. En normal build er en reproducerbar, verificeret release candidate med `deployable: false`. Kun en separat manuel godkendelsesgate kan producere en `deployable: true`-bundle.
