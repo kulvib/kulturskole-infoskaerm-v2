@@ -124,6 +124,22 @@
       ]
     },
     {
+      "name": "updateClientLockdown",
+      "method": "PUT",
+      "path": "/api/clients/{id}/update",
+      "example_path": "/api/clients/42/update",
+      "success_status": "200",
+      "request_properties": [
+        "desktop_lockdown_enabled"
+      ],
+      "response_properties": [
+        "id",
+        "status",
+        "desktop_lockdown_enabled",
+        "desktop_lockdown_status"
+      ]
+    },
+    {
       "name": "clientActionReboot",
       "method": "POST",
       "path": "/api/clients/{id}/system-command",

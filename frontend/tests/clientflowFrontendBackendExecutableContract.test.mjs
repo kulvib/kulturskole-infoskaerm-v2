@@ -105,6 +105,7 @@ const responseByOperation = {
   requestCfadminPasswordChange: localManagementFixture({ action: "cfadmin_password", request_id: "system-command-password-1", status: "pending" }),
   requestLocalHostnameChange: localManagementFixture({ action: "hostname", request_id: "system-command-hostname-1", desired_hostname: "viborg2-client", desired_client_name: "Viborg2 Client", status: "pending", name: "Viborg2 Client" }),
   updateClientKiosk: { id: 42, status: "approved", kiosk_url: "https://infoskaerm.example.test/client/42" },
+  updateClientLockdown: { id: 42, status: "approved", desktop_lockdown_enabled: true, desktop_lockdown_status: "pending" },
   clientActionReboot: { ok: true, command_id: "system-command-1", action: "reboot" },
   clientActionStopBrowser: { ok: true, pending_chrome_action: "stop" },
   requestOsUpdate: osUpdateFixture(),
@@ -134,6 +135,7 @@ const invoke = {
   requestCfadminPasswordChange: (api) => api.requestCfadminPasswordChange(42, "Contract-Passphrase-42!"),
   requestLocalHostnameChange: (api) => api.requestLocalHostnameChange(42, "Viborg2 Client"),
   updateClientKiosk: (api) => api.updateClient(42, { kiosk_url: "https://infoskaerm.example.test/client/42" }),
+  updateClientLockdown: (api) => api.updateClient(42, { desktop_lockdown_enabled: true }),
   clientActionReboot: (api) => api.clientAction(42, "reboot"),
   clientActionStopBrowser: (api) => api.clientAction(42, "stop"),
   requestOsUpdate: (api) => api.requestOsUpdate(42),
@@ -248,6 +250,11 @@ test("ClientFlow frontend API functions execute the shared backend contract", as
     calls.length = 0;
     await invoke.updateClientKiosk(api);
     assert.deepEqual(parsedBody(calls[0]), { kiosk_url: "https://infoskaerm.example.test/client/42" });
+
+    currentOperation = "updateClientLockdown";
+    calls.length = 0;
+    await invoke.updateClientLockdown(api);
+    assert.deepEqual(parsedBody(calls[0]), { desktop_lockdown_enabled: true });
 
     currentOperation = "requestCfadminPasswordChange";
     calls.length = 0;
