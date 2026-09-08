@@ -130,12 +130,12 @@ def test_chrome_platform_lock_is_exact_and_builder_consumes_it():
     lock = json.loads(read("client/release/runtime-platform-inputs.lock.json"))
     assert lock["schema_version"] == 1
     assert lock["platform_artifacts"] == [{
-        "file": "google-chrome-stable_151.0.7922.173-1_amd64.deb",
+        "file": "google-chrome-stable_152.0.7977.82-1_amd64.deb",
         "package": "google-chrome-stable",
-        "version": "151.0.7922.173-1",
+        "version": "152.0.7977.82-1",
         "architecture": "amd64",
-        "size": 140077524,
-        "sha256": "878e5ab495b8a694980fca61bc09b37e651ccedce2291c73434d16e48a2646fd",
+        "size": 141157492,
+        "sha256": "4d25e4a028c78a7ae910683551c2f234792cc5595e7e3e34939f599342ada446",
     }]
     builder = read("client/release/lib/clientflow_release/builder.py")
     assert 'runtime-inputs/platform/runtime-platform-inputs.lock.json' in builder

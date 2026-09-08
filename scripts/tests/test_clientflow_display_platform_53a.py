@@ -29,7 +29,7 @@ def test_platform_prepare_verifies_embedded_lock_and_bytes(tmp_path: Path):
         "platform_artifacts": [{
             "file": name,
             "package": "google-chrome-stable",
-            "version": "151.0.7922.173-1",
+            "version": "152.0.7977.82-1",
             "architecture": "amd64",
             "size": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
@@ -248,7 +248,7 @@ def test_display_chrome_dependency_preflight_is_non_mutating_and_rejects_extra_p
         module,
         "_run",
         lambda command, **_kwargs: calls.append(command)
-        or "Inst google-chrome-stable (151.0.7922.173-1 local-deb [amd64])\n",
+        or "Inst google-chrome-stable (152.0.7977.82-1 local-deb [amd64])\n",
     )
 
     module._simulate_local_deb_install(package)
@@ -270,7 +270,7 @@ def test_display_chrome_dependency_preflight_is_non_mutating_and_rejects_extra_p
         "_run",
         lambda command, **_kwargs: "\n".join(
             [
-                "Inst google-chrome-stable (151.0.7922.173-1 local-deb [amd64])",
+                "Inst google-chrome-stable (152.0.7977.82-1 local-deb [amd64])",
                 "Inst unexpected-runtime-dependency (1.0 Ubuntu:26.04 [amd64])",
             ]
         ),
@@ -290,7 +290,7 @@ def test_display_chrome_exact_local_archive_is_installed_with_dpkg_after_preflig
     preflight = []
     package = tmp_path / "chrome.deb"
     package.write_bytes(b"deb")
-    states = iter([None, ("install ok installed", "151.0.7922.173-1", "amd64")])
+    states = iter([None, ("install ok installed", "152.0.7977.82-1", "amd64")])
     monkeypatch.setattr(module, "_installed_chrome", lambda: next(states))
     monkeypatch.setattr(module, "_simulate_local_deb_install", lambda path: preflight.append(path))
     monkeypatch.setattr(module, "_run", lambda command, **_kwargs: calls.append(command) or "")
@@ -298,7 +298,7 @@ def test_display_chrome_exact_local_archive_is_installed_with_dpkg_after_preflig
     module.CHROME_EXECUTABLE.write_text("#!/bin/sh\n", encoding="utf-8")
     module.CHROME_EXECUTABLE.chmod(0o755)
 
-    module._ensure_exact_chrome(package, {"version": "151.0.7922.173-1", "architecture": "amd64"})
+    module._ensure_exact_chrome(package, {"version": "152.0.7977.82-1", "architecture": "amd64"})
 
     assert preflight == [package]
     assert calls == [["/usr/bin/dpkg", "--install", str(package)]]
