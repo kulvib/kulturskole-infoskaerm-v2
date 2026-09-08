@@ -1,0 +1,199 @@
+name: Prepare ClientFlow runtime-input transport
+
+"on":
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Full 40-character main SHA; CI must already be green for this exact commit
+        required: true
+        type: string
+      base_runtime_inputs_url:
+        description: Exact HTTPS URL for a previous transport used only to reuse still-locked runtime/bootstrap bytes
+        required: true
+        default: https://github.com/kulvib/kulturskole-infoskaerm-v2/releases/download/runtime-inputs-1219-transport/clientflow-runtime-inputs-python-3.13.14-amd64-1219.tar
+        type: string
+      base_runtime_inputs_sha256:
+        description: SHA-256 of the previous transport (transport integrity only; inner bytes are reverified against current lock)
+        required: true
+        default: 1765b37fead2cefb250d36860db91b2317eab2469c2735bd8fd3a7767586d767
+        type: string
+      platform_artifact_url:
+        description: Exact HTTPS URL for the current lock's single platform artifact
+        required: true
+        default: https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_152.0.7977.82-1_amd64.deb
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: clientflow-runtime-input-transport-${{ inputs.expected_source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Build and publish transport-only prerelease
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout exact source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up canonical Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+          pip-version: "26.1.2"
+
+      - name: Require exact main source, staged release identity and green CI
+        id: identity
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF_NAME" = "main"
+          test "$GITHUB_SHA" = "$EXPECTED_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          python scripts/verify_github_ci_run.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --sha "$EXPECTED_SOURCE_SHA" \
+            --workflow ci.yml \
+            --head-branch main
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          version = Path("client/VERSION").read_text(encoding="utf-8").strip()
+          release_input = json.loads(Path("client/release/release-input.json").read_text(encoding="utf-8"))
+          catalog = json.loads(Path("backend/service1/clientflow_release_catalog.json").read_text(encoding="utf-8"))
+          sequence = int(release_input["release_sequence"])
+          published_sequences = [int(item["release_sequence"]) for item in catalog["releases"]]
+          if sequence <= max(published_sequences):
+              raise SystemExit("source release sequence is not staged ahead of catalog")
+          if any(str(item.get("version")) == version for item in catalog["releases"]):
+              raise SystemExit("source version is already present in runtime catalog")
+          tag = f"runtime-inputs-{sequence}-transport"
+          name = f"clientflow-runtime-inputs-python-{release_input['runtime_python']}-amd64-{sequence}.tar"
+          output = os.environ["GITHUB_OUTPUT"]
+          with open(output, "a", encoding="utf-8") as fh:
+              fh.write(f"version={version}\nsequence={sequence}\ntag={tag}\nasset_name={name}\n")
+          PY
+
+      - name: Fetch exact previous transport bytes
+        env:
+          BASE_URL: ${{ inputs.base_runtime_inputs_url }}
+          BASE_SHA256: ${{ inputs.base_runtime_inputs_sha256 }}
+        run: >-
+          python scripts/fetch_clientflow_runtime_inputs.py
+          --url "$BASE_URL"
+          --expected-sha256 "$BASE_SHA256"
+          --output "$RUNNER_TEMP/base-runtime-inputs.tar"
+
+      - name: Prepare deterministic current transport twice and reverify all locked bytes
+        id: transport
+        shell: bash
+        env:
+          PLATFORM_URL: ${{ inputs.platform_artifact_url }}
+          ASSET_NAME: ${{ steps.identity.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          PLATFORM_FILE="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          lock = json.loads(Path('client/release/runtime-platform-inputs.lock.json').read_text(encoding='utf-8'))
+          rows = lock.get('platform_artifacts') or []
+          if len(rows) != 1:
+              raise SystemExit('workflow currently requires exactly one locked platform artifact')
+          print(rows[0]['file'])
+          PY
+          )"
+          OUTPUT="$RUNNER_TEMP/$ASSET_NAME"
+          python scripts/prepare_clientflow_runtime_input_transport.py \
+            --base-archive "$RUNNER_TEMP/base-runtime-inputs.tar" \
+            --platform-url "$PLATFORM_FILE=$PLATFORM_URL" \
+            --output "$OUTPUT" | tee "$RUNNER_TEMP/prepare.log"
+          SHA256="$(sha256sum "$OUTPUT" | awk '{print $1}')"
+          SIZE="$(stat -c '%s' "$OUTPUT")"
+          grep -qx "runtime_inputs_transport_size=$SIZE" "$RUNNER_TEMP/prepare.log"
+          grep -qx "runtime_inputs_transport_sha256=$SHA256" "$RUNNER_TEMP/prepare.log"
+          python scripts/materialize_clientflow_runtime_inputs.py \
+            --archive "$OUTPUT" \
+            --output-dir "$RUNNER_TEMP/final-materialized"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+          echo "path=$OUTPUT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload audited workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-inputs-${{ steps.identity.outputs.sequence }}-transport-proof
+          path: |
+            ${{ steps.transport.outputs.path }}
+            ${{ runner.temp }}/prepare.log
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Require transport tag/release does not already exist
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.identity.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Transport-only release already exists: $TAG" >&2
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Transport tag already exists: $TAG" >&2
+            exit 1
+          fi
+
+      - name: Publish no-replace transport-only prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          TAG: ${{ steps.identity.outputs.tag }}
+          VERSION: ${{ steps.identity.outputs.version }}
+          SEQUENCE: ${{ steps.identity.outputs.sequence }}
+          ASSET_NAME: ${{ steps.identity.outputs.asset_name }}
+          ASSET_PATH: ${{ steps.transport.outputs.path }}
+          ASSET_SHA256: ${{ steps.transport.outputs.sha256 }}
+          ASSET_SIZE: ${{ steps.transport.outputs.size }}
+        run: |
+          set -euo pipefail
+          NOTES="$RUNNER_TEMP/release-notes.txt"
+          cat > "$NOTES" <<EOF
+          Transport only. Not release authority.
+
+          These bytes are inputs for the canonical ClientFlow reproducible release-build workflow.
+          Every inner artifact is independently verified against client/release/runtime-platform-inputs.lock.json.
+
+          Staged release: ClientFlow $VERSION / sequence $SEQUENCE
+          Source: $EXPECTED_SOURCE_SHA
+          Transport SHA256: $ASSET_SHA256
+          Transport size: $ASSET_SIZE
+          EOF
+          gh release create "$TAG" \
+            "$ASSET_PATH#$ASSET_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$EXPECTED_SOURCE_SHA" \
+            --prerelease \
+            --title "ClientFlow runtime inputs $SEQUENCE - transport only" \
+            --notes-file "$NOTES"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isPrerelease,targetCommitish,url
+          echo "RUNTIME_INPUT_TRANSPORT_READY=PASS"
+          echo "runtime_inputs_url=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ASSET_NAME"
+          echo "runtime_inputs_sha256=$ASSET_SHA256"
