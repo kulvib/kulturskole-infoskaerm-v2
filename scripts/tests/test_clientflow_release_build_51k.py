@@ -82,13 +82,13 @@ def test_current_platform_lock_is_source_independent_and_matches_physically_veri
     assert not any(name.startswith("clientflow_runtime-") for name in actual)
     platform = {item["file"]: item for item in data["platform_artifacts"]}
     assert platform == {
-        "google-chrome-stable_151.0.7922.173-1_amd64.deb": {
-            "file": "google-chrome-stable_151.0.7922.173-1_amd64.deb",
+        "google-chrome-stable_152.0.7977.82-1_amd64.deb": {
+            "file": "google-chrome-stable_152.0.7977.82-1_amd64.deb",
             "package": "google-chrome-stable",
-            "version": "151.0.7922.173-1",
+            "version": "152.0.7977.82-1",
             "architecture": "amd64",
-            "size": 140077524,
-            "sha256": "878e5ab495b8a694980fca61bc09b37e651ccedce2291c73434d16e48a2646fd",
+            "size": 141157492,
+            "sha256": "4d25e4a028c78a7ae910683551c2f234792cc5595e7e3e34939f599342ada446",
         }
     }
     assert data["preclaim_bootstrap_artifacts"] == [{
@@ -252,7 +252,7 @@ def test_runtime_input_transport_roundtrips_locked_platform_artifact(tmp_path: P
             {
                 "file": chrome_name,
                 "package": "google-chrome-stable",
-                "version": "151.0.7922.173-1",
+                "version": "152.0.7977.82-1",
                 "architecture": "amd64",
                 "size": len(chrome_bytes),
                 "sha256": hashlib.sha256(chrome_bytes).hexdigest(),
