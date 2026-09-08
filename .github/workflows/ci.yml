@@ -89,6 +89,16 @@ jobs:
       - name: Run Python test suite
         run: python -m pytest -q backend/tests scripts/tests
 
+      - name: Execute ClientFlow synthetic end-to-end operational gate
+        run: |
+          python -m pytest -q \
+            backend/tests/test_clientflow_claim_operational_http_integration.py \
+            backend/tests/test_clientflow_operational_http_integration.py \
+            backend/tests/test_clientflow_update_chain_operational_integration.py \
+            backend/tests/test_clientflow_frontend_backend_openapi_contract.py \
+            backend/tests/test_clientflow_operational_compatibility_gate.py \
+            scripts/tests/test_clientflow_code_only_fresh_install.py
+
       - name: Execute legacy 1.1.19 capability parity gate
         run: python scripts/verify_clientflow_legacy119_capability_gate.py --repo "$GITHUB_WORKSPACE" --scope python
 
@@ -176,6 +186,10 @@ jobs:
       - name: Run complete frontend test suite
         working-directory: frontend
         run: node --test tests/*.test.mjs
+
+      - name: Execute ClientFlow frontend/backend API contract gate
+        working-directory: frontend
+        run: node --test tests/clientflowFrontendBackendExecutableContract.test.mjs
 
       - name: Execute legacy 1.1.19 frontend capability parity gate
         run: python3 scripts/verify_clientflow_legacy119_capability_gate.py --repo "$GITHUB_WORKSPACE" --scope frontend

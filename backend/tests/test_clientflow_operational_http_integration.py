@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from contextlib import nullcontext
+from datetime import datetime, timedelta
 import json
 from pathlib import Path
 import sys
@@ -26,7 +27,9 @@ from service1.client_domain_models import (
     DisplayDesiredConfiguration,
 )
 from service1.clientflow_update_models import ClientFlowDeployment
-from service1.models import Client
+from service1.display_control import display_read_projection
+from service1.models import CalendarMarking, Client
+from service1.season_service import current_and_next_seasons, season_dates
 from service1.remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
 from service1.shared_domain import utcnow
 from service1.terminal_v2_models import TerminalClient, TerminalCredential
@@ -41,7 +44,16 @@ if str(CLIENT_RUNTIME_ROOT) not in sys.path:
     sys.path.insert(0, str(CLIENT_RUNTIME_ROOT))
 
 from clientflow_runtime.command_agent import CommandContext  # noqa: E402
-from clientflow_runtime import power_lifecycle, system_agent, system_broker  # noqa: E402
+from clientflow_runtime import (  # noqa: E402
+    calendar_agent,
+    calendar_reboot_broker,
+    display_agent,
+    kiosk_lockdown,
+    kiosk_lockdown_broker,
+    power_lifecycle,
+    system_agent,
+    system_broker,
+)
 
 
 class _ASGIResponse:
@@ -176,6 +188,7 @@ def operational_http(monkeypatch):
         engine,
         tables=[
             Client.__table__,
+            CalendarMarking.__table__,
             ClientDomainCredential.__table__,
             ClientDomainStatus.__table__,
             DisplayDesiredConfiguration.__table__,
@@ -721,3 +734,412 @@ def test_display_commissioning_uses_canonical_desired_state_and_real_apply_confi
         assert runtime["state"] == "running"
         assert runtime["configuration_revision"] == desired.revision
         assert runtime["browser_pid"] == 5101
+
+
+def test_calendar_backend_route_agent_transition_broker_and_observed_status_roundtrip(
+    operational_http,
+    monkeypatch,
+    tmp_path,
+):
+    http, engine = operational_http
+
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
+    assert approved.status_code == 200, approved.text
+    display_token_response = _token(http, "display")
+    assert display_token_response.status_code == 200, display_token_response.text
+    display_token = display_token_response.json()["access_token"]
+
+    seasons = current_and_next_seasons()
+    target_now = datetime.now().astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
+    target_date = target_now.date().isoformat()
+
+    with Session(engine) as session:
+        for season in seasons:
+            markings = {day.isoformat(): {"status": "off"} for day in season_dates(season)}
+            if target_date in markings:
+                markings[target_date] = {"status": "on", "onTime": "00:00", "offTime": "23:59"}
+            session.add(CalendarMarking(season=season, client_id=CLIENT_ID, markings=markings))
+        session.commit()
+
+    calendar_dir = tmp_path / "calendar"
+    calendar_dir.mkdir()
+    monkeypatch.setattr(calendar_agent, "CACHE_PATH", calendar_dir / "schedule.json")
+    monkeypatch.setattr(calendar_agent, "STATUS_PATH", calendar_dir / "status.json")
+    monkeypatch.setattr(calendar_agent, "SCHEDULER_STATE_PATH", calendar_dir / "scheduler-state.json")
+    monkeypatch.setattr(calendar_agent, "WAKE_REBOOT_DELAY_SECONDS", 0.0)
+    monkeypatch.setattr(calendar_agent, "display_control_lock", lambda: nullcontext())
+
+    class _HttpCalendarTransport:
+        credential = SimpleNamespace(client_id=CLIENT_ID)
+
+        def json_request(self, method: str, path: str):
+            assert method == "GET"
+            response = http.get(path, headers={"Authorization": f"Bearer {display_token}"})
+            assert response.status_code == 200, response.text
+            return response.json()
+
+    plan = calendar_agent._fetch_plan(_HttpCalendarTransport())
+    assert plan["client_id"] == CLIENT_ID
+    assert plan["revision"]
+    assert plan["seasons"][seasons[0]][target_date]["status"] == "on"
+    assert calendar_agent._desired_state(plan, target_now) == "on"
+    assert json.loads(calendar_agent.CACHE_PATH.read_text(encoding="utf-8")) == plan
+
+    power_actions: list[str] = []
+    monkeypatch.setattr(
+        calendar_agent,
+        "set_display_power",
+        lambda state: power_actions.append(state) or {"state": state},
+    )
+    runtime_actions: list[str] = []
+    monkeypatch.setattr(
+        calendar_agent,
+        "runtime_action",
+        lambda action, payload=None: runtime_actions.append(action) or {"ok": True},
+    )
+
+    reboot_commands: list[list[str]] = []
+
+    def fake_reboot(command, **_kwargs):
+        reboot_commands.append(list(command))
+        return SimpleNamespace(returncode=0, stdout="accepted")
+
+    monkeypatch.setattr(calendar_reboot_broker.subprocess, "run", fake_reboot)
+    monkeypatch.setattr(
+        calendar_agent,
+        "call",
+        lambda _socket, request, timeout: calendar_reboot_broker.handle(request),
+    )
+
+    scheduler = {
+        "schema_version": 1,
+        "last_schedule_state": None,
+        "last_schedule_applied_at": None,
+        "last_wake_reboot_at": 0.0,
+    }
+
+    # Initial ON establishes the baseline only; it must not manufacture a reboot.
+    calendar_agent._apply_calendar_state(
+        "on",
+        state=scheduler,
+        now_epoch=1_000.0,
+        initial=True,
+    )
+    assert power_actions == []
+    assert reboot_commands == []
+
+    # OFF uses the canonical Display power path. A real OFF->ON transition then
+    # crosses the fixed-function Calendar reboot broker exactly once.
+    calendar_agent._apply_calendar_state("off", state=scheduler, now_epoch=1_100.0)
+    calendar_agent._apply_calendar_state("on", state=scheduler, now_epoch=2_000.0)
+    assert power_actions == ["off", "on"]
+    assert runtime_actions == []
+    assert reboot_commands == [
+        ["/usr/bin/systemctl", "--no-block", "--ignore-inhibitors", "reboot"]
+    ]
+
+    calendar_agent._write_status(
+        state="running",
+        plan=plan,
+        desired="on",
+        last_fetch_at=2_000.0,
+        last_transition_at=2_000.0,
+        error=None,
+    )
+    monkeypatch.setattr(display_agent, "STATUS_PATH", tmp_path / "missing-runtime-status.json")
+    monkeypatch.setattr(display_agent, "POWER_STATE_PATH", tmp_path / "missing-power-state.json")
+    monkeypatch.setattr(display_agent, "CALENDAR_STATUS_PATH", calendar_agent.STATUS_PATH)
+    monkeypatch.setattr(
+        display_agent,
+        "_lockdown_status",
+        lambda: {
+            "schema_version": 1,
+            "desired": False,
+            "status": "disabled",
+            "message": "Kiosk lockdown er ikke anvendt",
+        },
+    )
+    status_payload = display_agent._status()
+    assert status_payload["calendar"]["state"] == "running"
+    assert status_payload["calendar"]["calendar_revision"] == plan["revision"]
+
+    reported = http.put(
+        f"/api/display-agent/clients/{CLIENT_ID}/status",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={
+            "schema_version": 1,
+            "observed_state": "online",
+            "status_payload": status_payload,
+            "agent_version": "1.3.18",
+            "boot_id": "calendar-boot-a",
+        },
+    )
+    assert reported.status_code == 200, reported.text
+
+    with Session(engine) as session:
+        stored = session.exec(
+            select(ClientDomainStatus).where(
+                ClientDomainStatus.client_id == CLIENT_ID,
+                ClientDomainStatus.domain == "display",
+            )
+        ).one()
+        assert stored.status_payload["calendar"]["calendar_revision"] == plan["revision"]
+        projection = display_read_projection(session, CLIENT_ID)
+        assert projection["service_calendar_status"] == "running"
+        assert projection["calendar"]["schedule_state"] == "on"
+
+
+def test_kiosk_lockdown_frontend_api_backend_reconcile_agent_broker_and_observed_roundtrip(
+    operational_http,
+    monkeypatch,
+    tmp_path,
+):
+    http, engine = operational_http
+
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
+    assert approved.status_code == 200, approved.text
+    display_token_response = _token(http, "display")
+    assert display_token_response.status_code == 200, display_token_response.text
+    display_token = display_token_response.json()["access_token"]
+
+    # Default is OFF. A client that has not published canonical lockdown
+    # observation must not receive a manufactured disable command.
+    initial_status = http.put(
+        f"/api/display-agent/clients/{CLIENT_ID}/status",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={
+            "schema_version": 1,
+            "observed_state": "online",
+            "status_payload": {"integration": True},
+            "agent_version": "1.3.18",
+            "boot_id": "lockdown-boot-a",
+        },
+    )
+    assert initial_status.status_code == 200, initial_status.text
+    with Session(engine) as session:
+        lockdown_commands = session.exec(
+            select(ClientCommand).where(
+                ClientCommand.client_id == CLIENT_ID,
+                ClientCommand.command_type == "set_kiosk_lockdown",
+            )
+        ).all()
+        assert lockdown_commands == []
+
+    enabled = http.put(
+        f"/api/clients/{CLIENT_ID}/update",
+        json={"desktop_lockdown_enabled": True},
+    )
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["desktop_lockdown_enabled"] is True
+    assert enabled.json()["desktop_lockdown_status"] == "pending"
+
+    reconcile = http.put(
+        f"/api/display-agent/clients/{CLIENT_ID}/status",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={
+            "schema_version": 1,
+            "observed_state": "online",
+            "status_payload": {
+                "kiosk_lockdown": {
+                    "schema_version": 1,
+                    "desired": False,
+                    "status": "disabled",
+                    "message": "Kiosk lockdown er ikke anvendt",
+                }
+            },
+            "agent_version": "1.3.18",
+            "boot_id": "lockdown-boot-a",
+        },
+    )
+    assert reconcile.status_code == 200, reconcile.text
+
+    claim = http.post(
+        f"/api/display-agent/clients/{CLIENT_ID}/commands/claim",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={"lease_seconds": 60},
+    )
+    assert claim.status_code == 200, claim.text
+    claimed = claim.json()["claimed"]
+    assert claimed is not None
+    assert claimed["command"]["command_type"] == "set_kiosk_lockdown"
+    assert claimed["command"]["payload"] == {"enabled": True}
+
+    home = tmp_path / "home" / "clientflow-kiosk"
+    home.mkdir(parents=True)
+    record = SimpleNamespace(pw_uid=1000, pw_gid=1000, pw_dir=str(home))
+    monkeypatch.setattr(
+        kiosk_lockdown,
+        "_account",
+        lambda: ("clientflow-kiosk", record, home),
+    )
+    monkeypatch.setattr(kiosk_lockdown, "STATE_PATH", tmp_path / "kiosk-lockdown-state.json")
+    local_effects: list[tuple[str, bool | None]] = []
+    monkeypatch.setattr(
+        kiosk_lockdown,
+        "_hide_launchers",
+        lambda _home, _record: local_effects.append(("launchers", True)),
+    )
+    monkeypatch.setattr(
+        kiosk_lockdown,
+        "_restore_launchers",
+        lambda _home, _record: local_effects.append(("launchers", False)),
+    )
+    monkeypatch.setattr(
+        kiosk_lockdown,
+        "_apply_acl",
+        lambda _user, value: local_effects.append(("acl", value)),
+    )
+    monkeypatch.setattr(
+        kiosk_lockdown,
+        "_apply_polkit",
+        lambda _user, value: local_effects.append(("polkit", value)),
+    )
+    monkeypatch.setattr(
+        kiosk_lockdown,
+        "_apply_gsettings",
+        lambda _user, _record, value: local_effects.append(("gsettings", value)),
+    )
+    monkeypatch.setattr(
+        kiosk_lockdown,
+        "_set_quick_guard_running",
+        lambda value: local_effects.append(("quick_guard", value)),
+    )
+    monkeypatch.setattr(display_agent, "display_control_lock", lambda: nullcontext())
+    monkeypatch.setattr(
+        display_agent,
+        "call",
+        lambda _socket, request, timeout: kiosk_lockdown_broker.handle(request),
+    )
+
+    def execute_claimed(command_payload: dict[str, Any], claim_token: str) -> dict[str, Any]:
+        command = command_payload["command"]
+        context = CommandContext(
+            command_id=command["id"],
+            client_id=command["client_id"],
+            command_type=command["command_type"],
+            payload=command["payload"],
+            schema_version=command["schema_version"],
+            claim_token=claim_token,
+        )
+        return display_agent._handle(context)
+
+    apply_result = execute_claimed(claimed, claimed["claim_token"])
+    assert apply_result["desired"] is True
+    assert apply_result["status"] == "applied"
+    assert apply_result["kiosk_user"] == "clientflow-kiosk"
+
+    completed = http.post(
+        f"/api/display-agent/clients/{CLIENT_ID}/commands/{claimed['command']['id']}/complete",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={"claim_token": claimed["claim_token"], "result": apply_result},
+    )
+    assert completed.status_code == 200, completed.text
+
+    monkeypatch.setattr(display_agent, "STATUS_PATH", tmp_path / "missing-runtime-status.json")
+    monkeypatch.setattr(display_agent, "POWER_STATE_PATH", tmp_path / "missing-power-state.json")
+    monkeypatch.setattr(display_agent, "CALENDAR_STATUS_PATH", tmp_path / "missing-calendar-status.json")
+    applied_status_payload = display_agent._status()
+    assert applied_status_payload["kiosk_lockdown"]["desired"] is True
+    assert applied_status_payload["kiosk_lockdown"]["status"] == "applied"
+
+    observed_applied = http.put(
+        f"/api/display-agent/clients/{CLIENT_ID}/status",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={
+            "schema_version": 1,
+            "observed_state": "online",
+            "status_payload": applied_status_payload,
+            "agent_version": "1.3.18",
+            "boot_id": "lockdown-boot-a",
+        },
+    )
+    assert observed_applied.status_code == 200, observed_applied.text
+
+    with Session(engine) as session:
+        client = session.get(Client, CLIENT_ID)
+        assert client is not None
+        assert client.desktop_lockdown_enabled is True
+        assert client.desktop_lockdown_status == "applied"
+        queued = session.exec(
+            select(ClientCommand).where(
+                ClientCommand.client_id == CLIENT_ID,
+                ClientCommand.command_type == "set_kiosk_lockdown",
+                ClientCommand.status == "queued",
+            )
+        ).all()
+        assert queued == []
+
+    disabled = http.put(
+        f"/api/clients/{CLIENT_ID}/update",
+        json={"desktop_lockdown_enabled": False},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["desktop_lockdown_enabled"] is False
+    assert disabled.json()["desktop_lockdown_status"] == "pending"
+
+    reconcile_disable = http.put(
+        f"/api/display-agent/clients/{CLIENT_ID}/status",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={
+            "schema_version": 1,
+            "observed_state": "online",
+            "status_payload": applied_status_payload,
+            "agent_version": "1.3.18",
+            "boot_id": "lockdown-boot-a",
+        },
+    )
+    assert reconcile_disable.status_code == 200, reconcile_disable.text
+
+    disable_claim_response = http.post(
+        f"/api/display-agent/clients/{CLIENT_ID}/commands/claim",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={"lease_seconds": 60},
+    )
+    assert disable_claim_response.status_code == 200, disable_claim_response.text
+    disable_claim = disable_claim_response.json()["claimed"]
+    assert disable_claim is not None
+    assert disable_claim["command"]["command_type"] == "set_kiosk_lockdown"
+    assert disable_claim["command"]["payload"] == {"enabled": False}
+
+    rollback_result = execute_claimed(disable_claim, disable_claim["claim_token"])
+    assert rollback_result["desired"] is False
+    assert rollback_result["status"] == "disabled"
+    assert rollback_result["kiosk_user"] == "clientflow-kiosk"
+
+    completed_disable = http.post(
+        f"/api/display-agent/clients/{CLIENT_ID}/commands/{disable_claim['command']['id']}/complete",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={"claim_token": disable_claim["claim_token"], "result": rollback_result},
+    )
+    assert completed_disable.status_code == 200, completed_disable.text
+
+    disabled_status_payload = display_agent._status()
+    observed_disabled = http.put(
+        f"/api/display-agent/clients/{CLIENT_ID}/status",
+        headers={"Authorization": f"Bearer {display_token}"},
+        json={
+            "schema_version": 1,
+            "observed_state": "online",
+            "status_payload": disabled_status_payload,
+            "agent_version": "1.3.18",
+            "boot_id": "lockdown-boot-a",
+        },
+    )
+    assert observed_disabled.status_code == 200, observed_disabled.text
+
+    with Session(engine) as session:
+        client = session.get(Client, CLIENT_ID)
+        assert client is not None
+        assert client.desktop_lockdown_enabled is False
+        assert client.desktop_lockdown_status == "disabled"
+
+    assert ("launchers", True) in local_effects
+    assert ("acl", True) in local_effects
+    assert ("polkit", True) in local_effects
+    assert ("gsettings", True) in local_effects
+    assert ("quick_guard", True) in local_effects
+    assert ("quick_guard", False) in local_effects
+    assert ("launchers", False) in local_effects
+    assert ("acl", False) in local_effects
+    assert ("polkit", False) in local_effects
+    assert ("gsettings", False) in local_effects
