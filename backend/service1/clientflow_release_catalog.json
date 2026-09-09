@@ -1,20 +1,20 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1219,
-  "latest_stable": "1.3.18",
-  "default_install_version": "1.3.18",
+  "catalog_sequence": 1220,
+  "latest_stable": "1.3.19",
+  "default_install_version": "1.3.19",
   "retention_policy": {
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
   },
-  "created_at": "2026-09-06T00:00:00Z",
+  "created_at": "2026-09-09T00:00:00Z",
   "releases": [
     {
-      "version": "1.3.18",
-      "client_version": "1.3.18",
-      "release_sequence": 1219,
-      "revision": "clientflow-1.3.18-seq-1219",
+      "version": "1.3.19",
+      "client_version": "1.3.19",
+      "release_sequence": 1220,
+      "revision": "clientflow-1.3.19-seq-1220",
       "status": "stable",
       "installable": true,
       "update_allowed": true,
@@ -34,11 +34,11 @@
         "requires_platform_preflight": true
       },
       "notes": [
-        "Canonical ClientFlow 1.3.18 release containing the repository-reviewed production-readiness closure required before the next Ubuntu 26.04 clean-install verification, including pre-claim host readiness, pending bootstrap-user lifecycle, pre-first-activation repair, factory-network lifecycle, local UX/platform-session/power contract closure and the exact legacy 1.1.19 capability gate.",
+        "Canonical ClientFlow 1.3.19 release containing the end-to-end operational compatibility closure required before the next Ubuntu 26.04 clean-install verification, including approval-before-activation fail-closed lifecycle, durable exact enrollment binding and code-only bootstrap, executable synthetic client/backend/frontend gate, release-identity authority closure and exact Chrome 152 runtime input.",
         "Fresh install and in-place update remain bounded to the safe ClientFlow 1.3.11 baseline. One controlled reboot is required after green activation so GDM/logind kiosk-session policy becomes authoritative before reconnect verification.",
-        "Promoted only after the exact manually approved 1.3.18/1219 whole bundle was reproducibly built, passed the Ubuntu 26.04 executable candidate gate and legacy capability gate, published immutably and byte-identity re-verified in the canonical Render 51M artifact store. The next Ubuntu 26.04 clean install is verification, not discovery."
+        "Promoted only after the exact manually approved 1.3.19/1220 whole bundle from source e51dcccf88b50b90e53e73808703e62f355e8622 was reproducibly built, passed the Ubuntu 26.04 executable candidate gate and synthetic operational compatibility gate, published immutably and byte-identity re-verified in the canonical Render 51M artifact store. The next Ubuntu 26.04 clean install is verification, not discovery."
       ],
-      "release_id": "clientflow-1.3.18-seq-1219",
+      "release_id": "clientflow-1.3.19-seq-1220",
       "artifact_type": "runtime_release",
       "install_modes": [
         "fresh_install",

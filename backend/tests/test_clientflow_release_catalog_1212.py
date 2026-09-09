@@ -18,12 +18,12 @@ ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = ROOT / "backend/service1/clientflow_release_catalog.json"
 
 
-def test_catalog_1219_promotes_exact_1318_release_identity() -> None:
+def test_catalog_1220_promotes_exact_1319_release_identity() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    assert data["catalog_sequence"] == 1219
-    assert data["latest_stable"] == "1.3.18"
-    assert data["default_install_version"] == "1.3.18"
+    assert data["catalog_sequence"] == 1220
+    assert data["latest_stable"] == "1.3.19"
+    assert data["default_install_version"] == "1.3.19"
     assert data["retention_policy"] == {
         "max_installable_versions": 1,
         "keep_blocked_metadata": False,
@@ -31,11 +31,11 @@ def test_catalog_1219_promotes_exact_1318_release_identity() -> None:
 
     assert len(data["releases"]) == 1
     release = data["releases"][0]
-    assert release["version"] == "1.3.18"
-    assert release["client_version"] == "1.3.18"
-    assert release["release_sequence"] == 1219
-    assert release["release_id"] == "clientflow-1.3.18-seq-1219"
-    assert release["revision"] == "clientflow-1.3.18-seq-1219"
+    assert release["version"] == "1.3.19"
+    assert release["client_version"] == "1.3.19"
+    assert release["release_sequence"] == 1220
+    assert release["release_id"] == "clientflow-1.3.19-seq-1220"
+    assert release["revision"] == "clientflow-1.3.19-seq-1220"
     assert release["status"] == "stable"
     assert release["installable"] is True
     assert release["update_allowed"] is True
@@ -45,9 +45,9 @@ def test_catalog_1219_promotes_exact_1318_release_identity() -> None:
     assert release["min_current_version"] == "1.3.11"
 
 
-def test_catalog_1219_rejects_1310_and_accepts_safe_1311_in_place_source() -> None:
+def test_catalog_1220_rejects_1310_and_accepts_safe_1311_in_place_source() -> None:
     load_catalog.cache_clear()
-    release = resolve_release("1.3.18")
+    release = resolve_release("1.3.19")
 
     with pytest.raises(ClientFlowCatalogError, match="kræver mindst ClientFlow 1.3.11"):
         validate_release_compatibility(
@@ -63,7 +63,7 @@ def test_catalog_1219_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1219_matches_current_source_and_allows_only_next_staged_identity() -> None:
+def test_catalog_1220_matches_current_source_identity() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -75,21 +75,22 @@ def test_catalog_1219_matches_current_source_and_allows_only_next_staged_identit
     source_tuple = tuple(int(part) for part in source_version.split("."))
     selected_tuple = tuple(int(part) for part in release["version"].split("."))
 
-    assert data["catalog_sequence"] == 1219
-    assert data["latest_stable"] == "1.3.18"
-    assert data["default_install_version"] == "1.3.18"
-    assert release["version"] == "1.3.18"
-    assert release["release_sequence"] == 1219
-    assert release["release_id"] == "clientflow-1.3.18-seq-1219"
+    assert data["catalog_sequence"] == 1220
+    assert data["latest_stable"] == "1.3.19"
+    assert data["default_install_version"] == "1.3.19"
+    assert release["version"] == "1.3.19"
+    assert release["release_sequence"] == 1220
+    assert release["release_id"] == "clientflow-1.3.19-seq-1220"
     assert release["requires_reboot"] is True
 
-    # The immutable 1.3.18/1219 release is already selected by the runtime
-    # catalog. Any later source bytes must therefore use the next staged
-    # source/build identity before a new candidate can be built.
+    # After promotion, the runtime catalog must select the exact approved
+    # source/build identity. Exact release bytes remain the authority of the
+    # verified immutable bundle in the canonical artifact store, not catalog
+    # metadata duplicated here.
     assert source_version == "1.3.19"
     assert source_sequence == 1220
-    assert source_sequence == data["catalog_sequence"] + 1
-    assert source_tuple > selected_tuple
+    assert source_sequence == data["catalog_sequence"]
+    assert source_tuple == selected_tuple
 
     for field in (
         "bundle_sha256",
@@ -102,15 +103,15 @@ def test_catalog_1219_matches_current_source_and_allows_only_next_staged_identit
         assert field not in release
 
 
-def test_catalog_1219_resolvers_select_1318_for_update_and_fresh_install() -> None:
+def test_catalog_1220_resolvers_select_1319_for_update_and_fresh_install() -> None:
     load_catalog.cache_clear()
-    update = resolve_release("1.3.18")
+    update = resolve_release("1.3.19")
     fresh = resolve_fresh_install_release()
 
     for release in (update, fresh):
-        assert release["version"] == "1.3.18"
-        assert release["release_id"] == "clientflow-1.3.18-seq-1219"
-        assert release["release_sequence"] == 1219
+        assert release["version"] == "1.3.19"
+        assert release["release_id"] == "clientflow-1.3.19-seq-1220"
+        assert release["release_sequence"] == 1220
         assert release["status"] == "stable"
         assert release["requires_reboot"] is True
 
@@ -170,4 +171,3 @@ def test_catalog_rejects_default_that_is_not_fresh_installable(tmp_path: Path, m
             load_catalog()
     finally:
         load_catalog.cache_clear()
-
