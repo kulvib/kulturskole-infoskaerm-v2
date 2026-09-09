@@ -43,7 +43,7 @@ test("React 19, React Router 7 og MUI 9 runtimeversioner er låst", () => {
 test("kendte frontend security-remediations er låst i package-lock", () => {
   const expected = {
     "brace-expansion": "1.1.18",
-    "js-yaml": "4.3.1",
+    "js-yaml": "4.3.2",
     postcss: "8.5.23",
     "react-router": "7.18.2",
   };
