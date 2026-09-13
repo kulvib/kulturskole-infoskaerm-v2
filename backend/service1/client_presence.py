@@ -169,17 +169,23 @@ def evaluate_domain_presence(
     return DomainPresence(is_online=True, reason="fresh_online_status", **common)
 
 
-def load_client_presences(
+def _load_client_presence_batch(
     session: Session,
     clients: Iterable[Client],
     *,
     now: datetime | None = None,
-) -> dict[int, ClientPresence]:
-    """Load all shared-domain evidence for a client batch without N+1 queries."""
+) -> tuple[dict[int, ClientPresence], dict[tuple[int, str], ClientDomainStatus]]:
+    """Load presence plus the exact status rows in a bounded query batch.
+
+    The raw rows are returned for read projections that need canonical payload
+    data even when presence evaluates offline (for example because a credential
+    was revoked). Keeping them in this batch avoids re-reading the same
+    ``client_domain_status`` row once per client.
+    """
     client_list = [client for client in clients if getattr(client, "id", None) is not None]
     client_ids = [int(client.id) for client in client_list]
     if not client_ids:
-        return {}
+        return {}, {}
 
     rows = session.exec(
         select(ClientDomainStatus).where(
@@ -216,8 +222,28 @@ def load_client_presences(
             display=evaluated["display"],
             system=evaluated["system"],
         )
-    return result
+    return result, row_by_key
 
+
+def load_client_presences(
+    session: Session,
+    clients: Iterable[Client],
+    *,
+    now: datetime | None = None,
+) -> dict[int, ClientPresence]:
+    """Load all shared-domain evidence for a client batch without N+1 queries."""
+    presences, _ = _load_client_presence_batch(session, clients, now=now)
+    return presences
+
+
+def load_client_presences_with_status_rows(
+    session: Session,
+    clients: Iterable[Client],
+    *,
+    now: datetime | None = None,
+) -> tuple[dict[int, ClientPresence], dict[tuple[int, str], ClientDomainStatus]]:
+    """Return evaluated presence and already-loaded canonical status rows."""
+    return _load_client_presence_batch(session, clients, now=now)
 
 def load_client_presence(session: Session, client: Client, *, now: datetime | None = None) -> ClientPresence:
     if client.id is None:

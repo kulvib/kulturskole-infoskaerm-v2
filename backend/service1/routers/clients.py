@@ -14,13 +14,14 @@ from ..models import utcnow
 from ..observability import log_safe_exception
 from ..lifecycle import ClientPurgeBlocked, prepare_client_for_permanent_delete
 from ..clientflow_deployments import active_deployment
-from ..client_presence import ClientPresence, load_client_presence, load_client_presences
+from ..client_presence import ClientPresence, load_client_presence, load_client_presences_with_status_rows
 from ..display_control import (
     active_display_control_command,
     display_agent_supports_commands,
     display_agent_supports_configuration_v2,
     display_command_legacy_action,
     display_read_projection,
+    display_read_projections,
     get_display_desired_configuration,
     latest_display_status,
     lock_display_client,
@@ -32,9 +33,13 @@ from ..system_control import (
     active_system_command,
     build_encrypted_password_payload,
     local_management_projection,
+    local_management_projection_from_command,
+    load_latest_system_projection_commands,
     lock_system_client,
     os_update_projection,
+    os_update_projection_from_command,
     power_projection,
+    power_projection_from_command,
     queue_system_command,
     system_status_has_broker,
 )
@@ -1079,7 +1084,12 @@ _LEGACY_DISPLAY_PENDING_ACTIONS = {"start", "stop", "restart", "sleep", "wakeup"
 _LEGACY_SYSTEM_PENDING_ACTIONS = {"shutdown", "os_update"}
 
 
-def _apply_display_projection_for_read(session, client: Client) -> None:
+def _apply_display_projection_for_read(
+    session,
+    client: Client,
+    *,
+    projection: Optional[Dict[str, Any]] = None,
+) -> None:
     """Project canonical Display state onto legacy response field names only.
 
     Browser status/color/running/step and kiosk URL always come from canonical
@@ -1088,7 +1098,7 @@ def _apply_display_projection_for_read(session, client: Client) -> None:
     """
     if client.id is None:
         return
-    projection = display_read_projection(session, int(client.id))
+    projection = projection if projection is not None else display_read_projection(session, int(client.id))
     legacy_pending = _normalize_chrome_action_name(getattr(client, "pending_chrome_action", None)) or "none"
 
     _set_runtime_read_attr(client, "kiosk_url", projection["kiosk_url"])
@@ -1111,17 +1121,30 @@ def _apply_display_projection_for_read(session, client: Client) -> None:
         _set_runtime_read_attr(client, "pending_chrome_action_source", None)
 
 
-def _apply_system_projection_for_read(session, client: Client, presence: ClientPresence) -> None:
+def _apply_system_projection_for_read(
+    session,
+    client: Client,
+    presence: ClientPresence,
+    *,
+    projection_commands: Optional[Dict[str, Any]] = None,
+) -> None:
     """Project canonical System commands onto legacy response field names only."""
     if client.id is None:
         return
     client_id = int(client.id)
-    power = power_projection(
-        session,
-        client_id,
-        current_boot_id=presence.status.boot_id,
-        status_online=presence.status.is_online,
-    )
+    if projection_commands is None:
+        power = power_projection(
+            session,
+            client_id,
+            current_boot_id=presence.status.boot_id,
+            status_online=presence.status.is_online,
+        )
+    else:
+        power = power_projection_from_command(
+            projection_commands.get("power"),
+            current_boot_id=presence.status.boot_id,
+            status_online=presence.status.is_online,
+        )
     # A later local power transition is canonical observed evidence from the
     # Status domain, not a System command. Preserve that lifecycle metadata when
     # the latest historical System command is older; pending/state still come
@@ -1149,10 +1172,18 @@ def _apply_system_projection_for_read(session, client: Client, presence: ClientP
         if preserve_local_power and key in local_metadata_fields:
             continue
         _set_runtime_read_attr(client, key, value)
-    os_update = os_update_projection(session, client_id)
+    os_update = (
+        os_update_projection(session, client_id)
+        if projection_commands is None
+        else os_update_projection_from_command(projection_commands.get("os_update"))
+    )
     for key, value in os_update.items():
         _set_runtime_read_attr(client, key, value)
-    local = local_management_projection(session, client_id)
+    local = (
+        local_management_projection(session, client_id)
+        if projection_commands is None
+        else local_management_projection_from_command(projection_commands.get("local_management"))
+    )
     local_field_map = {
         "action": "local_management_action",
         "request_id": "local_management_request_id",
@@ -1182,10 +1213,38 @@ def _prepare_full_client_read(
 
 
 def _prepare_clients_read(session, clients: List[Client]) -> List[Client]:
-    presences = load_client_presences(session, clients)
+    client_ids = [int(client.id) for client in clients if client.id is not None]
+    if not client_ids:
+        return clients
+
+    presences, status_rows = load_client_presences_with_status_rows(session, clients)
+    display_projections = display_read_projections(
+        session,
+        client_ids,
+        status_rows={
+            client_id: status_rows.get((client_id, "display"))
+            for client_id in client_ids
+        },
+    )
+    system_commands = load_latest_system_projection_commands(session, client_ids)
+
     for client in clients:
-        presence = presences.get(int(client.id)) if client.id is not None else None
-        _prepare_full_client_read(session, client, presence)
+        if client.id is None:
+            continue
+        client_id = int(client.id)
+        presence = presences[client_id]
+        _apply_display_projection_for_read(
+            session,
+            client,
+            projection=display_projections[client_id],
+        )
+        _prepare_client_read(client, presence)
+        _apply_system_projection_for_read(
+            session,
+            client,
+            presence,
+            projection_commands=system_commands.get(client_id),
+        )
     return clients
 
 

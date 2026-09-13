@@ -491,9 +491,11 @@ def _epoch_datetime(value: Any) -> datetime | None:
         return None
 
 
-def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
-    desired = get_display_desired_configuration(session, client_id)
-    status = latest_display_status(session, client_id)
+def _display_read_projection_from_rows(
+    desired: DisplayDesiredConfiguration | None,
+    status: ClientDomainStatus | None,
+    active: ClientCommand | None,
+) -> dict[str, Any]:
     status_payload = status.status_payload if status and isinstance(status.status_payload, dict) else {}
     runtime = _runtime_payload(status_payload)
     state = str(runtime.get("state") or "unknown").strip().lower()
@@ -580,7 +582,6 @@ def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
     else:
         calendar_service_status = "unknown"
 
-    active = active_display_control_command(session, client_id)
     pending = display_command_legacy_action(active)
     return {
         "kiosk_url": desired.kiosk_url if desired else None,
@@ -598,4 +599,60 @@ def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
         "display_power": power_state,
         "service_calendar_status": calendar_service_status,
         "calendar": calendar or None,
+    }
+
+
+def display_read_projection(session: Session, client_id: int) -> dict[str, Any]:
+    """Project one client using the canonical Display authorities."""
+    return _display_read_projection_from_rows(
+        get_display_desired_configuration(session, client_id),
+        latest_display_status(session, client_id),
+        active_display_control_command(session, client_id),
+    )
+
+
+def display_read_projections(
+    session: Session,
+    client_ids: list[int],
+    *,
+    status_rows: dict[int, ClientDomainStatus | None],
+) -> dict[int, dict[str, Any]]:
+    """Project a client list with a bounded number of Display queries.
+
+    Status rows are supplied by the shared presence batch, so this loader only
+    needs one query for durable desired configuration and one for currently
+    active Display control commands. Historical commands are never loaded.
+    """
+    ids = sorted({int(client_id) for client_id in client_ids})
+    if not ids:
+        return {}
+
+    desired_rows = session.exec(
+        select(DisplayDesiredConfiguration).where(DisplayDesiredConfiguration.client_id.in_(ids))
+    ).all()
+    desired_by_client = {int(row.client_id): row for row in desired_rows}
+
+    now = utcnow()
+    active_rows = session.exec(
+        select(ClientCommand)
+        .where(
+            ClientCommand.client_id.in_(ids),
+            ClientCommand.domain == DISPLAY_DOMAIN,
+            ClientCommand.status.in_(["queued", "claimed"]),
+            ClientCommand.expires_at > now,
+            ClientCommand.command_type.in_(tuple(DISPLAY_CONTROL_COMMANDS)),
+        )
+        .order_by(ClientCommand.client_id, ClientCommand.requested_at, ClientCommand.id)
+    ).all()
+    active_by_client: dict[int, ClientCommand] = {}
+    for row in active_rows:
+        active_by_client.setdefault(int(row.client_id), row)
+
+    return {
+        client_id: _display_read_projection_from_rows(
+            desired_by_client.get(client_id),
+            status_rows.get(client_id),
+            active_by_client.get(client_id),
+        )
+        for client_id in ids
     }
