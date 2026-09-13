@@ -1480,10 +1480,28 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client)
 
-    presence = load_client_presence(session, client)
+    client_id = int(client.id)
+    presences, status_rows = load_client_presences_with_status_rows(session, [client])
+    presence = presences[client_id]
+    display_projection = display_read_projections(
+        session,
+        [client_id],
+        status_rows={client_id: status_rows.get((client_id, "display"))},
+    )[client_id]
+    system_commands = load_latest_system_projection_commands(session, [client_id]).get(client_id)
+
     _apply_status_runtime_snapshot(client, presence)
-    _apply_display_projection_for_read(session, client)
-    _apply_system_projection_for_read(session, client, presence)
+    _apply_display_projection_for_read(
+        session,
+        client,
+        projection=display_projection,
+    )
+    _apply_system_projection_for_read(
+        session,
+        client,
+        presence,
+        projection_commands=system_commands,
+    )
 
     step_obj = None
     chrome_step_value = client.chrome_step

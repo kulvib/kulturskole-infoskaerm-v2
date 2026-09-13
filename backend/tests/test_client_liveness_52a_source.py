@@ -75,6 +75,10 @@ def test_reads_use_batch_presence_and_dedicated_presence_endpoint():
     assert '"last_seen"' not in chrome_get
     assert '"isOnline"' not in chrome_get
     assert '"is_online"' not in chrome_get
+    assert "load_client_presences_with_status_rows(session, [client])" in chrome_get
+    assert "display_read_projections(" in chrome_get
+    assert "load_latest_system_projection_commands(session, [client_id])" in chrome_get
+    assert "load_client_presence(session, client)" not in chrome_get
 
 
 def test_network_diagnostics_are_not_a_command_authority():
