@@ -1,4 +1,4 @@
-ClientFlow 1.3.20 / sequence 1221 catalog-promotion validation
+ClientFlow 1.3.20 / sequence 1221 post-physical-failure validation
 Source/build commit: 7391dcfee0b77eddd46f7b8a986ae442b64d3fcc
 Source identity: 1.3.20 / seq 1221
 Approved bundle SHA256: 64df5b844b6dc3ffa1579f6477142a99e80b747d66825900b957c4af8ee01941
@@ -15,12 +15,19 @@ PASS: approved bundle published to canonical Render 51M artifact store
 PASS: independent store re-read -> size 223098880
 PASS: independent store re-read -> SHA256 64df5b844b6dc3ffa1579f6477142a99e80b747d66825900b957c4af8ee01941
 PASS: catalog promotion selects clientflow-1.3.20-seq-1221
-PASS: source sequence equals catalog sequence (1221)
-PASS: 1.3.11 remains safe minimum in-place predecessor
-PASS: no ClientFlow runtime implementation change in catalog-promotion package
+PASS: catalog/backend deployment binding verified
+PASS: public backend /health, /health/db and /version verified
+PASS: physical fresh-install downloaded/staged exact approved 1.3.20/1221 bundle
+PASS: physical install reached durable pending_manual_activation
+PASS: physical graphical pre-activation baseline -> DISPLAY_SESSION_PREPARE_OK
+FAIL: canonical physical fresh-install reboot rejected by active GNOME shutdown inhibitor (CF-1221-REBOOT-01)
+FAIL: canonical physical Ubuntu 26.04 fresh-install verification of 1.3.20/1221
+PASS: root cause isolated to fresh-install reboot primitive
+PASS: patch uses systemctl --no-block --ignore-inhibitors reboot; no --force
 PASS: no Livestream/Terminal/Remote Desktop implementation files changed
 
-PENDING: full canonical GitHub CI for the catalog-promotion commit
-PENDING: deployment of promoted catalog/backend
-PENDING: canonical physical Ubuntu 26.04 fresh-install verification of 1.3.20/1221
+PENDING: full canonical GitHub CI for CF-1221-REBOOT-01 fix commit
+PENDING: next immutable source/build identity after fix CI success
+PENDING: next release build / approval / publication / catalog promotion
+PENDING: clean canonical physical Ubuntu 26.04 fresh-install verification of the next release
 PENDING: physical GUI pixel-parity acceptance against deployed legacy 1.1.19 contract

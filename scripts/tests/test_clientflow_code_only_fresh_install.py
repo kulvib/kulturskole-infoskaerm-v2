@@ -180,11 +180,43 @@ def test_pending_helper_repairs_missing_kiosk_session_before_attempting_activati
     assert calls == ["prepare", "reboot"]
 
 
+def test_controlled_pre_activation_reboot_uses_narrow_inhibitor_override(monkeypatch):
+    module = _load_helper()
+    monkeypatch.setattr(
+        module,
+        "_existing_install_state",
+        lambda: {
+            "status": "pending_manual_activation",
+            "fresh_install_binding": {"release_id": "clientflow-1.3.20-seq-1221"},
+        },
+    )
+    captured = {}
+
+    class Result:
+        returncode = 0
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    module._queue_controlled_pre_activation_reboot()
+
+    assert captured["command"] == [
+        str(module.SYSTEMCTL), "--no-block", "--ignore-inhibitors", "reboot"
+    ]
+    assert captured["kwargs"] == {"check": False, "timeout": 10}
+    assert "--force" not in captured["command"]
+
+
 def test_fresh_install_prepares_graphical_login_before_queuing_reboot():
     source = HELPER.read_text(encoding="utf-8")
     queue = source[source.index("def _queue_controlled_pre_activation_reboot"):source.index("def _prompt")]
     assert 'state.get("status") != "pending_manual_activation"' in queue
-    assert '[str(SYSTEMCTL), "--no-block", "reboot"]' in queue
+    assert '[str(SYSTEMCTL), "--no-block", "--ignore-inhibitors", "reboot"]' in queue
+    assert "timeout=10" in queue
+    assert '"--force"' not in queue
     assert "fresh_install_binding" in queue
 
     prepare = source[source.index("def _prepare_pre_activation_graphical_session"):source.index("def _canonical_staged_activation")]
