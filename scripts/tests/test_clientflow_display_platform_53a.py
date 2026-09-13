@@ -91,6 +91,41 @@ def test_gdm_and_accounts_service_updates_preserve_unrelated_keys():
     assert "[security]\nDisallowTCP=true" in updated
 
 
+def test_pre_activation_graphical_login_baseline_only_materializes_gdm_and_accounts(monkeypatch, tmp_path):
+    module = _load_module()
+    real_path = Path
+    home_name = str(tmp_path / "kiosk-home")
+
+    class FakeStat:
+        st_uid = 1001
+
+    class FakeHome:
+        def is_dir(self):
+            return True
+
+        def is_symlink(self):
+            return False
+
+        def stat(self):
+            return FakeStat()
+
+    class Record:
+        pw_uid = 1001
+        pw_gid = 1001
+        pw_dir = home_name
+
+    monkeypatch.setattr(module, "Path", lambda value: FakeHome() if str(value) == home_name else real_path(value))
+    calls = []
+    monkeypatch.setattr(module.pwd, "getpwnam", lambda _user: Record())
+    monkeypatch.setattr(module, "_prepare_gdm", lambda user: calls.append(("gdm", user)) or True)
+    monkeypatch.setattr(module, "_prepare_accounts_service", lambda user: calls.append(("accounts", user)))
+    monkeypatch.setattr(module, "_prepare_gnome_settings", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("GNOME settings are activation-time, not pre-reboot login materialization")))
+    monkeypatch.setattr(module, "_prepare_human_popup_baseline", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("popup baseline is activation-time, not pre-reboot login materialization")))
+
+    assert module.prepare_graphical_login_baseline("clientflow-kiosk") is True
+    assert calls == [("gdm", "clientflow-kiosk"), ("accounts", "clientflow-kiosk")]
+
+
 def test_53a_source_uses_release_owned_chrome_and_display_only_prerequisite():
     runtime = (ROOT / "client/runtime/clientflow_runtime/display_runtime.py").read_text()
     prepare = MODULE_PATH.read_text()

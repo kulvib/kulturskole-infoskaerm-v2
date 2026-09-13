@@ -90,3 +90,18 @@ def test_manual_activation_requires_existing_backend_client_approval_before_loca
     assert "status` credential" in activation
     assert "fails closed before `/opt/clientflow/active`" in activation
     assert "not a new release authority" in activation
+
+
+def test_customer_first_activation_documents_pre_reboot_login_materialization_and_staged_cli_dispatch():
+    source = PROCEDURE.read_text(encoding="utf-8")
+    customer = source[source.index("### Canonical customer fresh-install path"):source.index("## 5. Materialize")]
+    install = _section(source, 6)
+    activation = _section(source, 7)
+
+    assert "clientflow_runtime.display_session_prepare" in install
+    assert "minimum GDM/AccountsService login baseline" in install
+    assert "controlled reboot" in install
+    assert "runtime/bin/python -P -m clientflow_release activate" in customer
+    assert "invokes the already materialized stable updater" not in customer
+    assert '"$RELEASE_ROOT/runtime/bin/python" -P -m clientflow_release activate' in activation
+    assert 'sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate' not in activation

@@ -9,6 +9,7 @@ HELPER = ROOT / "client/bootstrap/clientflow-fresh-install"
 CLI = ROOT / "client/release/lib/clientflow_release/cli.py"
 TX = ROOT / "client/release/lib/clientflow_release/transaction.py"
 GUARD = ROOT / "client/runtime/clientflow_runtime/browser_guard.py"
+SESSION_PREP = ROOT / "client/runtime/clientflow_runtime/display_session_prepare.py"
 GUI = ROOT / "client/libexec/local-gui"
 QUICK = ROOT / "client/systemd/clientflow-kiosk-quicksettings-guard.service"
 VERSION = ROOT / "client/VERSION"
@@ -57,11 +58,19 @@ def test_dispatch_uses_staged_immutable_release_cli_not_stable_updater():
     assert "--expected-release-approval-reference" in source
 
 
-def test_fresh_install_reboots_only_after_durable_pending_state_and_activation_requires_kiosk_wayland():
+def test_fresh_install_materializes_graphical_login_before_reboot_and_activation_requires_kiosk_wayland():
     helper = _source(HELPER)
+    session_prepare = _source(SESSION_PREP)
     cli = _source(CLI)
     assert 'state.get("status") != "pending_manual_activation"' in helper
+    assert '"clientflow_runtime.display_session_prepare"' in helper
+    assert '_prepare_pre_activation_graphical_session()' in helper
     assert '[str(SYSTEMCTL), "--no-block", "reboot"]' in helper
+    post_install = helper[helper.index("authorities = f"):helper.index("except urllib.error.HTTPError")]
+    assert post_install.index("_prepare_pre_activation_graphical_session()") < post_install.index("_queue_controlled_pre_activation_reboot()")
+    assert 'prepare_graphical_login_baseline' in session_prepare
+    assert '_ensure_exact_chrome' not in session_prepare
+    assert '_prepare_system_kiosk_policy' not in session_prepare
     assert 'props.get("Name") == KIOSK_USER' in helper
     assert 'props.get("Seat") == "seat0"' in helper
     assert 'props.get("Remote") == "no"' in helper
