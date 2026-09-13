@@ -63,12 +63,13 @@ def test_client_model_and_routes_do_not_retain_legacy_liveness_authority():
 def test_reads_use_batch_presence_and_dedicated_presence_endpoint():
     clients = read_backend("service1/routers/clients.py")
     presence = read_backend("service1/client_presence.py")
-    assert "load_client_presences(session, clients)" in clients
+    assert "load_client_presences_with_status_rows(session, clients)" in clients
     assert '@router.get("/clients/{id}/presence", response_model=ClientPresenceRead)' in clients
     assert "return load_client_presence(session, client).public_dict()" in clients
     presence_route = clients.split('@router.get("/clients/{id}/presence"', 1)[1].split('@router.get("/clients/{id}/chrome-status"', 1)[0]
     assert 'response.headers["Cache-Control"] = "no-store, max-age=0"' in presence_route
     assert "ClientDomainStatus.client_id.in_(client_ids)" in presence
+    assert "return _load_client_presence_batch(session, clients, now=now)" in presence
     assert "ClientDomainCredential.id.in_(credential_ids)" in presence
     chrome_get = clients.split('@router.get("/clients/{id}/chrome-status")', 1)[1].split('@router.put("/clients/{id}/chrome-status")', 1)[0]
     assert '"last_seen"' not in chrome_get

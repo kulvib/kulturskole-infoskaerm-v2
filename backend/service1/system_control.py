@@ -16,6 +16,7 @@ from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from fastapi import HTTPException
+from sqlalchemy import case, func
 from sqlmodel import Session, select
 
 from .client_domain_models import ClientCommand, ClientDomainStatus
@@ -236,8 +237,7 @@ def _command_status(row: ClientCommand | None) -> str:
     return str(row.status if row is not None else "").strip().lower()
 
 
-def local_management_projection(session: Session, client_id: int) -> dict[str, Any]:
-    row = latest_system_command(session, client_id, command_types=LOCAL_MANAGEMENT_COMMANDS)
+def local_management_projection_from_command(row: ClientCommand | None) -> dict[str, Any]:
     if row is None:
         return {
             "action": None,
@@ -288,8 +288,13 @@ def local_management_projection(session: Session, client_id: int) -> dict[str, A
     }
 
 
-def os_update_projection(session: Session, client_id: int) -> dict[str, Any]:
-    row = latest_system_command(session, client_id, command_types={"update_os"})
+
+def local_management_projection(session: Session, client_id: int) -> dict[str, Any]:
+    return local_management_projection_from_command(
+        latest_system_command(session, client_id, command_types=LOCAL_MANAGEMENT_COMMANDS)
+    )
+
+def os_update_projection_from_command(row: ClientCommand | None) -> dict[str, Any]:
     if row is None:
         return {
             "pending_os_update": False,
@@ -339,14 +344,18 @@ def os_update_projection(session: Session, client_id: int) -> dict[str, Any]:
     }
 
 
-def power_projection(
-    session: Session,
-    client_id: int,
+
+def os_update_projection(session: Session, client_id: int) -> dict[str, Any]:
+    return os_update_projection_from_command(
+        latest_system_command(session, client_id, command_types={"update_os"})
+    )
+
+def power_projection_from_command(
+    row: ClientCommand | None,
     *,
     current_boot_id: str | None,
     status_online: bool,
 ) -> dict[str, Any]:
-    row = latest_system_command(session, client_id, command_types={"reboot", "shutdown"})
     result = {
         "pending_reboot": False,
         "pending_shutdown": False,
@@ -408,6 +417,77 @@ def power_projection(
         result["last_shutdown_started_at"] = row.claimed_at or row.requested_at
     result["last_power_event_at"] = row.completed_at or row.claimed_at or row.requested_at
     result["last_power_event_source"] = str(payload.get("source") or "system_command")[:80]
+    return result
+
+
+def power_projection(
+    session: Session,
+    client_id: int,
+    *,
+    current_boot_id: str | None,
+    status_online: bool,
+) -> dict[str, Any]:
+    return power_projection_from_command(
+        latest_system_command(session, client_id, command_types={"reboot", "shutdown"}),
+        current_boot_id=current_boot_id,
+        status_online=status_online,
+    )
+
+
+def load_latest_system_projection_commands(
+    session: Session,
+    client_ids: list[int],
+) -> dict[int, dict[str, ClientCommand | None]]:
+    """Load the latest power/update/local command per client in one query.
+
+    ``row_number()`` keeps the result bounded to at most three rows per client
+    while preserving the exact existing ordering: newest ``requested_at`` and
+    then newest command id. The three projection command groups are disjoint.
+    """
+    ids = sorted({int(client_id) for client_id in client_ids})
+    if not ids:
+        return {}
+
+    projection_kind = case(
+        (ClientCommand.command_type.in_(("reboot", "shutdown")), "power"),
+        (ClientCommand.command_type == "update_os", "os_update"),
+        (ClientCommand.command_type.in_(tuple(LOCAL_MANAGEMENT_COMMANDS)), "local_management"),
+        else_="other",
+    )
+    ranked = (
+        select(
+            ClientCommand.id.label("command_id"),
+            func.row_number()
+            .over(
+                partition_by=(ClientCommand.client_id, projection_kind),
+                order_by=(ClientCommand.requested_at.desc(), ClientCommand.id.desc()),
+            )
+            .label("projection_rank"),
+        )
+        .where(
+            ClientCommand.client_id.in_(ids),
+            ClientCommand.domain == SYSTEM_DOMAIN,
+            ClientCommand.command_type.in_(tuple(SYSTEM_COMMAND_TYPES)),
+        )
+        .subquery()
+    )
+    latest_ids = select(ranked.c.command_id).where(ranked.c.projection_rank == 1)
+    rows = session.exec(select(ClientCommand).where(ClientCommand.id.in_(latest_ids))).all()
+
+    result: dict[int, dict[str, ClientCommand | None]] = {
+        client_id: {"power": None, "os_update": None, "local_management": None}
+        for client_id in ids
+    }
+    for row in rows:
+        if row.command_type in {"reboot", "shutdown"}:
+            kind = "power"
+        elif row.command_type == "update_os":
+            kind = "os_update"
+        elif row.command_type in LOCAL_MANAGEMENT_COMMANDS:
+            kind = "local_management"
+        else:
+            continue
+        result[int(row.client_id)][kind] = row
     return result
 
 def apply_status_power_observation(
