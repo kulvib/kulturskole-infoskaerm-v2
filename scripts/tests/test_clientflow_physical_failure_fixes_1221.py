@@ -36,13 +36,13 @@ def _class_tuple(source: str, class_name: str, name: str):
     raise AssertionError(f"{class_name}.{name} not found")
 
 
-def test_source_1320_1221_matches_promoted_catalog_after_immutable_publication():
-    # The exact approved 1.3.20/1221 bytes have been published and independently
-    # re-read from the canonical immutable store, so runtime selection may now
-    # advance to the same source/build identity.
-    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.20"
+def test_source_1321_1222_stages_next_build_identity_while_catalog_remains_1320_1221():
+    # CF-1221-REBOOT-01 is fixed in source, but immutable 1.3.20/1221 remains
+    # the selected runtime release until the next exact candidate passes the
+    # complete build, approval, publication and catalog-promotion gates.
+    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.21"
     release_input = json.loads(_source(RELEASE_INPUT))
-    assert release_input["release_sequence"] == 1221
+    assert release_input["release_sequence"] == 1222
     assert release_input["minimum_ubuntu_lts"] == "26.04"
     assert release_input["architecture"] == "amd64"
     assert release_input["runtime_python"] == "3.13.14"
@@ -54,7 +54,6 @@ def test_source_1320_1221_matches_promoted_catalog_after_immutable_publication()
     selected = catalog["releases"][0]
     assert selected["release_id"] == "clientflow-1.3.20-seq-1221"
     assert selected["release_sequence"] == 1221
-
 
 def test_dispatch_uses_staged_immutable_release_cli_not_stable_updater():
     source = _source(HELPER)
