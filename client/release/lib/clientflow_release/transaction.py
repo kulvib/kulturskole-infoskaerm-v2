@@ -817,7 +817,17 @@ def _restore_pending_first_activation(layout: Layout, release_root: Path) -> Non
     _disable_stable_updater_timer(layout)
 
 
+_ACTIVATION_HEALTH_OPTIONAL_MARKER = "# ClientFlow-Activation-Health: optional"
+
+
 def _expected_active_units(release_root: Path) -> tuple[list[str], list[str]]:
+    """Return units that must be active for activation health.
+
+    Only units carrying the explicit ClientFlow activation-health optional
+    marker are excluded.  A generic systemd Condition*= directive is *not*
+    sufficient: credential-gated and other required units must still fail
+    activation when their prerequisites are absent.
+    """
     services: list[str] = []
     sockets: list[str] = []
     for path in (release_root / "client-runtime/systemd").iterdir():
@@ -825,6 +835,8 @@ def _expected_active_units(release_root: Path) -> tuple[list[str], list[str]]:
         if path.suffix == ".socket":
             sockets.append(path.name)
         elif path.suffix == ".service" and "WantedBy=clientflow.target" in text:
+            if _ACTIVATION_HEALTH_OPTIONAL_MARKER in text:
+                continue
             services.append(path.name)
     return sorted(services), sorted(sockets)
 

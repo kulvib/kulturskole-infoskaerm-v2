@@ -71,7 +71,7 @@ ENABLE_AGGRESSIVE_HIDE = os.environ.get("CLIENTFLOW_BROWSER_GUARD_ENABLE_AGGRESS
 # At override window.open/alert/confirm kan påvirke enkelte sites. Derfor default off.
 ENABLE_NATIVE_BLOCK = os.environ.get("CLIENTFLOW_BROWSER_GUARD_ENABLE_NATIVE_BLOCK", "1").strip().lower() in ("1", "true", "yes", "y")
 
-VERSION = "1.6.5"
+VERSION = "1.6.6"
 
 DEBUG_URL = f"http://{HOST}:{PORT}/json"
 
@@ -157,12 +157,20 @@ def get_refresh_sec() -> int:
 
 
 def get_tabs():
+    """Return the current DevTools targets, or None when Chrome is unavailable.
+
+    An unavailable DevTools endpoint is a normal state while kiosk Chrome is
+    intentionally stopped (for example by Calendar OFF).  Keep that distinct
+    from a successfully queried Chrome instance that simply has no main page
+    target, so observability can stay useful without journal spam.
+    """
     try:
         with urllib.request.urlopen(DEBUG_URL, timeout=3) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+            return payload if isinstance(payload, list) else []
     except Exception as e:
         log_chrome_debug_unready(str(e))
-        return []
+        return None
 
 
 def is_main_page_target(tab: dict) -> bool:
@@ -1080,7 +1088,10 @@ async def evaluate_js(tab, js: str, label: str):
 
 
 async def run_once(refresh_sec: int):
-    tabs = [t for t in get_tabs() if is_main_page_target(t)]
+    tab_payload = get_tabs()
+    if tab_payload is None:
+        return None
+    tabs = [t for t in tab_payload if is_main_page_target(t)]
     results = []
 
     for tab in tabs:
@@ -1114,7 +1125,9 @@ async def _async_main():
             if refresh_sec != last_refresh_sec:
                 log(f"Browser refresh-interval ændret: {last_refresh_sec}s -> {refresh_sec}s")
                 last_refresh_sec = refresh_sec
-            results = await run_once(refresh_sec)
+            run_result = await run_once(refresh_sec)
+            chrome_ready = run_result is not None
+            results = run_result or []
 
             for r in results:
                 if isinstance(r, dict) and r.get("error"):
@@ -1123,31 +1136,36 @@ async def _async_main():
                         log(f"FEJL evaluate: {msg}")
                         last_error = msg
 
+            # A failed DevTools query is deliberately silent by default.  It is
+            # the expected state while Calendar/GUI has intentionally stopped
+            # Chrome.  A successful Chrome query with zero main-page targets is
+            # still useful operational information and keeps the old summary.
             now = time.monotonic()
-            summary_interval = 10 if results else max(10, int(EMPTY_SUMMARY_INTERVAL_SEC or 60))
-            if now - last_summary > summary_interval:
-                if results:
-                    for r in results:
-                        if isinstance(r, dict):
-                            log(
-                                "status "
-                                f"url={r.get('href')} "
-                                f"readyState={r.get('readyState')} "
-                                f"skipped={r.get('skipped')} "
-                                f"cookieMode={r.get('cookieMode')} "
-                                f"accepted={r.get('accepted')} "
-                                f"acceptResult={r.get('acceptResult')} "
-                                f"marker={r.get('marker')} "
-                                f"hidden={r.get('hidden')} "
-                                f"overlay={r.get('overlay')} "
-                                f"css={r.get('css')} "
-                                f"countdown={r.get('countdown')}"
-                            )
-                        else:
-                            log(f"status non-dict={r!r}")
-                else:
-                    log("Ingen main page http(s)-tabs fundet eller Chrome ikke klar.")
-                last_summary = now
+            if chrome_ready:
+                summary_interval = 10 if results else max(10, int(EMPTY_SUMMARY_INTERVAL_SEC or 60))
+                if now - last_summary > summary_interval:
+                    if results:
+                        for r in results:
+                            if isinstance(r, dict):
+                                log(
+                                    "status "
+                                    f"url={r.get('href')} "
+                                    f"readyState={r.get('readyState')} "
+                                    f"skipped={r.get('skipped')} "
+                                    f"cookieMode={r.get('cookieMode')} "
+                                    f"accepted={r.get('accepted')} "
+                                    f"acceptResult={r.get('acceptResult')} "
+                                    f"marker={r.get('marker')} "
+                                    f"hidden={r.get('hidden')} "
+                                    f"overlay={r.get('overlay')} "
+                                    f"css={r.get('css')} "
+                                    f"countdown={r.get('countdown')}"
+                                )
+                            else:
+                                log(f"status non-dict={r!r}")
+                    else:
+                        log("Ingen main page http(s)-tabs fundet i kørende Chrome.")
+                    last_summary = now
         except Exception as e:
             log(f"FEJL i loop: {e}")
 

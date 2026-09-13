@@ -108,7 +108,6 @@ def test_preclaim_helper_validates_binding_and_embedded_installer_from_exact_bun
         "artifact_url": "/api/enrollment/fresh-install-artifact",
         "release_approval_reference": "approval/test",
     }
-    # materializer requires its destination to exist, matching the real private /run directory.
     dest = tmp_path / "materialized"
     dest.mkdir()
     out = module._materialize_installer(bundle, binding, dest)
@@ -116,11 +115,19 @@ def test_preclaim_helper_validates_binding_and_embedded_installer_from_exact_bun
     assert oct(out.stat().st_mode & 0o777) == "0o500"
 
 
-def test_same_helper_activates_pending_install_without_reusing_consumed_code(monkeypatch, tmp_path: Path):
+def test_same_helper_activates_pending_install_through_staged_release_cli_without_reusing_consumed_code(monkeypatch, tmp_path: Path):
     module = _load_helper()
-    updater = tmp_path / "clientflow-updater.pyz"
-    updater.write_bytes(b"updater")
-    module.STABLE_UPDATER = updater
+    release_id = "clientflow-1.3.18-seq-1219"
+    release_root = tmp_path / "releases" / release_id
+    runtime_python = release_root / "runtime/bin/python"
+    package_init = release_root / "release/lib/clientflow_release/__init__.py"
+    runtime_python.parent.mkdir(parents=True)
+    package_init.parent.mkdir(parents=True)
+    runtime_python.write_bytes(b"python")
+    package_init.write_text("", encoding="utf-8")
+    module.RELEASES_ROOT = tmp_path / "releases"
+    monkeypatch.setattr(module, "_secure_root_regular", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "_prepare_kiosk_session_for_activation", lambda: None)
     captured = {}
 
     class Result:
@@ -128,22 +135,34 @@ def test_same_helper_activates_pending_install_without_reusing_consumed_code(mon
 
     def fake_run(command, **kwargs):
         captured["command"] = command
+        captured["kwargs"] = kwargs
         return Result()
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     state = {
         "status": "pending_manual_activation",
         "fresh_install_binding": {
-            "release_id": "clientflow-1.3.18-seq-1219",
-            "release_approval_reference": "clientflow-1.3.18-seq-1219/operator-approval",
+            "release_id": release_id,
+            "release_approval_reference": f"{release_id}/operator-approval",
         },
     }
     assert module._activate_pending(state) == 0
     command = captured["command"]
-    assert "activate" in command
-    assert "clientflow-1.3.18-seq-1219" in command
+    assert command[:5] == [str(runtime_python), "-P", "-m", "clientflow_release", "activate"]
+    assert "--release-id" in command
+    assert release_id in command
+    assert "--expected-release-approval-reference" in command
     assert "CF-" not in " ".join(command)
     assert "authorization" not in " ".join(command).lower()
+    assert captured["kwargs"]["env"]["PYTHONPATH"] == str(release_root / "release/lib")
+
+
+def test_fresh_install_contract_queues_reboot_only_after_pending_state_exists():
+    source = HELPER.read_text(encoding="utf-8")
+    queue = source[source.index("def _queue_controlled_pre_activation_reboot"):source.index("def _prompt")]
+    assert 'state.get("status") != "pending_manual_activation"' in queue
+    assert '[str(SYSTEMCTL), "--no-block", "reboot"]' in queue
+    assert "fresh_install_binding" in queue
 
 
 def test_55a_is_wired_into_canonical_database_contract_and_migration_runner():
