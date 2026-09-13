@@ -63,7 +63,7 @@ def test_catalog_1221_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1221_matches_current_source_identity_after_publication() -> None:
+def test_catalog_1221_remains_selected_while_source_stages_1321_1222() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -73,10 +73,14 @@ def test_catalog_1221_matches_current_source_identity_after_publication() -> Non
     )
     source_sequence = int(release_input["release_sequence"])
 
-    assert source_version == "1.3.20"
-    assert source_sequence == 1221
+    # Source/build identity advances one sequence only after the reboot-inhibitor
+    # fix has passed canonical CI. Runtime selection deliberately remains on the
+    # last approved and immutably published release until 1.3.21/1222 completes
+    # its own reproducible build, approval and publication gates.
+    assert source_version == "1.3.21"
+    assert source_sequence == 1222
     assert data["catalog_sequence"] == 1221
-    assert source_sequence == data["catalog_sequence"]
+    assert source_sequence == data["catalog_sequence"] + 1
 
     assert data["latest_stable"] == "1.3.20"
     assert data["default_install_version"] == "1.3.20"
@@ -96,7 +100,6 @@ def test_catalog_1221_matches_current_source_identity_after_publication() -> Non
         "source_commit",
     ):
         assert field not in release
-
 
 def test_catalog_1221_resolvers_select_1320_for_update_and_fresh_install() -> None:
     load_catalog.cache_clear()
