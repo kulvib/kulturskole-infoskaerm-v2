@@ -1,26 +1,26 @@
-ClientFlow 1.3.20 / sequence 1221 staged source-identity transition
-Base main commit: 03e2125a29e38bd95dcfb7dd1e1beda2296ae02c
+ClientFlow 1.3.20 / sequence 1221 catalog-promotion validation
+Source/build commit: 7391dcfee0b77eddd46f7b8a986ae442b64d3fcc
 Source identity: 1.3.20 / seq 1221
-Runtime catalog intentionally remains: 1.3.19 / seq 1220
-Base main canonical push CI: run #654 -> success
+Approved bundle SHA256: 64df5b844b6dc3ffa1579f6477142a99e80b747d66825900b957c4af8ee01941
+Approved bundle size: 223098880
+Approval reference: clientflow-1.3.20-seq-1221/operator-approval-2026-09-13
 
-PASS: identity transition changes no ClientFlow runtime implementation
-PASS: source sequence leads catalog sequence by exactly one
-PASS: runtime catalog still selects clientflow-1.3.19-seq-1220
-PASS: release procedure explicitly requires build/approval/publication before catalog promotion
+PASS: canonical source push CI for source commit -> success
+PASS: deterministic runtime-input transport verified
+PASS: independent release-build candidates byte-identical
+PASS: Ubuntu 26.04 executable candidate gate
+PASS: explicit exact-candidate manual approval
+PASS: exact approved bundle transported through GitHub as transport-only prerelease
+PASS: approved bundle published to canonical Render 51M artifact store
+PASS: independent store re-read -> size 223098880
+PASS: independent store re-read -> SHA256 64df5b844b6dc3ffa1579f6477142a99e80b747d66825900b957c4af8ee01941
+PASS: catalog promotion selects clientflow-1.3.20-seq-1221
+PASS: source sequence equals catalog sequence (1221)
+PASS: 1.3.11 remains safe minimum in-place predecessor
+PASS: no ClientFlow runtime implementation change in catalog-promotion package
 PASS: no Livestream/Terminal/Remote Desktop implementation files changed
-PASS: focused identity/catalog/procedure suite -> 35 passed
-PASS: broader runnable release/build/publication/fresh-install suite -> 109 passed
-PASS: repo checksum manifest regenerated and verified
 
-NOT CLAIMED LOCALLY: full backend/tests + scripts/tests (analysis container lacks CI dependency sqlmodel)
-NOT CLAIMED LOCALLY: Ruff formatting/lint (repo-pinned Ruff not installed)
-
-PENDING: full canonical GitHub CI for the source-identity transition commit
-PENDING: exact post-merge source SHA
-PENDING: reproducible 1.3.20/1221 candidate build
-PENDING: manual approval of the exact reproducible candidate
-PENDING: immutable publication and independent store verification
-PENDING: separate 1.3.20/1221 runtime-catalog promotion
-PENDING: canonical physical fresh-install verification
-PENDING: physical GUI pixel-parity acceptance
+PENDING: full canonical GitHub CI for the catalog-promotion commit
+PENDING: deployment of promoted catalog/backend
+PENDING: canonical physical Ubuntu 26.04 fresh-install verification of 1.3.20/1221
+PENDING: physical GUI pixel-parity acceptance against deployed legacy 1.1.19 contract

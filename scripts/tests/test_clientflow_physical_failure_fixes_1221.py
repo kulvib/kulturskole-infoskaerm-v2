@@ -36,10 +36,10 @@ def _class_tuple(source: str, class_name: str, name: str):
     raise AssertionError(f"{class_name}.{name} not found")
 
 
-def test_source_1320_1221_is_staged_while_catalog_stays_on_1319_1220():
-    # The physical-fix/lifecycle changes have passed their CI gates. The next
-    # source/build identity may now advance one step while runtime selection
-    # remains on the last approved and immutably published catalog release.
+def test_source_1320_1221_matches_promoted_catalog_after_immutable_publication():
+    # The exact approved 1.3.20/1221 bytes have been published and independently
+    # re-read from the canonical immutable store, so runtime selection may now
+    # advance to the same source/build identity.
     assert VERSION.read_text(encoding="utf-8").strip() == "1.3.20"
     release_input = json.loads(_source(RELEASE_INPUT))
     assert release_input["release_sequence"] == 1221
@@ -48,11 +48,12 @@ def test_source_1320_1221_is_staged_while_catalog_stays_on_1319_1220():
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
-    assert catalog["catalog_sequence"] == 1220
-    assert catalog["latest_stable"] == "1.3.19"
-    assert catalog["default_install_version"] == "1.3.19"
+    assert catalog["catalog_sequence"] == 1221
+    assert catalog["latest_stable"] == "1.3.20"
+    assert catalog["default_install_version"] == "1.3.20"
     selected = catalog["releases"][0]
-    assert selected["release_id"] == "clientflow-1.3.19-seq-1220"
+    assert selected["release_id"] == "clientflow-1.3.20-seq-1221"
+    assert selected["release_sequence"] == 1221
 
 
 def test_dispatch_uses_staged_immutable_release_cli_not_stable_updater():
