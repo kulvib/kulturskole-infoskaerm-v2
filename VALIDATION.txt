@@ -1,15 +1,19 @@
-ClientFlow 1.3.20 / seq 1221 changed-files validation
+ClientFlow physical-harvest CI hotfix 1 validation
+Branch target: fix/clientflow-1220-physical-harvest
+Source identity remains: 1.3.19 / seq 1220
 
 PASS: compile-all changed tree
 PASS: scripts/tests/test_clientflow_physical_failure_fixes_1221.py -> 9 passed
-PASS: relevant test_clientflow_code_only_fresh_install tests -> 3 passed, 5 deselected
-PASS: HEALTH optional-unit dynamic behavior
-PASS: Browser Guard unavailable-vs-empty dynamic behavior
-PASS: frozen-domain changed-file check
+PASS: relevant test_clientflow_code_only_fresh_install tests -> 3 passed
+PASS: existing display operational-parity local-GUI test in reconstructed client context
+PASS: existing legacy119 local-GUI source assertions, including safe admin action and explicit frozen-domain reads
+PASS: current approved backend catalog remains 1.3.19 / seq 1220 and matches source identity
 PASS: deployed legacy GUI SHA256 = 027804da4cf3e722ce42a6d7760aa55a1a8f30d901bfc532a1cf63e22d5ba936
 PASS: deployed legacy status_map SHA256 = 9e6f01fbbe4b23f1458cc2740cea1bc43777499f8d4da3bd83f2a474fb7e74b4
 
-PENDING: full repository CI after package application
-PENDING: 1.3.20/1221 reproducible release build/approval
+PENDING: full GitHub backend/tests + scripts/tests after package application
+PENDING: remaining GitHub CI jobs
+PENDING: separate 1.3.20 / seq 1221 identity promotion only after green CI
+PENDING: reproducible candidate build/approval
 PENDING: canonical physical fresh-install verification
-PENDING: physical screenshot/pixel GUI parity on target GTK4/Wayland
+PENDING: physical screenshot/pixel GUI acceptance on GTK4/Wayland

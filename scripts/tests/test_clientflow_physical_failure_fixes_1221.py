@@ -33,10 +33,13 @@ def _class_tuple(source: str, class_name: str, name: str):
     raise AssertionError(f"{class_name}.{name} not found")
 
 
-def test_next_release_identity_is_1_3_20_sequence_1221():
-    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.20"
+def test_fix_branch_keeps_approved_1_3_19_1220_identity_until_ci_is_green():
+    # Release identity is promoted only after the fix branch passes the full
+    # repository CI.  The approved catalog must therefore continue to match
+    # the exact 1.3.19/1220 source/build identity during this phase.
+    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.19"
     source = _source(RELEASE_INPUT)
-    assert '"release_sequence": 1221' in source
+    assert '"release_sequence": 1220' in source
     assert '"minimum_ubuntu_lts": "26.04"' in source
     assert '"architecture": "amd64"' in source
     assert '"runtime_python": "3.13.14"' in source
@@ -111,7 +114,14 @@ def test_gui_matches_deployed_1_1_19_visible_structure_and_order():
     assert 'title="ClientFlow Status"' in source
     assert 'Gtk.Button(label="Start kiosk")' in source
     assert 'Gtk.Button(label="Stop kiosk")' in source
-    assert 'Gtk.Button(label="Skift til administrator")' not in source
+    # Existing V2 technician switching remains available, but is rendered as a
+    # subordinate second-row action so the two legacy primary buttons keep
+    # their equal-width geometry.
+    assert 'Gtk.Button(label="Skift til administrator")' in source
+    assert 'SWITCH_USER_HELPER' in source
+    assert '[str(SWITCH_USER_HELPER)]' in source
+    assert 'timeout=10' in source
+    assert 'shell=True' not in source
     assert 'Gtk.Label(label="ClientFlow"' not in source
     assert 'button = Gtk.Button(label="⧉")' in source
     assert 'ok.set_text("Kopieret!")' in source
@@ -148,6 +158,9 @@ def test_gui_system_network_kiosk_and_calendar_fields_match_deployed_legacy_cont
     )
     for token in (
         '("Kiosk URL", "kiosk_url")',
+        '("Auto refresh", "browser_refresh")',
+        'configuration.get("browser_refresh_interval_sec")',
+        'self._set("browser_refresh", "slået fra" if refresh_seconds == 0 else f"{refresh_seconds} sek.")',
         '("Status", "operational_status")',
         '("Kiosk browser status", "display")',
         '("Aktuel skærm", "resolution_current")',
