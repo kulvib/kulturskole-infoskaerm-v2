@@ -777,6 +777,8 @@ def install_fresh(args: argparse.Namespace) -> dict:
                 "release_id": release_id,
                 "next_command": f"clientflow-installer activate --release-id {release_id} --expected-release-approval-reference <release-approval-reference>",
                 "automatic_reboot": False,
+                "pre_activation_reboot_required": True,
+                "reboot_reason": "establish_kiosk_wayland_session_before_manual_activation",
             }
     else:
         # A brand-new consuming transaction must have both one-time authorities
@@ -945,6 +947,8 @@ def install_fresh(args: argparse.Namespace) -> dict:
         "release_id": release_id,
         "next_command": f"clientflow-installer activate --release-id {release_id} --expected-release-approval-reference <release-approval-reference>",
         "automatic_reboot": False,
+        "pre_activation_reboot_required": True,
+        "reboot_reason": "establish_kiosk_wayland_session_before_manual_activation",
     }
 
 def _common_transaction_parser(parser: argparse.ArgumentParser) -> None:

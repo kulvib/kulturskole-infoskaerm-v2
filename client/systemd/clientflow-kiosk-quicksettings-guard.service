@@ -1,5 +1,6 @@
 [Unit]
 Description=ClientFlow optional kiosk quick-settings guard
+# ClientFlow-Activation-Health: optional
 After=clientflow-platform-prepare.service graphical.target
 ConditionPathExists=/var/lib/clientflow/kiosk-lockdown/state.json
 

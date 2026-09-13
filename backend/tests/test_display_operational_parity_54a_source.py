@@ -120,5 +120,13 @@ def test_local_gui_contains_operational_parity_fields_without_credentials() -> N
     assert "clientflow-root-terminal-broker.socket" in gui
     assert "/etc/clientflow/credentials" not in gui
     assert "LoadCredential" not in gui
-    assert "self.set_default_size(820, 900)" in gui
+
+    # Step 54A originally pinned a transitional 820x900 GTK window.  The
+    # physical-harvest GUI work intentionally replaces that with the deployed
+    # 1.1.19 responsive visual contract while preserving all 54A fields.
+    assert "GUI_PANEL_WIDTH_RATIO = 0.43" in gui
+    assert "GUI_PANEL_HEIGHT_RATIO = 0.98" in gui
+    assert "GUI_PANEL_MAX_WIDTH = 900" in gui
+    assert "self.set_resizable(False)" in gui
+    assert "self._target_panel_size()" in gui
     assert "self.next_resolution_probe" in runtime

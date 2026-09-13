@@ -1,10 +1,12 @@
 #!/usr/bin/python3
 """Canonical code-only ClientFlow fresh-install bootstrap.
 
-This preclaim helper is supplied by the installation media/preparation plane.
-It has no release selector. The short enrollment code is exchanged with the
-canonical backend for the token's durable exact-release binding and a signed
-one-time authorization. Claim remains the only consuming transaction.
+The short enrollment code is exchanged with the canonical backend for its
+already-bound exact release.  First activation is deliberately separate from
+installation: installation ends in durable ``pending_manual_activation`` and
+queues one controlled reboot so GDM can establish the canonical
+``clientflow-kiosk`` Wayland session.  A later invocation activates only the
+immutable staged release through ``python -P -m clientflow_release``.
 """
 from __future__ import annotations
 
@@ -14,11 +16,12 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.request
 
@@ -29,7 +32,10 @@ RELEASE_ID_RE = re.compile(r"^clientflow-\d+\.\d+\.\d+-seq-[1-9]\d*$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 MAX_JSON_BYTES = 128 * 1024
 INSTALL_STATE = Path("/var/lib/clientflow/release/install-state.json")
-STABLE_UPDATER = Path("/usr/lib/clientflow/updater/clientflow-updater.pyz")
+RELEASES_ROOT = Path("/opt/clientflow/releases")
+KIOSK_USER = "clientflow-kiosk"
+LOGINCTL = Path("/usr/bin/loginctl")
+SYSTEMCTL = Path("/usr/bin/systemctl")
 
 
 def _post_json(path: str, body: dict[str, object], *, timeout: int = 30):
@@ -175,6 +181,120 @@ def _existing_install_state() -> dict[str, object] | None:
     return data
 
 
+def _secure_root_regular(path: Path, *, executable: bool = False) -> None:
+    try:
+        meta = path.lstat()
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Canonical staged fil mangler: {path}") from exc
+    if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode):
+        raise RuntimeError(f"Canonical staged fil er ikke en reel fil: {path}")
+    if meta.st_uid != 0 or (meta.st_mode & 0o022):
+        raise RuntimeError(f"Canonical staged fil har ugyldig ownership/permissions: {path}")
+    if executable and not (meta.st_mode & stat.S_IXUSR):
+        raise RuntimeError(f"Canonical staged runtime er ikke eksekverbar: {path}")
+
+
+def _session_properties(session_id: str) -> dict[str, str]:
+    result = subprocess.run(
+        [str(LOGINCTL), "show-session", session_id,
+         "-p", "Name", "-p", "Seat", "-p", "Remote", "-p", "Type", "-p", "Active"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if result.returncode != 0:
+        return {}
+    props: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            props[key] = value
+    return props
+
+
+def _canonical_kiosk_session() -> str | None:
+    result = subprocess.run(
+        [str(LOGINCTL), "list-sessions", "--no-legend"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("Kan ikke læse logind-sessioner før activation")
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        session_id = fields[0]
+        props = _session_properties(session_id)
+        if (
+            props.get("Name") == KIOSK_USER
+            and props.get("Seat") == "seat0"
+            and props.get("Remote") == "no"
+            and props.get("Type") == "wayland"
+        ):
+            return session_id
+    return None
+
+
+def _prepare_kiosk_session_for_activation() -> None:
+    """Require and foreground the post-reboot canonical kiosk Wayland session."""
+    if not LOGINCTL.is_file():
+        raise RuntimeError("loginctl mangler; kan ikke etablere canonical kiosk-session")
+    session_id = _canonical_kiosk_session()
+    if session_id is None:
+        raise RuntimeError(
+            "Canonical clientflow-kiosk Wayland-session mangler. "
+            "Fresh install skal gennemføre den kontrollerede reboot før activation; "
+            "brug derefter brugerskift til cfadmin uden at logge kiosk-sessionen ud."
+        )
+    props = _session_properties(session_id)
+    if props.get("Active") != "yes":
+        subprocess.run([str(LOGINCTL), "unlock-session", session_id], check=False, timeout=5)
+        result = subprocess.run([str(LOGINCTL), "activate", session_id], check=False, timeout=5)
+        if result.returncode != 0:
+            raise RuntimeError("Kunne ikke gøre canonical kiosk-session aktiv på seat0")
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if _session_properties(session_id).get("Active") == "yes":
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError("Canonical kiosk-session blev ikke aktiv på seat0 inden activation")
+
+
+def _canonical_staged_activation(release_id: str, approval: str) -> int:
+    release_root = RELEASES_ROOT / release_id
+    if release_root.parent != RELEASES_ROOT or not release_root.is_dir() or release_root.is_symlink():
+        raise RuntimeError("Pending installation mangler canonical staged release")
+    runtime_python = release_root / "runtime/bin/python"
+    package_init = release_root / "release/lib/clientflow_release/__init__.py"
+    _secure_root_regular(runtime_python, executable=True)
+    _secure_root_regular(package_init)
+    _prepare_kiosk_session_for_activation()
+    env = {
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONPATH": str(release_root / "release/lib"),
+    }
+    result = subprocess.run(
+        [
+            str(runtime_python), "-P", "-m", "clientflow_release", "activate",
+            "--release-id", release_id,
+            "--expected-release-approval-reference", approval,
+        ],
+        env=env,
+        check=False,
+    )
+    return int(result.returncode)
+
+
 def _activate_pending(state: dict[str, object]) -> int | None:
     status = str(state.get("status") or "")
     if status == "activated":
@@ -189,14 +309,21 @@ def _activate_pending(state: dict[str, object]) -> int | None:
     approval = str(binding.get("release_approval_reference") or "").strip()
     if not RELEASE_ID_RE.fullmatch(release_id) or not approval:
         raise RuntimeError("Pending installation har ugyldig exact release-binding")
-    if not STABLE_UPDATER.is_file():
-        raise RuntimeError("Pending installation mangler canonical stable updater")
-    result = subprocess.run([
-        sys.executable, "-I", str(STABLE_UPDATER), "activate",
-        "--release-id", release_id,
-        "--expected-release-approval-reference", approval,
-    ], check=False)
-    return int(result.returncode)
+    return _canonical_staged_activation(release_id, approval)
+
+
+def _queue_controlled_pre_activation_reboot() -> None:
+    """Queue exactly one reboot after durable pending state exists."""
+    state = _existing_install_state()
+    if not isinstance(state, dict) or state.get("status") != "pending_manual_activation":
+        raise RuntimeError("Kontrolleret reboot afvist: durable pending_manual_activation mangler")
+    binding = state.get("fresh_install_binding")
+    if not isinstance(binding, dict) or not RELEASE_ID_RE.fullmatch(str(binding.get("release_id") or "")):
+        raise RuntimeError("Kontrolleret reboot afvist: pending exact release-binding mangler")
+    result = subprocess.run([str(SYSTEMCTL), "--no-block", "reboot"], check=False)
+    if result.returncode != 0:
+        raise RuntimeError("Kunne ikke køe den kontrollerede pre-activation reboot")
+    print("ClientFlow installation er staged. Klienten genstarter for at etablere kiosk-sessionen før manuel activation.")
 
 
 def _prompt(label: str, *, required: bool = False) -> str:
@@ -251,7 +378,10 @@ def main() -> int:
                 command += ["--bootstrap-network-connection-uuid", network_uuid]
             authorities = f"{code}\n{binding['authorization']}\n".encode("utf-8")
             result = subprocess.run(command, input=authorities, check=False)
-            return int(result.returncode)
+            if result.returncode != 0:
+                return int(result.returncode)
+            _queue_controlled_pre_activation_reboot()
+            return 0
     except urllib.error.HTTPError as exc:
         try:
             detail = json.loads(exc.read().decode("utf-8")).get("detail")

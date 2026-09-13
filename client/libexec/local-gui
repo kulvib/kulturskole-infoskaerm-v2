@@ -6,10 +6,11 @@ native GTK4 implementation and canonical runtime/state authorities, while
 preserving the technician-facing grouping and copy affordances:
 Handlinger, Systeminfo, Kioskinfo, Netværksinfo and Kalender – næste 7 dage.
 
-The only mutating Display controls are Start/Stop kiosk through the narrow
-Display runtime RPC.  "Skift til administrator" only locks the current
-clientflow-kiosk seat0 session so GDM can present cfadmin.  No domain
-credential or secret is read by this process.
+The mutating Display controls are Start/Stop kiosk through the narrow Display
+runtime RPC.  "Skift til administrator" only invokes the canonical
+clientflow-switch-user-admin helper, which locks the exact active local kiosk
+session so GDM can present cfadmin.  No domain credential or secret is read by
+this process.
 """
 from __future__ import annotations
 
@@ -39,6 +40,30 @@ PUBLIC_CLIENT_PATH = Path(os.getenv("CLIENTFLOW_PUBLIC_CLIENT_PATH", "/var/lib/c
 VERSION_PATH = Path("/opt/clientflow/active/VERSION")
 SWITCH_USER_HELPER = Path("/opt/clientflow/active/client-runtime/libexec/clientflow-switch-user-admin")
 CLIENT_ID = str(os.getenv("CLIENTFLOW_CLIENT_ID") or "-").strip() or "-"
+
+# Deployed ClientFlow 1.1.19 GUI visual contract.
+COLOR_GREEN = "#218739"
+COLOR_RED = "#cc3333"
+COLOR_ORANGE = "#ffa500"
+COLOR_GRAY = "#888888"
+COLOR_BG = "#f4f6fa"
+COLOR_BLUE = "#1E88E5"
+GUI_PANEL_WIDTH_RATIO = 0.43
+GUI_PANEL_HEIGHT_RATIO = 0.98
+GUI_PANEL_MIN_WIDTH = 420
+GUI_PANEL_MIN_HEIGHT = 620
+GUI_PANEL_MAX_WIDTH = 900
+GUI_PANEL_BOTTOM_MARGIN = 36
+GUI_PANEL_FRAME_EXTRA_HEIGHT = 110
+GUI_PANEL_FRAME_EXTRA_WIDTH = 24
+GUI_COMPACT_MAX_WIDTH = 760
+GUI_LARGE_MAX_WIDTH = 1100
+GUI_COMPACT_WIDTH_RATIO = 0.56
+GUI_LARGE_WIDTH_RATIO = 0.34
+GUI_COMPACT_SCALE_MIN = 0.66
+GUI_STANDARD_SCALE_MAX = 1.02
+GUI_LARGE_SCALE_MAX = 1.22
+GUI_CALENDAR_VISIBLE_DAYS = 7
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -143,7 +168,7 @@ def _network_snapshot() -> dict[str, str]:
             mac = Path(f"/sys/class/net/{name}/address").read_text(encoding="ascii").strip() or "-"
         except OSError:
             mac = "-"
-        kind = "wifi" if Path(f"/sys/class/net/{name}/wireless").exists() else "lan"
+        kind = "wifi" if name.startswith(("wl", "wlan")) or Path(f"/sys/class/net/{name}/wireless").exists() else "lan"
         interfaces[name] = {"ip": ip, "mac": mac, "kind": kind}
 
     wifi_name = next((name for name, row in interfaces.items() if row["kind"] == "wifi"), "")
@@ -153,14 +178,11 @@ def _network_snapshot() -> dict[str, str]:
     wifi = interfaces.get(wifi_name) or {}
     lan = interfaces.get(lan_name) or {}
     active_kind = str(active.get("kind") or "")
-    active_label = (
-        f"{'WiFi' if active_kind == 'wifi' else 'LAN'} · {active_interface}"
-        if active_interface
-        else "Ingen aktiv forbindelse"
-    )
+    active_label = "WiFi" if active_kind == "wifi" else ("LAN" if active_kind == "lan" else (active_interface or "-"))
     return {
         "active_connection": active_label,
         "active_ip": str(active.get("ip") or "-"),
+        "active_interface": active_interface or "-",
         "active_mac": str(active.get("mac") or "-"),
         "wifi_ip": str(wifi.get("ip") or "-"),
         "wifi_mac": str(wifi.get("mac") or "-"),
@@ -193,187 +215,586 @@ def _calendar_rows() -> list[tuple[str, str, str, str]]:
     by_date = {str(row.get("date")): row for row in rows if isinstance(row, dict)}
     result: list[tuple[str, str, str, str]] = []
     today = date.today()
-    danish = ("man", "tir", "ons", "tor", "fre", "lør", "søn")
-    for offset in range(7):
+    weekdays = ("Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag", "Søndag")
+    months = (
+        "januar", "februar", "marts", "april", "maj", "juni",
+        "juli", "august", "september", "oktober", "november", "december",
+    )
+    for offset in range(GUI_CALENDAR_VISIBLE_DAYS):
         current = date.fromordinal(today.toordinal() + offset)
         row = by_date.get(current.isoformat(), {})
-        status = str(row.get("status") or "missing")
+        status = str(row.get("status") or "off").strip().lower()
+        date_text = f"{weekdays[current.weekday()]} {current.day}. {months[current.month - 1]} {current.year}"
         if status == "on":
-            state = "Åben"
-            opens = str(row.get("onTime") or "-")[:5]
-            closes = str(row.get("offTime") or "-")[:5]
-        elif status == "off":
-            state, opens, closes = "Lukket", "-", "-"
+            state = "On"
+            opens = str(row.get("onTime") or "–")[:5]
+            closes = str(row.get("offTime") or "–")[:5]
         else:
-            state, opens, closes = "Ikke rapporteret", "-", "-"
-        result.append((f"{danish[current.weekday()]} {current.strftime('%d/%m')}", state, opens, closes))
+            state, opens, closes = "Off", "", ""
+        result.append((date_text, state, opens, closes))
     return result
 
 
 class ClientFlowWindow(Gtk.ApplicationWindow):
+    """GTK4 port of the deployed ClientFlow 1.1.19 local-GUI visual contract."""
+
+    SYSTEM_FIELDS = (
+        ("Klient ID", "client_id"),
+        ("Navn / Lokation", "name_locality"),
+        ("Backend-status", "backend"),
+        ("ClientFlow version", "version"),
+        ("Backend sync", "backend_sync"),
+        ("Kalender service", "calendar_service"),
+        ("Browser Guard", "browser_guard"),
+        ("Remote terminal", "terminal"),
+        ("Admin terminal", "admin_terminal"),
+        ("Remote desktop", "remote_desktop"),
+        ("ClientFlow update", "update"),
+        ("Ubuntu update", "ubuntu_update"),
+        ("Livestream", "livestream"),
+        ("Oppetid", "uptime"),
+    )
+    NETWORK_FIELDS = (
+        ("Aktiv forbindelse", "network_active"),
+        ("Aktiv IP", "network_active_ip"),
+        ("Aktivt interface", "network_active_interface"),
+        ("Aktiv MAC", "network_active_mac"),
+        ("WiFi IP", "network_wifi_ip"),
+        ("WiFi MAC", "network_wifi_mac"),
+        ("LAN IP", "network_lan_ip"),
+        ("LAN MAC", "network_lan_mac"),
+    )
+
     def __init__(self, app: Gtk.Application) -> None:
         super().__init__(application=app, title="ClientFlow Status")
-        self.set_default_size(820, 900)
-        self.set_resizable(True)
         self.labels: dict[str, Gtk.Label] = {}
         self.copy_values: dict[str, str] = {}
+        self.copy_ok: dict[str, Gtk.Label] = {}
+        self.network_row_widgets: dict[str, tuple[Gtk.Widget, ...]] = {}
         self.calendar_labels: list[tuple[Gtk.Label, Gtk.Label, Gtk.Label, Gtk.Label]] = []
-        self.message = Gtk.Label(xalign=0)
+        self.field_grids: list[Gtk.Grid] = []
+        self.action_grid: Gtk.Grid | None = None
+        self.admin_button: Gtk.Button | None = None
+        self._admin_switch_inflight = False
+        self.startup_disable_until = time.monotonic() + 10.0
+        self._layout_mode = "standard"
+        self._layout_scale = 1.0
+        width, height = self._target_panel_size()
+        self.set_default_size(width, height)
+        self.set_resizable(False)
+        self._install_css()
         self._build()
         _write_gui_status("running")
         self.refresh()
         GLib.timeout_add_seconds(1, self.refresh)
+        GLib.timeout_add(2500, self._refresh_layout)
+
+    @staticmethod
+    def _screen_size() -> tuple[int, int]:
+        display = Gdk.Display.get_default()
+        if display is None:
+            return 1920, 1080
+        try:
+            monitors = display.get_monitors()
+            monitor = monitors.get_item(0) if monitors.get_n_items() else None
+            if monitor is None:
+                return 1920, 1080
+            geometry = monitor.get_geometry()
+            # GTK4/GDK exposes monitor geometry in compositor logical coordinates.
+            # Gtk.Window default sizes use the same coordinate space; multiplying by
+            # the scale factor would oversize the legacy-ratio panel on HiDPI/Wayland.
+            return max(1, geometry.width), max(1, geometry.height)
+        except Exception:
+            return 1920, 1080
+
+    def _target_panel_size(self) -> tuple[int, int]:
+        screen_w, screen_h = self._screen_size()
+        if screen_h < 800 or screen_w < 1400:
+            mode, ratio, max_width = "compact", GUI_COMPACT_WIDTH_RATIO, min(GUI_COMPACT_MAX_WIDTH, GUI_PANEL_MAX_WIDTH)
+        elif screen_w >= 3000 or screen_h >= 1800:
+            mode, ratio, max_width = "large", GUI_LARGE_WIDTH_RATIO, GUI_LARGE_MAX_WIDTH
+        else:
+            mode, ratio, max_width = "standard", GUI_PANEL_WIDTH_RATIO, GUI_PANEL_MAX_WIDTH
+        safe_w = max(320, screen_w - GUI_PANEL_FRAME_EXTRA_WIDTH)
+        safe_h = max(320, screen_h - GUI_PANEL_BOTTOM_MARGIN - GUI_PANEL_FRAME_EXTRA_HEIGHT)
+        width = int(max(min(GUI_PANEL_MIN_WIDTH, safe_w), min(screen_w * ratio, max_width, safe_w)))
+        height = int(max(min(GUI_PANEL_MIN_HEIGHT, safe_h), min(screen_h * GUI_PANEL_HEIGHT_RATIO, safe_h)))
+        height_scale = height / 972.0
+        width_scale = width / 826.0
+        base_row_h = 20
+        required_h = (
+            62 + 15 * (base_row_h + 4) + 40 + 6 * (base_row_h + 4) + 38
+            + 8 * (base_row_h + 4) + 38 + 42 + GUI_CALENDAR_VISIBLE_DAYS * (base_row_h + 2) + 36
+        )
+        fit_scale = height / max(1, required_h)
+        raw = min(height_scale, width_scale * 1.03, fit_scale * 0.96)
+        if mode == "compact":
+            scale = max(GUI_COMPACT_SCALE_MIN, min(raw, 0.88))
+        elif mode == "large":
+            scale = max(0.98, min(max(height_scale, width_scale), 1.18, GUI_LARGE_SCALE_MAX))
+        else:
+            scale = max(0.78, min(raw, GUI_STANDARD_SCALE_MAX))
+        self._layout_mode = mode
+        self._layout_scale = scale
+        return width, height
+
+    def _install_css(self) -> None:
+        scale = self._layout_scale
+        big = max(8, round(11 * scale))
+        normal = max(8, round(10 * scale))
+        heading = max(9, round(11 * scale))
+        row_min = max(15, round(20 * scale))
+        css = f"""
+        window, .legacy-root, .legacy-frame, .legacy-frame > box {{
+            background-color: {COLOR_BG};
+            color: #000000;
+            font-family: Arial, sans-serif;
+            font-size: {normal}px;
+        }}
+        .legacy-frame {{
+            border: 1px solid #b9b9b9;
+            border-radius: 0;
+            margin: {max(3, round(8 * scale))}px {max(5, round(10 * scale))}px;
+            padding: 0;
+        }}
+        .section-title {{
+            background-color: {COLOR_BG};
+            font-family: Arial, sans-serif;
+            font-size: {heading}px;
+            font-weight: bold;
+            margin-left: 5px;
+            padding: 0 3px;
+        }}
+        .legacy-content {{ padding: {max(2, round(3 * scale))}px; }}
+        .field-label, .field-value, .calendar-cell, .copy-ok, .sleep-indicator, .error-label {{
+            font-family: Arial, sans-serif;
+            font-size: {normal}px;
+            min-height: {row_min}px;
+            padding: 0;
+            margin: 0;
+        }}
+        .field-label {{ font-weight: normal; }}
+        .calendar-heading {{
+            font-family: Arial, sans-serif;
+            font-size: {normal}px;
+            font-weight: normal;
+            min-height: {row_min}px;
+        }}
+        .start-button, .stop-button {{
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: {big}px;
+            font-weight: normal;
+            border-radius: 2px;
+            min-height: {max(24, round(30 * scale))}px;
+            padding: {max(3, round(4 * scale))}px 8px;
+        }}
+        .start-button {{ background-image: none; background-color: #4BB543; }}
+        .start-button:hover {{ background-image: none; background-color: #4BB543; }}
+        .stop-button {{ background-image: none; background-color: {COLOR_RED}; }}
+        .stop-button:hover {{ background-image: none; background-color: {COLOR_RED}; }}
+        .admin-button {{
+            font-family: Arial, sans-serif;
+            font-size: {normal}px;
+            font-weight: normal;
+            min-height: {max(22, round(26 * scale))}px;
+            margin-top: {max(2, round(4 * scale))}px;
+        }}
+        .copy-button {{
+            background: transparent;
+            border: 0;
+            box-shadow: none;
+            padding: 0 2px;
+            min-height: {row_min}px;
+            min-width: 18px;
+            font-family: Arial, sans-serif;
+            font-size: {normal}px;
+            color: #000000;
+        }}
+        .copy-ok {{ color: {COLOR_GREEN}; }}
+        .status-green {{ color: {COLOR_GREEN}; }}
+        .status-red {{ color: {COLOR_RED}; }}
+        .status-orange {{ color: {COLOR_ORANGE}; }}
+        .status-blue {{ color: {COLOR_BLUE}; }}
+        .status-gray {{ color: {COLOR_GRAY}; }}
+        .sleep-indicator {{ color: {COLOR_BLUE}; font-style: italic; }}
+        .error-label {{ color: {COLOR_RED}; }}
+        """
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode("utf-8"))
+        display = Gdk.Display.get_default()
+        if display is not None:
+            old_provider = getattr(self, "_css_provider", None)
+            if old_provider is not None:
+                Gtk.StyleContext.remove_provider_for_display(display, old_provider)
+            Gtk.StyleContext.add_provider_for_display(display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self._css_provider = provider
 
     @staticmethod
     def _frame(title: str) -> tuple[Gtk.Frame, Gtk.Box]:
         frame = Gtk.Frame()
-        frame.set_label(title)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.set_margin_top(8)
-        box.set_margin_bottom(8)
-        box.set_margin_start(10)
-        box.set_margin_end(10)
+        frame.add_css_class("legacy-frame")
+        title_label = Gtk.Label(label=title, xalign=0)
+        title_label.add_css_class("section-title")
+        frame.set_label_widget(title_label)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.add_css_class("legacy-content")
         frame.set_child(box)
         return frame, box
 
-    def _add_field(
-        self,
-        grid: Gtk.Grid,
-        row: int,
-        label_text: str,
-        key: str,
-        *,
-        copyable: bool = False,
-    ) -> None:
-        label = Gtk.Label(label=label_text, xalign=0)
-        label.add_css_class("dim-label")
-        value = Gtk.Label(label="-", xalign=0)
-        value.set_selectable(True)
+    def _spacing_values(self) -> tuple[int, int, int, int]:
+        scale = self._layout_scale
+        multiplier = 0.82 if self._layout_mode == "compact" else 1.18 if self._layout_mode == "large" else 1.0
+        grid_x = max(4, round(8 * scale * multiplier))
+        grid_y = max(1, round(4 * scale * multiplier))
+        action_x = max(5, round(10 * scale * multiplier))
+        action_y = max(4, round(8 * scale * multiplier))
+        return grid_x, grid_y, action_x, action_y
+
+    def _grid(self) -> Gtk.Grid:
+        grid_x, grid_y, _action_x, _action_y = self._spacing_values()
+        grid = Gtk.Grid(column_spacing=2 * grid_x, row_spacing=2 * grid_y)
+        grid.set_margin_top(grid_y)
+        grid.set_margin_bottom(grid_y)
+        grid.set_margin_start(grid_x)
+        grid.set_margin_end(grid_x)
+        self.field_grids.append(grid)
+        return grid
+
+    @staticmethod
+    def _label(text: str = "", *, css: str = "field-value", xalign: float = 0.0) -> Gtk.Label:
+        label = Gtk.Label(label=text, xalign=xalign)
+        label.add_css_class(css)
+        label.set_wrap(False)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        return label
+
+    def _attach_field(self, grid: Gtk.Grid, row: int, column: int, title: str, key: str) -> tuple[Gtk.Label, Gtk.Label]:
+        label = self._label(f"{title}:", css="field-label")
+        value = self._label("", css="field-value")
         value.set_hexpand(True)
-        value.set_ellipsize(Pango.EllipsizeMode.END)
-        grid.attach(label, 0, row, 1, 1)
-        grid.attach(value, 1, row, 1, 1)
+        value.set_wrap(True)
+        value.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        value.set_ellipsize(Pango.EllipsizeMode.NONE)
+        grid.attach(label, column, row, 1, 1)
+        grid.attach(value, column + 1, row, 1, 1)
         self.labels[key] = value
-        if copyable:
-            button = Gtk.Button(label="Kopiér")
-            button.connect("clicked", lambda _button, selected=key: self._copy(selected))
-            grid.attach(button, 2, row, 1, 1)
+        return label, value
+
+    def _copy_controls(self, grid: Gtk.Grid, row: int, key: str, *, ok_column: int = 2, copy_column: int = 3) -> tuple[Gtk.Label, Gtk.Button]:
+        ok = self._label("", css="copy-ok", xalign=1)
+        button = Gtk.Button(label="⧉")
+        button.add_css_class("copy-button")
+        button.set_tooltip_text("Kopiér")
+        button.connect("clicked", lambda _button, selected=key: self._copy(selected))
+        grid.attach(ok, ok_column, row, 1, 1)
+        grid.attach(button, copy_column, row, 1, 1)
+        self.copy_ok[key] = ok
+        return ok, button
 
     def _build(self) -> None:
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        outer.set_margin_top(10)
-        outer.set_margin_bottom(10)
-        outer.set_margin_start(12)
-        outer.set_margin_end(12)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.add_css_class("legacy-root")
         self.set_child(outer)
-
-        title = Gtk.Label(label="ClientFlow", xalign=0)
-        title.add_css_class("title-2")
-        outer.append(title)
 
         actions_frame, actions = self._frame("Handlinger")
         outer.append(actions_frame)
-        action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        actions.append(action_row)
+        _grid_x, _grid_y, action_x, action_y = self._spacing_values()
+        action_grid = Gtk.Grid(column_spacing=2 * action_x, row_spacing=0)
+        action_grid.set_column_homogeneous(True)
+        action_grid.set_margin_top(action_y)
+        action_grid.set_margin_bottom(action_y)
+        action_grid.set_margin_start(action_x)
+        action_grid.set_margin_end(action_x)
+        self.action_grid = action_grid
+        actions.append(action_grid)
         self.start_button = Gtk.Button(label="Start kiosk")
+        self.start_button.add_css_class("start-button")
+        self.start_button.set_hexpand(True)
         self.stop_button = Gtk.Button(label="Stop kiosk")
-        self.admin_button = Gtk.Button(label="Skift til administrator")
+        self.stop_button.add_css_class("stop-button")
+        self.stop_button.set_hexpand(True)
         self.start_button.connect("clicked", lambda _button: self._send_action("start_browser"))
         self.stop_button.connect("clicked", lambda _button: self._send_action("stop_browser"))
+        action_grid.attach(self.start_button, 0, 0, 1, 1)
+        action_grid.attach(self.stop_button, 1, 0, 1, 1)
+
+        # V2-safe technician action retained from the pre-parity GTK4 GUI.
+        # It is deliberately subordinate to the two legacy primary actions so
+        # Start/Stop keep the deployed 1.1.19 equal-width geometry.
+        self.admin_button = Gtk.Button(label="Skift til administrator")
+        self.admin_button.add_css_class("admin-button")
+        self.admin_button.set_hexpand(True)
         self.admin_button.connect("clicked", self._switch_to_admin)
-        action_row.append(self.start_button)
-        action_row.append(self.stop_button)
-        action_row.append(self.admin_button)
+        action_grid.attach(self.admin_button, 0, 1, 2, 1)
 
         system_frame, system_box = self._frame("Systeminfo")
         outer.append(system_frame)
-        system_grid = Gtk.Grid(column_spacing=12, row_spacing=4)
-        system_box.append(system_grid)
-        system_fields = (
-            ("Klient ID", "client_id"),
-            ("Navn / Lokation", "name_locality"),
-            ("Hostname", "hostname"),
-            ("ClientFlow version", "version"),
-            ("Backend-status", "backend"),
-            ("Backend sync", "backend_sync"),
-            ("Kalender service", "calendar_service"),
-            ("Oppetid", "uptime"),
-            ("ClientFlow update", "update"),
-            ("Ubuntu/System", "ubuntu_update"),
-            ("Livestream", "livestream"),
-            ("Remote desktop", "remote_desktop"),
-            ("Remote terminal", "terminal"),
-            ("Admin terminal", "admin_terminal"),
-        )
-        for row, (label, key) in enumerate(system_fields):
-            self._add_field(system_grid, row, label, key)
+        system_columns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, homogeneous=True)
+        system_box.append(system_columns)
+        left_grid = self._grid()
+        right_grid = self._grid()
+        left_grid.set_hexpand(True)
+        right_grid.set_hexpand(True)
+        system_columns.append(left_grid)
+        system_columns.append(right_grid)
+        rows_per_col = (len(self.SYSTEM_FIELDS) + 1) // 2
+        for index, (title, key) in enumerate(self.SYSTEM_FIELDS):
+            target_grid = left_grid if index < rows_per_col else right_grid
+            row = index if index < rows_per_col else index - rows_per_col
+            self._attach_field(target_grid, row, 0, title, key)
 
         kiosk_frame, kiosk_box = self._frame("Kioskinfo")
         outer.append(kiosk_frame)
-        kiosk_grid = Gtk.Grid(column_spacing=12, row_spacing=4)
+        kiosk_grid = self._grid()
         kiosk_box.append(kiosk_grid)
         kiosk_fields = (
-            ("Kiosk URL", "kiosk_url", True),
-            ("Auto refresh", "browser_refresh", False),
-            ("Kiosk browser status", "display", False),
-            ("Display power", "power", False),
-            ("Aktuel skærm", "resolution_current", False),
-            ("Backend-valgt", "resolution_desired", False),
-            ("Skærmstatus", "resolution_status", False),
-            ("Browser Guard", "browser_guard", False),
+            ("Kiosk URL", "kiosk_url"),
+            # Required V2 operational-parity field retained inside the legacy
+            # Kioskinfo visual grammar.
+            ("Auto refresh", "browser_refresh"),
+            ("Status", "operational_status"),
+            ("Kiosk browser status", "display"),
+            ("Aktuel skærm", "resolution_current"),
+            ("Backend-valgt", "resolution_desired"),
+            ("Skærmstatus", "resolution_status"),
         )
-        for row, (label, key, copyable) in enumerate(kiosk_fields):
-            self._add_field(kiosk_grid, row, label, key, copyable=copyable)
+        for row, (title, key) in enumerate(kiosk_fields):
+            self._attach_field(kiosk_grid, row, 0, title, key)
+        self._copy_controls(kiosk_grid, 0, "kiosk_url")
+        self.sleep_indicator = self._label("", css="sleep-indicator")
+        self.sleep_indicator.set_wrap(True)
+        kiosk_grid.attach(self.sleep_indicator, 0, len(kiosk_fields), 4, 1)
 
         network_frame, network_box = self._frame("Netværksinfo")
         outer.append(network_frame)
-        network_grid = Gtk.Grid(column_spacing=12, row_spacing=4)
+        network_grid = self._grid()
         network_box.append(network_grid)
-        network_fields = (
-            ("Aktiv forbindelse", "network_active", False),
-            ("Aktiv IP", "network_active_ip", True),
-            ("Aktiv MAC", "network_active_mac", True),
-            ("WiFi IP", "network_wifi_ip", True),
-            ("WiFi MAC", "network_wifi_mac", True),
-            ("LAN IP", "network_lan_ip", True),
-            ("LAN MAC", "network_lan_mac", True),
-        )
-        for row, (label, key, copyable) in enumerate(network_fields):
-            self._add_field(network_grid, row, label, key, copyable=copyable)
+        for row, (title, key) in enumerate(self.NETWORK_FIELDS):
+            label, value = self._attach_field(network_grid, row, 0, title, key)
+            ok, copy_button = self._copy_controls(network_grid, row, key)
+            self.network_row_widgets[key] = (label, value, ok, copy_button)
 
         calendar_frame, calendar_box = self._frame("Kalender – næste 7 dage")
         outer.append(calendar_frame)
-        calendar_grid = Gtk.Grid(column_spacing=14, row_spacing=3)
+        calendar_grid = Gtk.Grid(column_spacing=8, row_spacing=1)
+        calendar_grid.set_margin_top(1)
+        calendar_grid.set_margin_bottom(2)
+        calendar_grid.set_margin_start(4)
+        calendar_grid.set_margin_end(4)
         calendar_box.append(calendar_grid)
-        for column, heading in enumerate(("Dag", "Status", "Åbner", "Lukker")):
-            label = Gtk.Label(label=heading, xalign=0)
-            label.add_css_class("heading")
+        for column, heading in enumerate(("Dato", "Status", "Åbner", "Lukker")):
+            label = self._label(heading, css="calendar-heading", xalign=0.5)
+            label.set_hexpand(column == 0)
             calendar_grid.attach(label, column, 0, 1, 1)
-        for index in range(7):
-            labels = tuple(Gtk.Label(label="-", xalign=0) for _ in range(4))
+        for index in range(GUI_CALENDAR_VISIBLE_DAYS):
+            labels = tuple(self._label("", css="calendar-cell", xalign=0.5) for _ in range(4))
+            labels[0].set_xalign(0.5)
+            labels[0].set_hexpand(True)
+            labels[0].set_width_chars(26)
+            labels[1].set_width_chars(7)
+            labels[2].set_width_chars(8)
+            labels[3].set_width_chars(8)
             for column, label in enumerate(labels):
-                label.set_selectable(True)
                 calendar_grid.attach(label, column, index + 1, 1, 1)
             self.calendar_labels.append(labels)  # type: ignore[arg-type]
 
-        self.message.set_wrap(True)
-        outer.append(self.message)
+        self.error_label = self._label("", css="error-label")
+        self.error_label.set_margin_start(10)
+        self.error_label.set_margin_end(10)
+        self.error_label.set_margin_bottom(5)
+        outer.append(self.error_label)
+
+    def _refresh_layout(self) -> bool:
+        old_mode = self._layout_mode
+        old_scale = self._layout_scale
+        width, height = self._target_panel_size()
+        self.set_default_size(width, height)
+        if old_mode != self._layout_mode or abs(old_scale - self._layout_scale) >= 0.01:
+            self._install_css()
+            grid_x, grid_y, action_x, action_y = self._spacing_values()
+            for grid in self.field_grids:
+                grid.set_column_spacing(2 * grid_x)
+                grid.set_row_spacing(2 * grid_y)
+                grid.set_margin_top(grid_y)
+                grid.set_margin_bottom(grid_y)
+                grid.set_margin_start(grid_x)
+                grid.set_margin_end(grid_x)
+            if self.action_grid is not None:
+                self.action_grid.set_column_spacing(2 * action_x)
+                self.action_grid.set_margin_top(action_y)
+                self.action_grid.set_margin_bottom(action_y)
+                self.action_grid.set_margin_start(action_x)
+                self.action_grid.set_margin_end(action_x)
+        return True
 
     def _copy(self, key: str) -> None:
         value = str(self.copy_values.get(key) or "").strip()
-        if not value or value == "-":
-            self.message.set_text("Ingen værdi at kopiere.")
+        if not value or value in {"-", "–"}:
+            self.error_label.set_text("Ingen værdi at kopiere.")
             return
         display = Gdk.Display.get_default()
         if display is None:
-            self.message.set_text("Clipboard er ikke tilgængeligt.")
+            self.error_label.set_text("Clipboard er ikke tilgængeligt.")
             return
         display.get_clipboard().set_text(value)
-        self.message.set_text("Kopieret!")
+        self.error_label.set_text("")
+        ok = self.copy_ok.get(key)
+        if ok is not None:
+            ok.set_text("Kopieret!")
+            def clear() -> bool:
+                ok.set_text("")
+                return False
+            GLib.timeout_add(1500, clear)
+
+    @staticmethod
+    def _color_class(color: str | None) -> str | None:
+        return {
+            COLOR_GREEN: "status-green",
+            COLOR_RED: "status-red",
+            COLOR_ORANGE: "status-orange",
+            COLOR_BLUE: "status-blue",
+            COLOR_GRAY: "status-gray",
+        }.get(color or "")
+
+    def _set(self, key: str, value: str, color: str | None = None) -> None:
+        text = str(value if value not in (None, "") else "-")
+        label = self.labels[key]
+        for css in ("status-green", "status-red", "status-orange", "status-blue", "status-gray"):
+            label.remove_css_class(css)
+        color_class = self._color_class(color)
+        if color_class:
+            label.add_css_class(color_class)
+        label.set_text(text)
+        self.copy_values[key] = text
+
+    @staticmethod
+    def _service_display_state(state: str) -> tuple[str, str]:
+        if state == "active":
+            return "Kører", COLOR_GREEN
+        if state == "inactive":
+            return "Stop", COLOR_RED
+        if state == "failed":
+            return "Fejl", COLOR_RED
+        return state.capitalize() if state else "Ukendt", COLOR_ORANGE
+
+    @classmethod
+    def _service_display(cls, unit: str) -> tuple[str, str]:
+        return cls._service_display_state(_service_state(unit))
+
+    @staticmethod
+    def _ready_unit(unit: str) -> tuple[str, str]:
+        state = _service_state(unit)
+        if state == "active":
+            return "Klar", COLOR_GREEN
+        if state == "failed":
+            return "Fejl", COLOR_RED
+        return state.capitalize() if state else "Ukendt", COLOR_ORANGE
+
+    @staticmethod
+    def _browser_status(runtime: dict[str, Any]) -> tuple[str, str]:
+        state = str(runtime.get("state") or "unknown").strip().lower()
+        step = str(runtime.get("step") or "").strip().lower()
+        reason = str(runtime.get("countdown_reason") or "").strip().lower()
+        remaining = runtime.get("countdown_remaining")
+        try:
+            seconds = max(0, int(remaining or 0))
+        except (TypeError, ValueError):
+            seconds = 0
+        plural = "" if seconds == 1 else "er"
+        if state == "countdown":
+            if step == "display_sleep_countdown" or reason == "display_power_off":
+                return f"Skærm slukkes om {seconds} sekund{plural}…", COLOR_ORANGE
+            if reason == "system_start":
+                return f"Kiosk browser starter om {seconds} sekund{plural}…", COLOR_ORANGE
+            if reason == "configuration_change":
+                return f"Kiosk browser starter ved URL-skift om {seconds} sekund{plural}…", COLOR_ORANGE
+            if reason == "reset_browser":
+                return f"Kiosk browser nulstilles — starter om {seconds} sekund{plural}…", COLOR_ORANGE
+            if reason.startswith("calendar"):
+                return f"Kiosk browser starter fra kalender om {seconds} sekund{plural}…", COLOR_ORANGE
+            return f"Kiosk browser starter om {seconds} sekund{plural}…", COLOR_ORANGE
+        if state == "running" and runtime.get("browser_pid"):
+            return "Kiosk browser kører", COLOR_GREEN
+        if state == "resetting":
+            return "Nulstiller browserprofil og cookies…", COLOR_ORANGE
+        if state == "waiting_session":
+            return "Kiosk browser venter på grafisk session…", COLOR_ORANGE
+        if state == "failed":
+            detail = str(runtime.get("error") or "").strip()
+            return (f"Fejl: {detail}" if detail else "Fejl i kiosk browser"), COLOR_RED
+        if step == "system_rebooting":
+            return "Klient genstarter…", COLOR_RED
+        if step == "system_shutting_down":
+            return "Klient lukker ned…", COLOR_RED
+        if step == "display_sleep_complete":
+            return "Skærm slukket — klienten er stadig online", COLOR_BLUE
+        if step == "display_wake_complete":
+            return "Skærm vækket — klient online", COLOR_GREEN
+        if step == "chrome_closed_manual":
+            return "Kiosk browser lukket manuelt", COLOR_RED
+        if state == "stopped":
+            return "Kiosk browser stoppet", COLOR_RED
+        return "Ingen status.", COLOR_GRAY
+
+    @staticmethod
+    def _format_current_resolution(resolution: dict[str, Any]) -> str:
+        if not resolution:
+            return "Ikke rapporteret endnu"
+        if not resolution.get("ok"):
+            return str(resolution.get("error") or "Ikke rapporteret endnu")[:120]
+        width = resolution.get("width")
+        height = resolution.get("height")
+        refresh = resolution.get("refresh_rate")
+        output = str(resolution.get("output") or "").strip()
+        if not width or not height:
+            return "Ikke rapporteret endnu"
+        try:
+            refresh_text = f" @{float(refresh):g} Hz" if refresh not in (None, "") else ""
+        except (TypeError, ValueError):
+            refresh_text = ""
+        base = f"{width}×{height}{refresh_text}"
+        return f"{base} · {output}" if output else base
+
+    @staticmethod
+    def _format_desired_resolution(desired: dict[str, Any]) -> str:
+        mode = str(desired.get("mode") or "auto").strip().lower()
+        if mode == "auto":
+            return "Auto-detektering"
+        width, height = desired.get("width"), desired.get("height")
+        if width and height:
+            refresh = desired.get("refresh_rate")
+            try:
+                suffix = f" @{float(refresh):g} Hz" if refresh not in (None, "") else ""
+            except (TypeError, ValueError):
+                suffix = ""
+            return f"{width}×{height}{suffix}"
+        return "-"
+
+    @staticmethod
+    def _format_resolution_status(resolution: dict[str, Any], desired: dict[str, Any]) -> tuple[str, str]:
+        if not resolution:
+            return "Klar / ingen aktiv ændring", COLOR_GRAY
+        if resolution.get("ok"):
+            action = str(resolution.get("action") or "").strip().lower()
+            if action == "detect" or str(desired.get("mode") or "").lower() == "auto":
+                return "Auto-detekteret", COLOR_GREEN
+            if action == "apply":
+                return "Anvendt", COLOR_GREEN
+            return "Klar / ingen aktiv ændring", COLOR_GRAY
+        error = str(resolution.get("error") or "").strip()
+        return (f"Fejl: {error}" if error else "Klar / ingen aktiv ændring"), (COLOR_RED if error else COLOR_GRAY)
 
     def _switch_to_admin(self, _button: Gtk.Button) -> None:
-        self.admin_button.set_sensitive(False)
-        self.message.set_text("Åbner administrator-login…")
+        if self._admin_switch_inflight:
+            return
+        if not SWITCH_USER_HELPER.is_file() or not os.access(SWITCH_USER_HELPER, os.X_OK):
+            self.error_label.set_text("Administratorskift er ikke tilgængeligt på denne klient.")
+            return
+        self._admin_switch_inflight = True
+        if self.admin_button is not None:
+            self.admin_button.set_sensitive(False)
+        self.error_label.set_text("")
 
         def worker() -> None:
             try:
@@ -393,15 +814,21 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 if result.returncode != 0:
                     raise RuntimeError((result.stdout or "Skift af bruger fejlede").strip()[:180])
             except Exception as exc:
-                GLib.idle_add(self.message.set_text, f"Administratorskift fejlede: {str(exc)[:180]}")
-                GLib.idle_add(self.admin_button.set_sensitive, True)
+                GLib.idle_add(self.error_label.set_text, f"Administratorskift fejlede: {str(exc)[:180]}")
+            finally:
+                def complete() -> bool:
+                    self._admin_switch_inflight = False
+                    if self.admin_button is not None:
+                        self.admin_button.set_sensitive(True)
+                    return False
+                GLib.idle_add(complete)
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _send_action(self, action: str) -> None:
         self.start_button.set_sensitive(False)
         self.stop_button.set_sensitive(False)
-        self.message.set_text("Kommando sendes…")
+        self.error_label.set_text("")
 
         def worker() -> None:
             try:
@@ -410,104 +837,152 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                     payload["payload"] = {"source": "gui"}
                 _rpc(payload, timeout=25.0)
             except Exception as exc:
-                GLib.idle_add(self.message.set_text, f"Kommando fejlede: {str(exc)[:180]}")
-            else:
-                GLib.idle_add(self.message.set_text, "Kommando udført.")
+                GLib.idle_add(self.error_label.set_text, f"Kommando fejlede: {str(exc)[:180]}")
             finally:
                 GLib.idle_add(self.refresh)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _set(self, key: str, value: str) -> None:
-        text = str(value or "-")
-        self.labels[key].set_text(text)
-        self.copy_values[key] = text
-
     def refresh(self) -> bool:
         try:
             runtime = _read_json(STATUS_PATH)
-            state = str(runtime.get("state") or "unknown")
-            pid = runtime.get("browser_pid")
-            countdown = runtime.get("countdown_remaining")
-            reason = str(runtime.get("countdown_reason") or "")
-            if state == "countdown" and countdown:
-                browser_status = f"Countdown {countdown}s · {reason or 'forbereder'}"
-                self.present()
-            elif state == "running" and pid:
-                browser_status = f"Chrome kører · PID {pid}"
-            else:
-                browser_status = state
-
             public = _read_json(PUBLIC_CLIENT_PATH)
-            client_id = str(public.get("client_id") or CLIENT_ID)
-            client_name = str(public.get("name") or "-")
-            locality = str(public.get("locality") or "").strip()
-            name_locality = f"{client_name} / {locality}" if locality else client_name
             configuration = _read_json(CONFIG_PATH)
             resolution = _read_json(RESOLUTION_STATUS_PATH)
             resolution_desired = _read_json(RESOLUTION_DESIRED_PATH)
             network = _network_snapshot()
+            calendar = _calendar_rows()
 
+            client_id = str(public.get("client_id") or CLIENT_ID or "-")
+            client_name = str(public.get("name") or "-")
+            locality = str(public.get("locality") or "-").strip() or "-"
             self._set("client_id", client_id)
-            self._set("name_locality", name_locality)
-            self._set("hostname", socket.gethostname())
-            self._set("version", _version())
-            self._set("backend", _service_state("clientflow-status-agent.service"))
-            self._set("backend_sync", _service_state("clientflow-display-agent.service"))
-            self._set("calendar_service", _service_state("clientflow-calendar.service"))
-            self._set("uptime", _uptime())
-            self._set("update", _service_state("clientflow-updater.timer"))
-            self._set("ubuntu_update", _service_state("clientflow-system-broker.socket"))
-            self._set("livestream", _service_state("clientflow-livestream-producer.service"))
-            self._set("remote_desktop", _service_state("clientflow-remote-desktop-agent.service"))
-            self._set("terminal", _service_state("clientflow-terminal-agent.service"))
-            self._set("admin_terminal", _service_state("clientflow-root-terminal-broker.socket"))
+            self._set("name_locality", f"{client_name} / {locality}")
 
-            self._set("kiosk_url", str(configuration.get("kiosk_url") or "-"))
-            refresh_seconds = int(configuration.get("browser_refresh_interval_sec") or 0)
+            backend_state = _service_state("clientflow-status-agent.service")
+            if client_id not in {"", "-"} and backend_state == "active":
+                self._set("backend", "Approved / Godkendt", COLOR_GREEN)
+                backend_approved = True
+            elif client_id not in {"", "-"}:
+                self._set("backend", "Registreret / status afventer", COLOR_ORANGE)
+                backend_approved = False
+            else:
+                self._set("backend", "Ikke registreret", COLOR_RED)
+                backend_approved = False
+
+            self._set("version", f"v{_version().lstrip('v')}", COLOR_GREEN)
+            for key, unit in (
+                ("backend_sync", "clientflow-display-agent.service"),
+                ("calendar_service", "clientflow-calendar.service"),
+                ("browser_guard", "clientflow-browser-guard.service"),
+                ("admin_terminal", "clientflow-root-terminal-broker.socket"),
+            ):
+                value, color = self._service_display(unit)
+                self._set(key, value, color)
+
+            # Frozen-domain observability remains deliberately explicit and
+            # read-only.  These calls only inspect systemd state; no frozen
+            # service, socket or credential is mutated by Local GUI.
+            for key, state in (
+                ("terminal", _service_state("clientflow-terminal-agent.service")),
+                ("remote_desktop", _service_state("clientflow-remote-desktop-agent.service")),
+                ("livestream", _service_state("clientflow-livestream-producer.service")),
+            ):
+                value, color = self._service_display_state(state)
+                self._set(key, value, color)
+            value, color = self._ready_unit("clientflow-updater.timer")
+            self._set("update", value, color)
+            value, color = self._ready_unit("clientflow-system-broker.socket")
+            self._set("ubuntu_update", value, color)
+            self._set("uptime", _uptime())
+
+            kiosk_url = str(configuration.get("kiosk_url") or "Afventer godkendelse / ingen kiosk-URL endnu")
+            self._set("kiosk_url", kiosk_url)
+            try:
+                refresh_seconds = max(0, int(configuration.get("browser_refresh_interval_sec") or 0))
+            except (TypeError, ValueError):
+                refresh_seconds = 0
             self._set("browser_refresh", "slået fra" if refresh_seconds == 0 else f"{refresh_seconds} sek.")
-            power_state = str(runtime.get("display_power") or "unknown")
-            if power_state == "off":
-                browser_status = "Dvale – online, skærm slukket"
-            self._set("display", browser_status)
-            self._set("power", "Dvale – online, skærm slukket" if power_state == "off" else power_state)
-            if resolution.get("ok"):
-                current_resolution = f"{resolution.get('output') or '-'} · {resolution.get('width') or '?'}×{resolution.get('height') or '?'} · {resolution.get('refresh_rate') or '?'} Hz"
+            browser_status, browser_color = self._browser_status(runtime)
+            self._set("display", browser_status, browser_color)
+            self._set("resolution_current", self._format_current_resolution(resolution))
+            self._set("resolution_desired", self._format_desired_resolution(resolution_desired))
+            resolution_text, resolution_color = self._format_resolution_status(resolution, resolution_desired)
+            self._set("resolution_status", resolution_text, resolution_color)
+
+            power_state = str(runtime.get("display_power") or "unknown").strip().lower()
+            running = bool(runtime.get("browser_pid")) and str(runtime.get("state") or "").lower() == "running"
+            today_status = calendar[0][1] if calendar else "Off"
+            if backend_approved:
+                if power_state == "off":
+                    op_text, op_color = "Dvale – online, skærm slukket", COLOR_BLUE
+                elif today_status == "On" and running:
+                    op_text, op_color = "Approved – kalender On, kiosk aktiv", COLOR_GREEN
+                elif today_status == "On":
+                    op_text, op_color = "Approved – kalender On, kiosk starter/venter", COLOR_ORANGE
+                else:
+                    op_text, op_color = "Approved – kalender Off", COLOR_BLUE
+            elif client_id not in {"", "-"}:
+                op_text, op_color = "Registreret – henter status", COLOR_ORANGE
             else:
-                current_resolution = str(resolution.get("error") or "ikke detekteret")[:120]
-            self._set("resolution_current", current_resolution)
-            desired_mode = str(resolution_desired.get("mode") or "").lower()
-            if desired_mode == "auto":
-                desired_resolution = "Automatisk / foretrukken skærmtilstand"
-            elif desired_mode == "fixed":
-                desired_resolution = f"{resolution_desired.get('width') or '?'}×{resolution_desired.get('height') or '?'} · {resolution_desired.get('refresh_rate') or 'standard'} Hz"
+                op_text, op_color = "Ikke registreret", COLOR_RED
+            self._set("operational_status", op_text, op_color)
+
+            if str(runtime.get("state") or "").lower() == "countdown" and (
+                str(runtime.get("step") or "").lower() == "display_sleep_countdown"
+                or str(runtime.get("countdown_reason") or "").lower() == "display_power_off"
+            ):
+                remaining = int(runtime.get("countdown_remaining") or 0)
+                plural = "" if remaining == 1 else "er"
+                self.sleep_indicator.set_text(f"⏳ Skærm slukkes om {remaining} sekund{plural}…")
+                self.sleep_indicator.remove_css_class("status-blue")
+                self.sleep_indicator.add_css_class("status-orange")
+            elif power_state == "off":
+                self.sleep_indicator.set_text("💤 Skærm slukket — klient online")
+                self.sleep_indicator.remove_css_class("status-orange")
+                self.sleep_indicator.add_css_class("status-blue")
             else:
-                desired_resolution = "Ikke valgt endnu"
-            self._set("resolution_desired", desired_resolution)
-            resolution_action = str(resolution.get("action") or "unknown")
-            self._set("resolution_status", f"{resolution_action} · {'OK' if resolution.get('ok') else 'fejl/afventer'}")
-            self._set("browser_guard", _service_state("clientflow-browser-guard.service"))
+                self.sleep_indicator.set_text("")
+                self.sleep_indicator.remove_css_class("status-orange")
+                self.sleep_indicator.remove_css_class("status-blue")
 
             self._set("network_active", network["active_connection"])
             self._set("network_active_ip", network["active_ip"])
+            self._set("network_active_interface", network["active_interface"])
             self._set("network_active_mac", network["active_mac"])
             self._set("network_wifi_ip", network["wifi_ip"])
             self._set("network_wifi_mac", network["wifi_mac"])
             self._set("network_lan_ip", network["lan_ip"])
             self._set("network_lan_mac", network["lan_mac"])
 
-            for labels, values in zip(self.calendar_labels, _calendar_rows()):
+            compact = self._layout_mode == "compact"
+            hidden_network = {"network_active_mac", "network_wifi_mac", "network_lan_mac"}
+            for key, widgets in self.network_row_widgets.items():
+                visible = not (compact and key in hidden_network)
+                for widget in widgets:
+                    widget.set_visible(visible)
+
+            for labels, values in zip(self.calendar_labels, calendar):
+                row_color = COLOR_GREEN if values[1] == "On" else COLOR_RED
+                css = self._color_class(row_color)
                 for label, value in zip(labels, values):
+                    for old in ("status-green", "status-red"):
+                        label.remove_css_class(old)
+                    if css:
+                        label.add_css_class(css)
                     label.set_text(value)
 
-            busy = state in {"countdown", "resetting"}
-            running = bool(pid) and state == "running"
-            self.start_button.set_sensitive(not busy and not running)
-            self.stop_button.set_sensitive(not busy and running)
-            self.admin_button.set_sensitive(True)
+            state = str(runtime.get("state") or "").lower()
+            busy = state in {"countdown", "resetting", "waiting_session"}
+            startup_locked = time.monotonic() < self.startup_disable_until
+            power_locked = power_state == "off"
+            self.start_button.set_sensitive(not startup_locked and not busy and not power_locked and not running)
+            self.stop_button.set_sensitive(not startup_locked and not busy and not power_locked and running)
+            if self.admin_button is not None:
+                self.admin_button.set_sensitive(not self._admin_switch_inflight)
             _write_gui_status("running")
         except Exception as exc:
-            self.message.set_text(f"GUI refresh-fejl: {str(exc)[:180]}")
+            self.error_label.set_text(f"GUI refresh-fejl: {str(exc)[:180]}")
             _write_gui_status("running", error=str(exc))
         return True
 
