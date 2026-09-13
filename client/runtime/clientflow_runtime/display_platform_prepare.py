@@ -679,6 +679,22 @@ def _prepare_graphical_kiosk(kiosk_user: str) -> bool:
     return gdm_changed
 
 
+def prepare_graphical_login_baseline(kiosk_user: str) -> bool:
+    """Materialize only the minimum GDM/account state needed for the next login."""
+    try:
+        record = pwd.getpwnam(kiosk_user)
+    except KeyError as exc:
+        raise DisplayPlatformPreparationError(f"Kiosk-bruger findes ikke: {kiosk_user}") from exc
+    if record.pw_uid == 0:
+        raise DisplayPlatformPreparationError("root må ikke være kiosk-bruger")
+    home = Path(record.pw_dir)
+    if not home.is_dir() or home.is_symlink() or home.stat().st_uid != record.pw_uid:
+        raise DisplayPlatformPreparationError("Kiosk-brugerens home mangler eller har forkert ejerskab")
+    gdm_changed = _prepare_gdm(kiosk_user)
+    _prepare_accounts_service(kiosk_user)
+    return gdm_changed
+
+
 def prepare() -> None:
     if os.geteuid() != 0:
         raise DisplayPlatformPreparationError("Display platform preparation kræver root")

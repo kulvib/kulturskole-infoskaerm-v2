@@ -127,6 +127,7 @@ def test_same_helper_activates_pending_install_through_staged_release_cli_withou
     package_init.write_text("", encoding="utf-8")
     module.RELEASES_ROOT = tmp_path / "releases"
     monkeypatch.setattr(module, "_secure_root_regular", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "_canonical_kiosk_session", lambda: "7")
     monkeypatch.setattr(module, "_prepare_kiosk_session_for_activation", lambda: None)
     captured = {}
 
@@ -157,12 +158,44 @@ def test_same_helper_activates_pending_install_through_staged_release_cli_withou
     assert captured["kwargs"]["env"]["PYTHONPATH"] == str(release_root / "release/lib")
 
 
-def test_fresh_install_contract_queues_reboot_only_after_pending_state_exists():
+def test_pending_helper_repairs_missing_kiosk_session_before_attempting_activation(monkeypatch):
+    module = _load_helper()
+    calls = []
+    monkeypatch.setattr(module, "_canonical_kiosk_session", lambda: None)
+    monkeypatch.setattr(module, "_prepare_pre_activation_graphical_session", lambda: calls.append("prepare"))
+    monkeypatch.setattr(module, "_queue_controlled_pre_activation_reboot", lambda: calls.append("reboot"))
+    monkeypatch.setattr(
+        module,
+        "_canonical_staged_activation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("activation must not run before kiosk session exists")),
+    )
+    state = {
+        "status": "pending_manual_activation",
+        "fresh_install_binding": {
+            "release_id": "clientflow-1.3.19-seq-1220",
+            "release_approval_reference": "clientflow-1.3.19-seq-1220/operator-approval",
+        },
+    }
+    assert module._activate_pending(state) == 0
+    assert calls == ["prepare", "reboot"]
+
+
+def test_fresh_install_prepares_graphical_login_before_queuing_reboot():
     source = HELPER.read_text(encoding="utf-8")
     queue = source[source.index("def _queue_controlled_pre_activation_reboot"):source.index("def _prompt")]
     assert 'state.get("status") != "pending_manual_activation"' in queue
     assert '[str(SYSTEMCTL), "--no-block", "reboot"]' in queue
     assert "fresh_install_binding" in queue
+
+    prepare = source[source.index("def _prepare_pre_activation_graphical_session"):source.index("def _canonical_staged_activation")]
+    assert '"clientflow_runtime.display_session_prepare"' in prepare
+    assert '"CLIENTFLOW_KIOSK_USER": KIOSK_USER' in prepare
+    assert 'runtime/lib/python3.13/site-packages/clientflow_runtime/display_session_prepare.py' in prepare
+    assert '"PYTHONDONTWRITEBYTECODE": "1"' in prepare
+    assert '"PYTHONNOUSERSITE": "1"' in prepare
+
+    post_install = source[source.index("authorities = f"):source.index("except urllib.error.HTTPError")]
+    assert post_install.index("_prepare_pre_activation_graphical_session()") < post_install.index("_queue_controlled_pre_activation_reboot()")
 
 
 def test_55a_is_wired_into_canonical_database_contract_and_migration_runner():

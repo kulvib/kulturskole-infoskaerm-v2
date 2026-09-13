@@ -1,19 +1,22 @@
-ClientFlow physical-harvest CI hotfix 1 validation
-Branch target: fix/clientflow-1220-physical-harvest
+ClientFlow Display lifecycle hotfix 2 validation
+Base main commit: e7aca1ae13a29fd991e17657001bc9204d17d7d0
 Source identity remains: 1.3.19 / seq 1220
+Runtime catalog remains: 1.3.19 / seq 1220
 
-PASS: compile-all changed tree
-PASS: scripts/tests/test_clientflow_physical_failure_fixes_1221.py -> 9 passed
-PASS: relevant test_clientflow_code_only_fresh_install tests -> 3 passed
-PASS: existing display operational-parity local-GUI test in reconstructed client context
-PASS: existing legacy119 local-GUI source assertions, including safe admin action and explicit frozen-domain reads
-PASS: current approved backend catalog remains 1.3.19 / seq 1220 and matches source identity
-PASS: deployed legacy GUI SHA256 = 027804da4cf3e722ce42a6d7760aa55a1a8f30d901bfc532a1cf63e22d5ba936
-PASS: deployed legacy status_map SHA256 = 9e6f01fbbe4b23f1458cc2740cea1bc43777499f8d4da3bd83f2a474fb7e74b4
+PASS: pre-activation GDM/AccountsService login baseline is materialized before reboot
+PASS: pre-activation module uses staged immutable runtime Python
+PASS: pre-activation module does not install Chrome/start runtime/switch active release
+PASS: pending retry without kiosk Wayland session prepares + reboots instead of activating
+PASS: ordinary activation still uses staged immutable clientflow_release CLI
+PASS: compile-all changed/full relevant source tree
+PASS: focused lifecycle/display/procedure suite -> 42 passed
+PASS: canonical ClientFlow minimum release gate plus touched tests -> 70 passed
+PASS: no Livestream/Terminal/Remote Desktop implementation files changed
 
-PENDING: full GitHub backend/tests + scripts/tests after package application
-PENDING: remaining GitHub CI jobs
-PENDING: separate 1.3.20 / seq 1221 identity promotion only after green CI
-PENDING: reproducible candidate build/approval
+NOT CLAIMED LOCALLY: full backend/tests + scripts/tests (CI dependencies not installed)
+NOT CLAIMED LOCALLY: Ruff formatting/lint (repo-pinned Ruff not installed)
+PENDING: canonical GitHub CI on the hotfix commit
+PENDING: separate 1.3.20 / seq 1221 source-identity transition after green push CI
+PENDING: reproducible candidate build/approval/publication
 PENDING: canonical physical fresh-install verification
-PENDING: physical screenshot/pixel GUI acceptance on GTK4/Wayland
+PENDING: physical GUI pixel-parity acceptance

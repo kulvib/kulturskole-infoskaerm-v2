@@ -1,11 +1,11 @@
-# ClientFlow 1.3.1 — fresh installation from a canonical runtime release
+# ClientFlow 1.3 — fresh installation from a canonical runtime release
 
 
 ## Normal kundeinstallation
 
 Den normale installation bruger den repo-ejede preclaim-helper `client/bootstrap/clientflow-fresh-install`, som installationsmediet eksponerer som **Aktiver ClientFlow**. Operatøren indtaster kun den korte CF-kode samt lokale, ikke-hemmelige klientoplysninger. Exact release-binding og signed fresh-install authorization hentes internt fra backendens durable enrollment-binding og må ikke kopieres manuelt, skrives i shell history eller vælges via `latest`/`stable`. Claim er fortsat den eneste consuming transaction.
 
-Hvis første kørsel stopper ved `pending_manual_activation`, åbnes **Aktiver ClientFlow** igen efter backend-godkendelse. Den bruger den root-owned pending state og den allerede installerede stable updater; den konsumerede CF-kode skal ikke indtastes igen. Backend approval-proof er fortsat fail-closed før runtime mutation.
+Når første kørsel har committed `pending_manual_activation`, bruger **Aktiver ClientFlow** den immutable staged runtime til at materialisere den minimale GDM/AccountsService kiosk-login-baseline og køer derefter én kontrolleret pre-activation reboot. Efter backend-godkendelse åbnes **Aktiver ClientFlow** igen. Den bruger den root-owned pending state, kræver den eksisterende `clientflow-kiosk` seat0 Wayland-session og kalder den staged canonical `clientflow_release activate` direkte; den konsumerede CF-kode skal ikke indtastes igen. Backend approval-proof er fortsat fail-closed før runtime mutation. Stable updater bruges ikke som ordinary first-activation dispatcher.
 
 De efterfølgende manuelle bootstrap-trin i dette dokument er engineering/release-verification af samme trust boundary, ikke normal kunde-UX.
 ## Sikkerhedsstatus
@@ -62,8 +62,9 @@ ClientFlow 1.3.0 er den fysisk godkendte historiske bootstrap-baseline for den s
 12. Standardkonfiguration, root-grant-verifikation og credentials valideres med sikre filrettigheder.
 13. Installationen stopper ved status `pending_manual_activation`.
 14. Den stabile updater-PYZ og dens systemd-definitioner er materialiseret, men `clientflow-updater.timer` skal være eksplicit `disabled` og `inactive` gennem hele pending-fasen. Backend update-auth forbliver fail-closed for den pending klient, og klienten må derfor ikke poll'e update-plane før godkendt first activation.
+15. Efter durable `pending_manual_activation` materialiserer den ydre bootstrap-helper kun den minimale GDM/AccountsService login-baseline fra den staged runtime og køer derefter én kontrolleret reboot. Rebootet etablerer den kiosk-Wayland-session, som Display readiness kræver; det aktiverer ikke releasen og starter ikke ClientFlow-runtime.
 
-Der er **ingen automatisk reboot**, ingen automatisk aktivering, ingen åbning af Terminal eller Remote Desktop, ingen start af en livestream og ingen updater-polling i `pending_manual_activation`.
+Der er **ingen automatisk aktivering**, ingen åbning af Terminal eller Remote Desktop, ingen start af en livestream og ingen updater-polling i `pending_manual_activation`. Den eneste automatiske host-transition er den kontrollerede pre-activation reboot efter durable pending state og succesfuld login-baseline-materialisering.
 
 Hvis `install` genkøres som recovery, er det kun gyldigt så længe release-state stadig er pre-activation. En committed `activation_intent`, et aktivt release-ID eller et active-symlink afviser fresh-install resume før updater/systemd-mutation; derefter bruges activation/update-recovery i stedet.
 
@@ -71,17 +72,11 @@ Hvis `install` genkøres som recovery, er det kun gyldigt så længe release-sta
 
 Aktivering er et separat trin. Efter claim står den nye klient fortsat som backend-`pending`; en superadmin skal først godkende præcis denne klient via den eksisterende backend approval-flow. First activation beviser derefter fail-closed backend-godkendelsen med installationens allerede provisionerede `status` credential, før active-symlink, systemd-definitioner eller services må ændres. Gate-status afgøres fra den durable release-state, ikke fra active-symlinket: hvis first activation crashes efter symlink-swap men før `active_release_id` er committed, skal et activation-resume derfor bevise backend approval igen før yderligere lokal mutation.
 
-Operatøren skal samtidig angive den **forventede immutable release-approval reference** fra den approved bundle; værdien er en kontrol mod artifactets provenance og er ikke fri audit-tekst:
-
-```bash
-sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate \
-  --release-id clientflow-1.3.1-seq-1202 \
-  --expected-release-approval-reference <RELEASE_APPROVAL_REFERENCE>
-```
+Operatøren skal ikke genbruge den transient `$BOOTSTRAP_INSTALLER` efter reboot. Normal kunde-UX er at åbne **Aktiver ClientFlow** igen efter backend-godkendelse; helperen læser exact release-ID og immutable approval-reference fra den root-owned pending state og kalder den staged canonical release-CLI. Engineering-verifikation kan bruge den tilsvarende staged invocation fra `CLIENTFLOW_RELEASE_PROCEDURE.md`. Approval-reference er fortsat en kontrol mod artifactets provenance og er ikke fri audit-tekst.
 
 Staging gemmer bundle SHA-256/size, candidate SHA-256, source commit og release-approval reference i root-ejet release-state. Aktivering afvises, hvis state, staged manifest og den eksplicit forventede release-approval ikke matcher. `clientflow.target` startes under activation først som en ikke-boot-enabled runtime, og health-resultatet gemmes durably under den eksakte activation-intent, før target må enable's til næste reboot. Dermed kan et abrupt power-loss før health ikke få en uverificeret release til at autostarte. Updater-timeren forbliver disabled gennem backend approval-proof, release-swap og runtime health. Først efter grøn, durably registreret first-activation health aktiveres `clientflow-updater.timer`, så update-plane åbnes efter den lokale runtime er operationel. Fejl før dette punkt udløser automatisk rollback til staged/pending med updater-timeren disabled og inactive.
 
-Den canonical kiosk-baseline bruger Google Chrome `--start-fullscreen` og aldrig Chrome `--kiosk`. Den håndhæver GDM autologin/Wayland, ingen idle-lock/screensaver/suspend/dim, Bluetooth off, popup-baseline for både `clientflow-kiosk` og `cfadmin` samt Europe/Copenhagen + NTP. Efter activation genhåndhæver managed timers time-integrity hourly og kiosk quick-settings kun mens den lokale `clientflow-kiosk`-session er aktiv på `seat0`. For kiosk-brugeren skjules og ACL-blokeres lokale Settings/Terminal/package/network/Bluetooth-administrationsapps, og en kiosk-user-only polkit-regel afviser privilegerede systemændringer. `cfadmin`, root og ClientFlow-domænebrugere rammes ikke; logout/user-switch bevares, så `cfadmin` fortsat kan vælges. GDM/logind skiftes ikke live under activation; efter grøn activation udføres én kontrolleret reboot før reconnect-validering.
+Den canonical kiosk-baseline bruger Google Chrome `--start-fullscreen` og aldrig Chrome `--kiosk`. Den håndhæver GDM autologin/Wayland, ingen idle-lock/screensaver/suspend/dim, Bluetooth off, popup-baseline for både `clientflow-kiosk` og `cfadmin` samt Europe/Copenhagen + NTP. Efter activation genhåndhæver managed timers time-integrity hourly og kiosk quick-settings kun mens den lokale `clientflow-kiosk`-session er aktiv på `seat0`. For kiosk-brugeren skjules og ACL-blokeres lokale Settings/Terminal/package/network/Bluetooth-administrationsapps, og en kiosk-user-only polkit-regel afviser privilegerede systemændringer. `cfadmin`, root og ClientFlow-domænebrugere rammes ikke; logout/user-switch bevares, så `cfadmin` fortsat kan vælges. GDM/autologin materialiseres før den kontrollerede pre-activation reboot, så kiosk-sessionen findes før activation. GDM genstartes ikke live under activation; efter grøn activation udføres fortsat én kontrolleret reboot før reconnect-validering.
 
 ## Eksplicit wipe
 
