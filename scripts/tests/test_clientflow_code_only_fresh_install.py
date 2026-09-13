@@ -226,8 +226,11 @@ def test_fresh_install_prepares_graphical_login_before_queuing_reboot():
     assert '"PYTHONDONTWRITEBYTECODE": "1"' in prepare
     assert '"PYTHONNOUSERSITE": "1"' in prepare
 
-    post_install = source[source.index("authorities = f"):source.index("except urllib.error.HTTPError")]
-    assert post_install.index("_prepare_pre_activation_graphical_session()") < post_install.index("_queue_controlled_pre_activation_reboot()")
+    customer_start = source.index("def _customer_install")
+    post_install = source[customer_start:source.index("def main()", customer_start)]
+    assert post_install.index("_prepare_pre_activation_graphical_session()") < post_install.index("_install_activation_waiter()")
+    assert post_install.index("_install_activation_waiter()") < post_install.index('confirmed_reboot("kundeaktivering gennemført", seconds=5)')
+    assert "_queue_controlled_pre_activation_reboot()" not in post_install
 
 
 def test_55a_is_wired_into_canonical_database_contract_and_migration_runner():

@@ -78,8 +78,11 @@ def test_fresh_install_materializes_graphical_login_before_reboot_and_activation
     assert '[str(SYSTEMCTL), "--no-block", "--ignore-inhibitors", "reboot"]' in queue
     assert "timeout=10" in queue
     assert '"--force"' not in queue
-    post_install = helper[helper.index("authorities = f"):helper.index("except urllib.error.HTTPError")]
-    assert post_install.index("_prepare_pre_activation_graphical_session()") < post_install.index("_queue_controlled_pre_activation_reboot()")
+    customer_start = helper.index("def _customer_install")
+    post_install = helper[customer_start:helper.index("def main()", customer_start)]
+    assert post_install.index("_prepare_pre_activation_graphical_session()") < post_install.index("_install_activation_waiter()")
+    assert post_install.index("_install_activation_waiter()") < post_install.index('confirmed_reboot("kundeaktivering gennemført", seconds=5)')
+    assert "_queue_controlled_pre_activation_reboot()" not in post_install
     assert 'prepare_graphical_login_baseline' in session_prepare
     assert '_ensure_exact_chrome' not in session_prepare
     assert '_prepare_system_kiosk_policy' not in session_prepare
