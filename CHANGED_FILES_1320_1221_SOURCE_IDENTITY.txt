@@ -1,0 +1,8 @@
+CLIENTFLOW_1.3.20_1221_FIX_REPORT.md
+VALIDATION.txt
+backend/tests/test_clientflow_release_catalog_1212.py
+client/VERSION
+client/release/release-input.json
+scripts/tests/test_clientflow_physical_failure_fixes_1221.py
+SHA256SUMS.txt
+CHANGED_FILES_1320_1221_SOURCE_IDENTITY.txt
