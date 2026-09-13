@@ -71,9 +71,22 @@ def test_chrome_status_route_surfaces_browser_request_state(monkeypatch):
         "pending_chrome_action_source": None,
         "service_calendar_status": None,
     }
-    monkeypatch.setattr(clients, "display_read_projection", lambda *_args, **_kwargs: projection)
+    monkeypatch.setattr(
+        clients,
+        "display_read_projections",
+        lambda *_args, **_kwargs: {4242: projection},
+    )
     monkeypatch.setattr(clients, "_require_client_read_access", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(clients, "load_client_presence", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        clients,
+        "load_client_presences_with_status_rows",
+        lambda *_args, **_kwargs: ({4242: object()}, {(4242, "display"): object()}),
+    )
+    monkeypatch.setattr(
+        clients,
+        "load_latest_system_projection_commands",
+        lambda *_args, **_kwargs: {4242: {"power": None, "os_update": None, "local_management": None}},
+    )
     monkeypatch.setattr(clients, "_apply_status_runtime_snapshot", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(clients, "_apply_system_projection_for_read", lambda *_args, **_kwargs: None)
 

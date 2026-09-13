@@ -279,3 +279,37 @@ def test_batched_client_list_projection_matches_single_client_projection() -> No
             single_snapshot[int(client.id)] = _snapshot(client)
 
     assert batched_snapshot == single_snapshot
+
+
+@pytest.mark.parametrize("seed_count", [1, 10, 50, 100])
+def test_chrome_status_projection_query_count_is_constant(seed_count: int) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    _seed(engine, seed_count)
+
+    select_count = 0
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        nonlocal select_count
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_count += 1
+
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        with Session(engine) as session:
+            payload = clients_router.get_chrome_status(
+                1,
+                session=session,
+                user=SimpleNamespace(is_superadmin=True),
+            )
+            assert payload["client_id"] == 1
+            assert payload["browser_requested"] is True
+            assert payload["pending_reboot"] is True
+            assert payload["pending_os_update"] is False
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+
+    # 1 Client lookup + 2 presence queries + 2 Display batch queries +
+    # 1 latest-System-command window query. The 1-second detail poll must not
+    # grow with the number of clients present in the database.
+    assert select_count == 6
