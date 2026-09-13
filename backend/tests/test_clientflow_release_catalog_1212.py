@@ -63,7 +63,7 @@ def test_catalog_1220_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1220_matches_current_source_identity() -> None:
+def test_catalog_1220_remains_selected_while_1320_1221_source_identity_is_staged() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -75,22 +75,22 @@ def test_catalog_1220_matches_current_source_identity() -> None:
     source_tuple = tuple(int(part) for part in source_version.split("."))
     selected_tuple = tuple(int(part) for part in release["version"].split("."))
 
+    # Source/build identity is allowed to lead the runtime catalog by exactly
+    # one release while the new candidate is built, approved and immutably
+    # published. The catalog must keep selecting the last published release
+    # until the later catalog-promotion change.
+    assert source_version == "1.3.20"
+    assert source_sequence == 1221
     assert data["catalog_sequence"] == 1220
+    assert source_sequence == data["catalog_sequence"] + 1
+    assert source_tuple > selected_tuple
+
     assert data["latest_stable"] == "1.3.19"
     assert data["default_install_version"] == "1.3.19"
     assert release["version"] == "1.3.19"
     assert release["release_sequence"] == 1220
     assert release["release_id"] == "clientflow-1.3.19-seq-1220"
     assert release["requires_reboot"] is True
-
-    # After promotion, the runtime catalog must select the exact approved
-    # source/build identity. Exact release bytes remain the authority of the
-    # verified immutable bundle in the canonical artifact store, not catalog
-    # metadata duplicated here.
-    assert source_version == "1.3.19"
-    assert source_sequence == 1220
-    assert source_sequence == data["catalog_sequence"]
-    assert source_tuple == selected_tuple
 
     for field in (
         "bundle_sha256",

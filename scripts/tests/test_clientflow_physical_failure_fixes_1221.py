@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 import re
 
@@ -14,6 +15,7 @@ GUI = ROOT / "client/libexec/local-gui"
 QUICK = ROOT / "client/systemd/clientflow-kiosk-quicksettings-guard.service"
 VERSION = ROOT / "client/VERSION"
 RELEASE_INPUT = ROOT / "client/release/release-input.json"
+CATALOG = ROOT / "backend/service1/clientflow_release_catalog.json"
 
 LEGACY_GUI_SHA256 = "027804da4cf3e722ce42a6d7760aa55a1a8f30d901bfc532a1cf63e22d5ba936"
 LEGACY_STATUS_MAP_SHA256 = "9e6f01fbbe4b23f1458cc2740cea1bc43777499f8d4da3bd83f2a474fb7e74b4"
@@ -34,16 +36,23 @@ def _class_tuple(source: str, class_name: str, name: str):
     raise AssertionError(f"{class_name}.{name} not found")
 
 
-def test_fix_branch_keeps_approved_1_3_19_1220_identity_until_ci_is_green():
-    # Release identity is promoted only after the fix branch passes the full
-    # repository CI.  The approved catalog must therefore continue to match
-    # the exact 1.3.19/1220 source/build identity during this phase.
-    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.19"
-    source = _source(RELEASE_INPUT)
-    assert '"release_sequence": 1220' in source
-    assert '"minimum_ubuntu_lts": "26.04"' in source
-    assert '"architecture": "amd64"' in source
-    assert '"runtime_python": "3.13.14"' in source
+def test_source_1320_1221_is_staged_while_catalog_stays_on_1319_1220():
+    # The physical-fix/lifecycle changes have passed their CI gates. The next
+    # source/build identity may now advance one step while runtime selection
+    # remains on the last approved and immutably published catalog release.
+    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.20"
+    release_input = json.loads(_source(RELEASE_INPUT))
+    assert release_input["release_sequence"] == 1221
+    assert release_input["minimum_ubuntu_lts"] == "26.04"
+    assert release_input["architecture"] == "amd64"
+    assert release_input["runtime_python"] == "3.13.14"
+
+    catalog = json.loads(_source(CATALOG))
+    assert catalog["catalog_sequence"] == 1220
+    assert catalog["latest_stable"] == "1.3.19"
+    assert catalog["default_install_version"] == "1.3.19"
+    selected = catalog["releases"][0]
+    assert selected["release_id"] == "clientflow-1.3.19-seq-1220"
 
 
 def test_dispatch_uses_staged_immutable_release_cli_not_stable_updater():
