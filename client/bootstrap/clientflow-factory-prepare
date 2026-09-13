@@ -1,0 +1,166 @@
+#!/usr/bin/python3
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import sys
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from clientflow_bootstrap_common import (  # noqa: E402
+    BootstrapError,
+    banner,
+    clear_usb_state,
+    configure_network_interactive,
+    confirmed_reboot,
+    forget_owned_connection,
+    install_persistent_bootstrap,
+    install_terminal_launcher,
+    load_factory_state,
+    load_usb_state,
+    ok,
+    phase,
+    prompt_client_name_confirmed,
+    remove_desktop_install_icons,
+    require_root,
+    sudo_user,
+    warn,
+    write_desktop_launcher,
+    write_factory_state,
+    write_usb_state,
+)
+
+FACTORY_LAUNCHER = Path("/usr/local/bin/clientflow-open-factory-prepare")
+CUSTOMER_LAUNCHER = Path("/usr/local/bin/clientflow-open-customer-activation")
+
+
+def _install_factory_launcher(operator: str) -> None:
+    install_terminal_launcher(
+        FACTORY_LAUNCHER,
+        title="01 Klient klargøring",
+        command=(
+            "sudo /usr/local/lib/clientflow-bootstrap/clientflow-factory-prepare; "
+            "rc=$?; echo; if [ $rc -ne 0 ]; then echo \"Klient-klargøring stoppede med fejlkode $rc.\"; fi; "
+            "read -r -p \"Tryk Enter for at lukke vinduet...\" _ || true; exit $rc"
+        ),
+    )
+    remove_desktop_install_icons(operator)
+    target = write_desktop_launcher(
+        operator,
+        filename="01 Klient klargøring.desktop",
+        name="01 Klient klargøring",
+        comment="Fase 1: Klargør ClientFlow-klienten på kontoret",
+        exec_path=str(FACTORY_LAUNCHER),
+    )
+    ok(f"Fase 1 oprettet i aktiv XDG Desktop-mappe: {target}")
+
+
+def _install_customer_launcher(operator: str) -> None:
+    install_terminal_launcher(
+        CUSTOMER_LAUNCHER,
+        title="02 Aktiver ClientFlow",
+        command=(
+            "sudo /usr/local/lib/clientflow-bootstrap/clientflow-fresh-install; "
+            "rc=$?; echo; if [ $rc -ne 0 ]; then echo \"Kundeaktivering stoppede med fejlkode $rc.\"; fi; "
+            "read -r -p \"Tryk Enter for at lukke vinduet...\" _ || true; exit $rc"
+        ),
+    )
+    remove_desktop_install_icons(operator)
+    target = write_desktop_launcher(
+        operator,
+        filename="02 Aktiver ClientFlow.desktop",
+        name="02 Aktiver ClientFlow",
+        comment="Fase 2: Aktiver klienten manuelt med kundens CF-kode",
+        exec_path=str(CUSTOMER_LAUNCHER),
+    )
+    ok(f"Fase 2 oprettet i aktiv XDG Desktop-mappe: {target}")
+
+
+def usb_preflight() -> int:
+    require_root()
+    operator = sudo_user()
+    install_persistent_bootstrap(HERE)
+    marker = configure_network_interactive("USB-klargøring")
+    write_usb_state(operator_user=operator, network_marker=marker)
+    _install_factory_launcher(operator)
+    return 0
+
+
+def factory_prepare() -> int:
+    require_root()
+    operator = sudo_user()
+    install_persistent_bootstrap(HERE)
+
+    banner("01 · Klient-/factory-klargøring · V2 · manuel desktopflow")
+    phase("1/4 · Netværk")
+    usb_state = load_usb_state()
+    owned_markers: list[dict[str, str]] = []
+    if usb_state is not None:
+        recorded_operator = str(usb_state.get("operator_user") or "")
+        if recorded_operator != operator:
+            raise BootstrapError("USB-klargøringen tilhører en anden lokal Ubuntu-bruger")
+        raw_marker = usb_state.get("network_marker")
+        if raw_marker is not None and not isinstance(raw_marker, dict):
+            raise BootstrapError("USB-netværksmarkøren har ugyldigt format")
+        if isinstance(raw_marker, dict):
+            owned_markers.append({str(key): str(value) for key, value in raw_marker.items()})
+    current_marker = configure_network_interactive("klient-/factory-klargøring")
+    if current_marker is not None:
+        owned_markers.append(current_marker)
+
+    phase("2/4 · Klientnavn")
+    previous = load_factory_state()
+    existing = str(previous.get("client_name") or "") if previous else None
+    client_name = prompt_client_name_confirmed(existing)
+    write_factory_state(client_name=client_name, operator_user=operator)
+    ok(f"Klientnavn bekræftet: {client_name}")
+
+    print()
+    warn(
+        "Sikkerhedsgrænse i V2: cfadmin-password sættes først efter en gyldig backend-claim i fase 2 "
+        "og gemmes aldrig mellem de to faser."
+    )
+
+    phase("3/4 · Skrivebordsikon til næste flow")
+    _install_customer_launcher(operator)
+
+    phase("4/4 · Kontornetværk og bekræftet reboot")
+    if owned_markers:
+        removed = 0
+        for owned_marker in owned_markers:
+            if forget_owned_connection(owned_marker):
+                removed += 1
+        if removed:
+            ok(f"{removed} præcis(e) NetworkManager-profil(er), som ClientFlow oprettede til kontorklargøringen, er fjernet.")
+    else:
+        warn(
+            "ClientFlow oprettede ikke selv den aktive kontorforbindelse og sletter derfor ikke en ukendt "
+            "NetworkManager-profil. Dette er en bevidst sikkerhedsafgrænsning."
+        )
+    clear_usb_state()
+    ok(
+        "Klient klargøring færdig. Klientnavn er defineret på kontoret. Ingen client secret er oprettet endnu. "
+        "Kunden aktiverer manuelt ved at klikke på skrivebordsikonet 02 Aktiver ClientFlow."
+    )
+    confirmed_reboot("klient klargøring gennemført", seconds=5)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--usb-preflight", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        return usb_preflight() if args.usb_preflight else factory_prepare()
+    except KeyboardInterrupt:
+        print("\nAfbrudt.", file=sys.stderr)
+        return 130
+    except Exception as exc:
+        print(f"ClientFlow klient-klargøring fejlede: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,17 @@
+CLIENTFLOW_RELEASE_PROCEDURE.md
+CLIENTFLOW_LEGACY_119_INSTALL_FLOW_V2_CLOSURE.md
+CHANGED_FILES_LEGACY_119_INSTALL_FLOW_V2.txt
+client/bootstrap/clientflow-factory-prepare
+client/bootstrap/clientflow-fresh-install
+client/bootstrap/clientflow_bootstrap_common.py
+client/bootstrap/usb/00_START_HER_KORT.txt
+client/bootstrap/usb/01_START_CLIENTFLOW_USB.sh
+client/bootstrap/usb/README_START_HER.txt
+client/release/docs/CLIENTFLOW_INSTALLATION.md
+client/release/lib/clientflow_release/cli.py
+frontend/src/pages/adminpages/EnrollmentTokensPage.jsx
+scripts/build_clientflow_usb_installer.py
+scripts/tests/test_clientflow_code_only_fresh_install.py
+scripts/tests/test_clientflow_legacy119_install_flow_v2.py
+scripts/tests/test_clientflow_physical_failure_fixes_1221.py
+scripts/tests/test_clientflow_release_procedure_contract.py

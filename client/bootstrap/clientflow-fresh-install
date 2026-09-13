@@ -11,7 +11,6 @@ immutable staged release through ``python -P -m clientflow_release``.
 """
 from __future__ import annotations
 
-import getpass
 import hashlib
 import json
 import os
@@ -26,6 +25,31 @@ import time
 import urllib.error
 import urllib.request
 
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from clientflow_bootstrap_common import (  # noqa: E402
+    BootstrapError,
+    BOOTSTRAP_ROOT,
+    FACTORY_STATE,
+    PERSISTENT_ROOT,
+    USB_STATE,
+    banner,
+    configure_network_interactive,
+    confirmed_reboot,
+    install_persistent_bootstrap,
+    load_factory_state,
+    ok,
+    phase,
+    prompt_client_name_confirmed,
+    prompt_locality,
+    read_cf_code,
+    remove_desktop_install_icons,
+    require_root,
+    warn,
+)
+
 BACKEND_URL = "https://api.display.planiq.dk"
 BOOTSTRAP_ENDPOINT = "/api/enrollment/fresh-install-bootstrap"
 DEFAULT_ARTIFACT_ENDPOINT = "/api/enrollment/fresh-install-artifact"
@@ -37,6 +61,17 @@ RELEASES_ROOT = Path("/opt/clientflow/releases")
 KIOSK_USER = "clientflow-kiosk"
 LOGINCTL = Path("/usr/bin/loginctl")
 SYSTEMCTL = Path("/usr/bin/systemctl")
+PENDING_BUNDLE = BOOTSTRAP_ROOT / "pending-approved-bundle.tar"
+FIRST_CLAIM_REJECTED_EXIT = 20
+BOOTSTRAP_LAUNCHERS = (
+    Path("/usr/local/bin/clientflow-open-factory-prepare"),
+    Path("/usr/local/bin/clientflow-open-customer-activation"),
+)
+BOOTSTRAP_FILES = (
+    "clientflow_bootstrap_common.py",
+    "clientflow-factory-prepare",
+    "clientflow-fresh-install",
+)
 
 
 def _post_json(path: str, body: dict[str, object], *, timeout: int = 30):
@@ -123,6 +158,118 @@ def _download_exact_bundle(code: str, binding: dict[str, object], directory: Pat
         raise RuntimeError("Approved bundle SHA-256 mismatch")
     return path
 
+
+
+def _clear_cached_bundle() -> None:
+    PENDING_BUNDLE.unlink(missing_ok=True)
+
+
+def _cache_exact_bundle(bundle: Path, binding: dict[str, object]) -> Path:
+    """Persist only the already-verified exact bundle needed for safe claim resume."""
+    BOOTSTRAP_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chown(BOOTSTRAP_ROOT, 0, 0)
+    os.chmod(BOOTSTRAP_ROOT, 0o700)
+    expected_size = int(binding["bundle_size"])
+    expected_sha = str(binding["bundle_sha256"])
+    fd, temporary_name = tempfile.mkstemp(prefix=".pending-approved-bundle.", dir=str(BOOTSTRAP_ROOT))
+    temporary = Path(temporary_name)
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        os.fchmod(fd, 0o400)
+        with bundle.open("rb") as source, os.fdopen(fd, "wb", closefd=True) as output:
+            while True:
+                chunk = source.read(1024 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+                digest.update(chunk)
+                size += len(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        if size != expected_size or digest.hexdigest() != expected_sha:
+            raise RuntimeError("Cached approved bundle matcher ikke exact bootstrap-binding")
+        os.chown(temporary, 0, 0)
+        os.chmod(temporary, 0o400)
+        os.replace(temporary, PENDING_BUNDLE)
+        directory_fd = os.open(BOOTSTRAP_ROOT, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return PENDING_BUNDLE
+
+
+def _cached_exact_bundle(binding: dict[str, object]) -> Path:
+    try:
+        meta = PENDING_BUNDLE.lstat()
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "Uafsluttet fresh install mangler den exact approved bundle, som kræves for sikker resume"
+        ) from exc
+    if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode):
+        raise RuntimeError("Cached approved bundle er ikke en reel fil")
+    if meta.st_uid != 0 or (meta.st_mode & 0o077):
+        raise RuntimeError("Cached approved bundle har ugyldig ownership/permissions")
+    expected_size = int(binding.get("bundle_size") or 0)
+    expected_sha = str(binding.get("bundle_sha256") or "").strip().lower()
+    if meta.st_size != expected_size or not SHA256_RE.fullmatch(expected_sha):
+        raise RuntimeError("Cached approved bundle matcher ikke pending fresh-install binding")
+    digest = hashlib.sha256()
+    with PENDING_BUNDLE.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    if digest.hexdigest() != expected_sha:
+        raise RuntimeError("Cached approved bundle SHA-256 matcher ikke pending fresh-install binding")
+    return PENDING_BUNDLE
+
+
+def _resume_binding(state: dict[str, object]) -> dict[str, object]:
+    binding = state.get("fresh_install_binding")
+    if not isinstance(binding, dict):
+        raise RuntimeError("Uafsluttet fresh install mangler exact release-binding")
+    release_id = str(binding.get("release_id") or "").strip()
+    sha = str(binding.get("bundle_sha256") or "").strip().lower()
+    try:
+        size = int(binding.get("bundle_size"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Uafsluttet fresh install har ugyldig bundle-størrelse") from exc
+    if not RELEASE_ID_RE.fullmatch(release_id) or not SHA256_RE.fullmatch(sha) or size < 1:
+        raise RuntimeError("Uafsluttet fresh install har ugyldig exact release-binding")
+    return dict(binding)
+
+
+def _run_canonical_installer(
+    *,
+    bundle: Path,
+    binding: dict[str, object],
+    name: str,
+    locality: str | None,
+    authorities: bytes | None,
+) -> int:
+    with tempfile.TemporaryDirectory(prefix="clientflow-installer.", dir="/run") as tmp:
+        installer = _materialize_installer(bundle, binding, Path(tmp))
+        command = [
+            sys.executable,
+            "-I",
+            str(installer),
+            "install",
+            "--bundle",
+            str(bundle),
+            "--expected-bundle-sha256",
+            str(binding["bundle_sha256"]),
+            "--backend-url",
+            BACKEND_URL,
+            "--name",
+            name,
+        ]
+        if authorities is not None:
+            command.append("--fresh-install-authority-stdin")
+        if locality:
+            command += ["--locality", locality]
+        return int(subprocess.run(command, input=authorities, check=False).returncode)
 
 def _materialize_installer(bundle: Path, binding: dict[str, object], directory: Path) -> Path:
     with tarfile.open(bundle, mode="r:*") as archive:
@@ -379,12 +526,326 @@ def _prompt(label: str, *, required: bool = False) -> str:
         print("Værdien må ikke være tom.", file=sys.stderr)
 
 
+def _http_error_detail(exc: urllib.error.HTTPError) -> str:
+    try:
+        payload = json.loads(exc.read(MAX_JSON_BYTES).decode("utf-8"))
+        if isinstance(payload, dict) and payload.get("detail"):
+            return str(payload["detail"])
+    except Exception:
+        pass
+    return f"Backend afviste bootstrap ({exc.code})"
+
+
+def _interactive_bootstrap_binding() -> tuple[str, dict[str, object]]:
+    phase("3/8 · CF-kode")
+    print("Koden vises som: CF-____-____-____. Bindestreger er fortrykt; copy/paste understøttes.")
+    while True:
+        try:
+            code = read_cf_code().strip().upper()
+        except KeyboardInterrupt:
+            raise
+        try:
+            with _post_json(BOOTSTRAP_ENDPOINT, {"enrollment_code": code}) as response:
+                return code, _binding(_read_json_response(response))
+        except urllib.error.HTTPError as exc:
+            detail = _http_error_detail(exc)
+            if 400 <= exc.code < 500:
+                warn(f"{detail}. Indtast en gyldig CF-kode eller kontakt administrator.")
+                continue
+            raise
+
+
+def _write_root_text(path: Path, content: str, *, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", closefd=True) as output:
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chown(temporary, 0, 0)
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _install_activation_waiter() -> None:
+    install_persistent_bootstrap(HERE)
+    unit = Path("/etc/systemd/system/clientflow-first-activation.service")
+    _write_root_text(
+        unit,
+        """[Unit]
+Description=ClientFlow first activation approval waiter
+Wants=network-online.target
+After=network-online.target display-manager.service
+ConditionPathExists=/var/lib/clientflow/release/install-state.json
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/clientflow-bootstrap/clientflow-fresh-install --activation-wait
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
+""",
+        mode=0o644,
+    )
+    reload_result = subprocess.run([str(SYSTEMCTL), "daemon-reload"], check=False, timeout=10)
+    if reload_result.returncode != 0:
+        raise RuntimeError("Kunne ikke genindlæse systemd efter first-activation waiter")
+    enable_result = subprocess.run(
+        [str(SYSTEMCTL), "enable", "clientflow-first-activation.service"],
+        check=False,
+        timeout=10,
+    )
+    if enable_result.returncode != 0:
+        raise RuntimeError("Kunne ikke enable first-activation waiter")
+
+
+def _disable_activation_waiter(*, remove_unit: bool = False) -> None:
+    subprocess.run(
+        [str(SYSTEMCTL), "disable", "clientflow-first-activation.service"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=10,
+    )
+    if remove_unit:
+        unit = Path("/etc/systemd/system/clientflow-first-activation.service")
+        try:
+            unit.unlink()
+        except FileNotFoundError:
+            pass
+        subprocess.run(
+            [str(SYSTEMCTL), "daemon-reload"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=10,
+        )
+
+
+def _cleanup_completed_bootstrap() -> None:
+    """Remove only exact bootstrap artifacts after healthy canonical activation."""
+    _disable_activation_waiter(remove_unit=True)
+    for path in (*BOOTSTRAP_LAUNCHERS, FACTORY_STATE, USB_STATE, PENDING_BUNDLE):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except IsADirectoryError:
+            print(f"ClientFlow bootstrap-oprydning afviste uventet katalog: {path}", file=sys.stderr)
+    for name in BOOTSTRAP_FILES:
+        path = PERSISTENT_ROOT / name
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except IsADirectoryError:
+            print(f"ClientFlow bootstrap-oprydning afviste uventet katalog: {path}", file=sys.stderr)
+    for directory in (PERSISTENT_ROOT, BOOTSTRAP_ROOT):
+        try:
+            directory.rmdir()
+        except (FileNotFoundError, OSError):
+            # Never broaden cleanup to unknown files/directories.
+            pass
+
+def _activation_wait() -> int:
+    require_root()
+    print("ClientFlow afventer backend-godkendelse og aktiverer automatisk, når approval-proof er gyldigt.")
+    while True:
+        state = _existing_install_state()
+        if state is None:
+            print("ClientFlow first-activation state mangler.", file=sys.stderr)
+            return 1
+        status = str(state.get("status") or "")
+        if status == "activated":
+            _cleanup_completed_bootstrap()
+            return 0
+        if status != "pending_manual_activation":
+            print(f"ClientFlow first-activation har uventet state: {status}", file=sys.stderr)
+            return 1
+        binding = state.get("fresh_install_binding")
+        if not isinstance(binding, dict):
+            print("Pending installation mangler exact release-binding.", file=sys.stderr)
+            return 1
+        release_id = str(binding.get("release_id") or "").strip()
+        approval = str(binding.get("release_approval_reference") or "").strip()
+        if not RELEASE_ID_RE.fullmatch(release_id) or not approval:
+            print("Pending installation har ugyldig exact release-binding.", file=sys.stderr)
+            return 1
+        if _canonical_kiosk_session() is None:
+            print("ClientFlow afventer canonical clientflow-kiosk Wayland-session.")
+            time.sleep(10)
+            continue
+        try:
+            result = _canonical_staged_activation(release_id, approval)
+        except Exception as exc:
+            print(f"ClientFlow activation er endnu ikke klar: {exc}", file=sys.stderr)
+            time.sleep(10)
+            continue
+        if result == 0:
+            updated = _existing_install_state()
+            if isinstance(updated, dict) and updated.get("status") == "activated":
+                _cleanup_completed_bootstrap()
+                print("ClientFlow er backend-godkendt og automatisk aktiveret.")
+                return 0
+        print("ClientFlow afventer backend-godkendelse; prøver igen om 10 sekunder.")
+        time.sleep(10)
+
+
+def _factory_identity() -> tuple[str, str | None]:
+    state = load_factory_state()
+    if state is None:
+        return prompt_client_name_confirmed(), None
+    if state.get("schema_version") != 1:
+        raise BootstrapError("Factory-state har ukendt schema")
+    name = str(state.get("client_name") or "").strip()
+    operator = str(state.get("operator_user") or "").strip() or None
+    if not name:
+        raise BootstrapError("Factory-state mangler klientnavn")
+    return name, operator
+
+
+def _customer_install() -> int:
+    banner("02 · Kundeaktivering · V2 · manuel desktopflow")
+    phase("1/8 · Kunde-netværk")
+    configure_network_interactive("kundeaktivering")
+
+    existing = _existing_install_state()
+    if existing is not None:
+        phase("2/8 · Sikker genoptagelse")
+        name = str(existing.get("client_name") or "").strip()
+        locality_value = existing.get("locality")
+        locality = str(locality_value).strip() if locality_value else None
+        if not name:
+            raise RuntimeError("Uafsluttet fresh install mangler klientnavn")
+        factory_name, operator = _factory_identity()
+        if factory_name != name:
+            raise RuntimeError("Factory-state matcher ikke den uafsluttede fresh-install transaction")
+        status = str(existing.get("status") or "")
+        print(f"Genoptager ClientFlow-installation for: {name}")
+        if status != "pending_manual_activation":
+            binding = _resume_binding(existing)
+            bundle = _cached_exact_bundle(binding)
+            phase("4/8 · Exact release og integrity · resume")
+            phase("5/8 · Backend claim og lokale konti · resume")
+            result = _run_canonical_installer(
+                bundle=bundle,
+                binding=binding,
+                name=name,
+                locality=locality,
+                authorities=None,
+            )
+            if result != 0:
+                warn(
+                    "Installationen er bevaret som resumable. Åbn 02 Aktiver ClientFlow igen, når backend/netværk er klar."
+                )
+                return result
+        refreshed = _existing_install_state()
+        if not isinstance(refreshed, dict) or refreshed.get("status") != "pending_manual_activation":
+            raise RuntimeError("Canonical fresh installer nåede ikke durable pending_manual_activation")
+        _clear_cached_bundle()
+    else:
+        phase("2/8 · Klientoplysninger")
+        name, operator = _factory_identity()
+        print(f"Klientnavn: {name}")
+        locality = prompt_locality()
+
+        while True:
+            code, binding = _interactive_bootstrap_binding()
+            phase("4/8 · Exact release og integrity")
+            with tempfile.TemporaryDirectory(prefix="clientflow-fresh-download.", dir="/run") as tmp:
+                directory = Path(tmp)
+                os.chmod(directory, 0o700)
+                try:
+                    downloaded = _download_exact_bundle(code, binding, directory)
+                except urllib.error.HTTPError as exc:
+                    detail = _http_error_detail(exc)
+                    if 400 <= exc.code < 500:
+                        warn(f"{detail}. Indtast en gyldig CF-kode eller kontakt administrator.")
+                        continue
+                    raise
+                bundle = _cache_exact_bundle(downloaded, binding)
+
+            phase("5/8 · Backend claim og lokale konti")
+            print(
+                "Efter backend har accepteret den gyldige claim, sættes cfadmin-password direkte i terminalen. "
+                "Password gemmes ikke i bootstrap-state."
+            )
+            authorities = f"{code}\n{binding['authorization']}\n".encode("utf-8")
+            result = _run_canonical_installer(
+                bundle=bundle,
+                binding=binding,
+                name=name,
+                locality=locality,
+                authorities=authorities,
+            )
+            if result == FIRST_CLAIM_REJECTED_EXIT:
+                _clear_cached_bundle()
+                if _existing_install_state() is not None:
+                    raise RuntimeError("Definite first-claim rejection efterlod uventet lokal install-state")
+                warn("Backend afviste den første claim før commit. Indtast kun en ny CF-kode.")
+                continue
+            if result != 0:
+                if _existing_install_state() is None:
+                    _clear_cached_bundle()
+                else:
+                    warn(
+                        "Installationen er bevaret som resumable. Åbn 02 Aktiver ClientFlow igen, når backend/netværk er klar."
+                    )
+                return result
+            refreshed = _existing_install_state()
+            if not isinstance(refreshed, dict) or refreshed.get("status") != "pending_manual_activation":
+                raise RuntimeError("Canonical fresh installer nåede ikke durable pending_manual_activation")
+            _clear_cached_bundle()
+            break
+
+    phase("6/8 · Kiosk-session før activation")
+    _prepare_pre_activation_graphical_session()
+
+    phase("7/8 · Automatisk approval/activation")
+    _install_activation_waiter()
+    if operator:
+        remove_desktop_install_icons(operator)
+    ok(
+        "CF-koden er accepteret. Efter reboot afventer ClientFlow selv backend-godkendelsen og aktiverer "
+        "automatisk den exact staged release; der kræves ikke et ekstra klik."
+    )
+
+    phase("8/8 · Kundeaktivering færdig")
+    ok("Kundeaktivering færdig. Klienten kan genstartes efter bekræftelse.")
+    confirmed_reboot("kundeaktivering gennemført", seconds=5)
+    return 0
+
 def main() -> int:
+    if "--activation-wait" in sys.argv[1:]:
+        if sys.argv[1:] != ["--activation-wait"]:
+            print("--activation-wait kan ikke kombineres med andre argumenter", file=sys.stderr)
+            return 2
+        try:
+            return _activation_wait()
+        except Exception as exc:
+            print(f"ClientFlow automatic activation waiter fejlede: {exc}", file=sys.stderr)
+            return 1
+
     if os.geteuid() != 0:
         print("Aktiver ClientFlow skal køres med administratorrettigheder.", file=sys.stderr)
         return 2
     try:
         existing = _existing_install_state()
+        if existing is not None and load_factory_state() is not None:
+            if str(existing.get("status") or "") == "activated":
+                _cleanup_completed_bootstrap()
+                print("ClientFlow er allerede aktiveret.")
+                return 0
+            # A legacy-compatible product install must always resume through the
+            # customer orchestrator so a crash after durable pending state cannot
+            # bypass the approval waiter or the operator-confirmed reboot.
+            return _customer_install()
         if existing is not None:
             activation_result = _activate_pending(existing)
             if activation_result is not None:
@@ -393,48 +854,14 @@ def main() -> int:
         print(f"ClientFlow activation check fejlede: {exc}", file=sys.stderr)
         return 1
 
-    code = getpass.getpass("CF-kode: ").strip().upper()
-    if not code:
-        print("CF-kode mangler.", file=sys.stderr)
-        return 2
-    name = _prompt("Klientnavn: ", required=True)
-    locality = _prompt("Lokation (valgfri): ")
-    network_uuid = _prompt("Midlertidig bootstrap-netværksprofil UUID (valgfri): ")
-
     try:
-        with _post_json(BOOTSTRAP_ENDPOINT, {"enrollment_code": code}) as response:
-            binding = _binding(_read_json_response(response))
-        with tempfile.TemporaryDirectory(prefix="clientflow-fresh-install.", dir="/run") as tmp:
-            directory = Path(tmp)
-            os.chmod(directory, 0o700)
-            bundle = _download_exact_bundle(code, binding, directory)
-            installer = _materialize_installer(bundle, binding, directory)
-            command = [
-                sys.executable, "-I", str(installer), "install",
-                "--bundle", str(bundle),
-                "--expected-bundle-sha256", str(binding["bundle_sha256"]),
-                "--backend-url", BACKEND_URL,
-                "--fresh-install-authority-stdin",
-                "--name", name,
-            ]
-            if locality:
-                command += ["--locality", locality]
-            if network_uuid:
-                command += ["--bootstrap-network-connection-uuid", network_uuid]
-            authorities = f"{code}\n{binding['authorization']}\n".encode("utf-8")
-            result = subprocess.run(command, input=authorities, check=False)
-            if result.returncode != 0:
-                return int(result.returncode)
-            _prepare_pre_activation_graphical_session()
-            _queue_controlled_pre_activation_reboot()
-            return 0
+        return _customer_install()
     except urllib.error.HTTPError as exc:
-        try:
-            detail = json.loads(exc.read().decode("utf-8")).get("detail")
-        except Exception:
-            detail = None
-        print(str(detail or f"Backend afviste bootstrap ({exc.code})"), file=sys.stderr)
+        print(_http_error_detail(exc), file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("\nAfbrudt.", file=sys.stderr)
+        return 130
     except Exception as exc:
         print(f"ClientFlow fresh install fejlede: {exc}", file=sys.stderr)
         return 1

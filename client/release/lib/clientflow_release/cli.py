@@ -59,6 +59,13 @@ from .updater_client import StableUpdaterClient
 from .updater_config import UpdaterConfig
 from .update_controller import UpdateController
 
+FIRST_CLAIM_REJECTED_EXIT = 20
+
+
+class FirstClaimRejected(EnrollmentHTTPError):
+    """Definite pre-commit fresh-install claim rejection after local cleanup."""
+
+
 INSTALL_STATE_SCHEMA = 2
 PUBLIC_CLIENT_METADATA_SCHEMA = 1
 
@@ -869,6 +876,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
             # the backend may already have committed the receipt.
             if new_install and 400 <= exc.status_code < 500:
                 _cleanup_new_install_preclaim_state(layout, install_id=install_id)
+                raise FirstClaimRejected(exc.status_code, exc.detail) from exc
             raise
 
         stage_bundle(
@@ -1078,7 +1086,22 @@ def main(argv: list[str] | None = None) -> int:
             "bundle_sha256": bundle_sha256,
         }
     elif args.operation == "install":
-        result = install_fresh(args)
+        try:
+            result = install_fresh(args)
+        except FirstClaimRejected as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "first_claim_rejected",
+                        "http_status": exc.status_code,
+                        "detail": exc.detail,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                file=sys.stderr,
+            )
+            return FIRST_CLAIM_REJECTED_EXIT
     elif args.operation == "activate":
         layout = _layout(args.root)
         result = activate_release(

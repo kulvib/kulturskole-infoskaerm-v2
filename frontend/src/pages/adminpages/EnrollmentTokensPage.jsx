@@ -461,7 +461,7 @@ export default function EnrollmentTokensPage() {
         <DialogTitle>Installationskode oprettet</DialogTitle>
         <DialogContent>
           <Alert severity="info" sx={{ mb: 2 }}>
-            Kunden skal kun bruge den korte CF-kode i <strong>Aktiver ClientFlow</strong>. Den signerede fresh-install authorization og exact release-binding hentes internt af bootstrap-flowet og vises ikke til operatøren.
+            Kunden skal kun bruge den korte CF-kode i <strong>02 Aktiver ClientFlow</strong>. Den signerede fresh-install authorization og exact release-binding hentes internt af bootstrap-flowet og vises ikke til operatøren. Efter backend-godkendelse aktiverer klienten automatisk den staged exact release; kunden skal ikke åbne aktiveringen igen.
           </Alert>
 
           <Paper variant="outlined" sx={{ p: 2, bgcolor: "rgba(15,23,42,0.42)", display: "flex", alignItems: "center", gap: 1 }}>

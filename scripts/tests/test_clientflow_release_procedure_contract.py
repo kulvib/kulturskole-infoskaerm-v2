@@ -100,8 +100,12 @@ def test_customer_first_activation_documents_pre_reboot_login_materialization_an
 
     assert "clientflow_runtime.display_session_prepare" in install
     assert "minimum GDM/AccountsService login baseline" in install
-    assert "controlled reboot" in install
+    assert "operator-confirmed reboot" in install
     assert "runtime/bin/python -P -m clientflow_release activate" in customer
+    assert "01 Klient klargøring" in customer
+    assert "02 Aktiver ClientFlow" in customer
+    assert "does not open Aktiver ClientFlow a second time" in customer
+    assert "clientflow-first-activation.service" in customer
     assert "invokes the already materialized stable updater" not in customer
     assert '"$RELEASE_ROOT/runtime/bin/python" -P -m clientflow_release activate' in activation
     assert 'sudo /usr/bin/python3 -I "$BOOTSTRAP_INSTALLER" activate' not in activation
