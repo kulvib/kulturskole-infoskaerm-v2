@@ -75,7 +75,10 @@ def test_fresh_install_materializes_graphical_login_before_reboot_and_activation
     assert 'state.get("status") != "pending_manual_activation"' in helper
     assert '"clientflow_runtime.display_session_prepare"' in helper
     assert '_prepare_pre_activation_graphical_session()' in helper
-    assert '[str(SYSTEMCTL), "--no-block", "reboot"]' in helper
+    queue = helper[helper.index("def _queue_controlled_pre_activation_reboot"):helper.index("def _prompt")]
+    assert '[str(SYSTEMCTL), "--no-block", "--ignore-inhibitors", "reboot"]' in queue
+    assert "timeout=10" in queue
+    assert '"--force"' not in queue
     post_install = helper[helper.index("authorities = f"):helper.index("except urllib.error.HTTPError")]
     assert post_install.index("_prepare_pre_activation_graphical_session()") < post_install.index("_queue_controlled_pre_activation_reboot()")
     assert 'prepare_graphical_login_baseline' in session_prepare
