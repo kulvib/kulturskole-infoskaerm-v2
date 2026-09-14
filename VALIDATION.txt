@@ -1,35 +1,34 @@
-ClientFlow 1.3.21 / sequence 1222 source-freeze candidate validation
-Pre-freeze canonical main commit: f19da0f0a602331e50dc37c2b42da44390e9658e
+ClientFlow 1.3.21 / sequence 1222 runtime-catalog promotion candidate validation
+Exact source-freeze commit: 6c0319c931859cca9c64a6e31606ad729c92fac7
 Source identity: 1.3.21 / seq 1222
-Runtime catalog intentionally remains: 1.3.20 / seq 1221
-Selected runtime release intentionally remains: clientflow-1.3.20-seq-1221
-Canonical pre-freeze main push CI: #683 / run 34778449650 -> success
+Promotion candidate catalog: 1.3.21 / seq 1222
+Promotion candidate selected release: clientflow-1.3.21-seq-1222
 
-Historical immutable 1.3.20/1221 authority retained:
-- approved bundle SHA256: 64df5b844b6dc3ffa1579f6477142a99e80b747d66825900b957c4af8ee01941
+Exact 1.3.21/1222 release authority completed before promotion:
+- candidate SHA256: 30199b8691428765c7c943acc7af0cc12aaae1f38969806a4c197ef981535099
+- installer SHA256: f6af58a5735acc8e95df3dd655b9de4c62fadf95f51606c3ea45235ba276c4dc
+- approved bundle SHA256: 583d8b1742a456a047ad64bbbc67aa65732483321bad3ae31e1a7569ab8a2909
 - approved bundle size: 223098880
-- approval reference: clientflow-1.3.20-seq-1221/operator-approval-2026-09-13
-- source commit: 7391dcfee0b77eddd46f7b8a986ae442b64d3fcc
+- approval reference: clientflow-1.3.21-seq-1222-manual-approval-30199b8691428765
+- immutable store: /var/data/clientflow-release-artifacts/store/clientflow-1.3.21-seq-1222.tar
 
-PASS: 1.3.20/1221 exact approved bytes remain immutable; no hotfix in place
-PASS: CF-1221-REBOOT-01 closure is merged; reboot uses --ignore-inhibitors and never --force
-PASS: legacy-1.1.19 installation-flow V2 closure is merged
-PASS: Control Room client-list query amplification closure is merged and regression-gated
-PASS: Control Room client-detail/chrome-status query amplification closure is merged and regression-gated
-PASS: source/build identity remains exactly 1.3.21/1222
-PASS: runtime catalog remains 1.3.20/1221 until exact 1.3.21/1222 approval/publication
-PASS: pre-freeze canonical main f19da0f0a602331e50dc37c2b42da44390e9658e CI #683 / run 34778449650 -> success
-PASS: temporary nanoid GHSA-2v37-7h3g-55p8 waiver removed; lock resolves patched 3.3.18
-PASS: stale divergent repo-overlay duplicate source tree removed and guarded against reintroduction
-PASS: top-level SHA256SUMS source manifest refreshed and regression-gated against drift
-PASS: source-freeze hygiene does not modify Livestream/Terminal/Remote Desktop implementation
+PASS: source-freeze exact commit 6c0319c931859cca9c64a6e31606ad729c92fac7 passed canonical GitHub push CI
+PASS: runtime-input transport matched the repo-pinned platform lock
+PASS: independent release builds were byte-identical
+PASS: Ubuntu 26.04 executable-candidate gate passed
+PASS: exact reproducible candidate was manually approved
+PASS: approved bundle was transported without becoming catalog authority
+PASS: exact approved bytes were published immutably to the canonical Render store
+PASS: immutable store re-read returned exactly 223098880 bytes and SHA256 583d8b1742a456a047ad64bbbc67aa65732483321bad3ae31e1a7569ab8a2909
+PASS: re-read manifest proved deployable/source/candidate/approval/installer binding
+PASS: catalog remained 1.3.20/1221 throughout publication and independent re-read
+PASS: catalog-promotion candidate selects only 1.3.21/1222 and retains min_current_version 1.3.11
+PASS: nanoid remains patched at 3.3.18 without advisory waiver
+PASS: repo-overlay remains absent
+PASS: catalog promotion does not modify Livestream/Terminal/Remote Desktop implementation
 
-PENDING: merge this source-freeze closure and require canonical GitHub push CI success
-PENDING: record exact post-merge 1.3.21/1222 source-freeze commit SHA
-PENDING: sequence-1222 runtime-input transport verification
-PENDING: reproducible canonical release build for exact source-freeze commit
-PENDING: exact-candidate manual approval
-PENDING: immutable publication and independent store re-read
-PENDING: separate catalog promotion to 1.3.21/1222
+PENDING: merge this separate catalog-promotion change and require canonical GitHub push CI success
+PENDING: deploy the merged promotion to the backend
+PENDING: prove running backend selects only 1.3.21/1222 while immutable store SHA remains exact
 PENDING: clean canonical physical Ubuntu 26.04 fresh-install verification of 1.3.21/1222
 PENDING: physical GUI/process parity acceptance against deployed legacy 1.1.19 contract
