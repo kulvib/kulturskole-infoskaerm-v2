@@ -44,6 +44,7 @@ test("kendte frontend security-remediations er låst i package-lock", () => {
   const expected = {
     "brace-expansion": "1.1.18",
     "js-yaml": "4.3.2",
+    nanoid: "3.3.18",
     postcss: "8.5.23",
     "react-router": "7.18.2",
   };

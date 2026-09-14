@@ -65,15 +65,23 @@ was durable, account provisioning was correct, the graphical login baseline
 completed with `DISPLAY_SESSION_PREPARE_OK`, and only the controlled reboot
 transition failed. 1.3.20/1221 is not hotfixed in place.
 
-## Next canonical gates
+## Current source-freeze state and next canonical gates
 
-1. Merge this identity-only transition only after full GitHub CI is green.
-2. Record the resulting exact 40-character source commit SHA.
-3. Produce/verify the locked runtime-input transport for sequence 1222.
-4. Run `.github/workflows/release-build.yml` for that exact source SHA.
-5. Require byte-identical independent candidate outputs and Ubuntu 26.04 executable-candidate PASS.
-6. Manually approve the exact reproducible candidate.
-7. Publish the exact approved bytes immutably and independently re-read them.
-8. Only then create the separate runtime-catalog promotion to 1.3.21/1222.
-9. Repeat the canonical clean Ubuntu 26.04 physical fresh-install from a genuinely clean host, with no diagnostic bypass.
-10. Complete physical GUI pixel-parity acceptance against deployed legacy 1.1.19.
+The identity transition itself is merged. The last canonical pre-freeze main is
+`f19da0f0a602331e50dc37c2b42da44390e9658e`, whose push CI `#683` / run
+`34778449650` completed successfully. Installation-flow parity and the bounded
+Control Room client-list/client-detail read-path closures are also merged.
+
+`CLIENTFLOW_1.3.21_1222_SOURCE_FREEZE_CLOSURE.md` is the current authority for
+the final source-hardening gate. After that closure is merged and its canonical
+push CI is green:
+
+1. Record the exact resulting 40-character source-freeze commit SHA.
+2. Produce/verify the locked runtime-input transport for sequence 1222.
+3. Run `.github/workflows/release-build.yml` twice for that exact source SHA and runtime-input transport.
+4. Require byte-identical independent candidate outputs and Ubuntu 26.04 executable-candidate PASS.
+5. Manually approve the exact reproducible candidate.
+6. Publish the exact approved bytes immutably and independently re-read them.
+7. Only then create the separate runtime-catalog promotion to 1.3.21/1222.
+8. Repeat the canonical clean Ubuntu 26.04 physical fresh-install from a genuinely clean host, with no diagnostic bypass.
+9. Complete physical GUI/process parity acceptance against deployed legacy 1.1.19.

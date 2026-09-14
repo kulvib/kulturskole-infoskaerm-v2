@@ -1,0 +1,11 @@
+repo-overlay/backend/service1/display_control.py
+repo-overlay/backend/service1/routers/clients.py
+repo-overlay/backend/tests/test_clientflow_display_browser_request_projection.py
+repo-overlay/backend/tests/test_clientflow_display_runtime_permission_contract.py
+repo-overlay/client/runtime/clientflow_runtime/display_runtime.py
+repo-overlay/client/runtime/clientflow_runtime/display_shared_file.py
+repo-overlay/client/systemd/clientflow-display-runtime.service
+repo-overlay/frontend/src/pages/clientdetailspage/ClientDetailsActionsSection.jsx
+repo-overlay/frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx
+repo-overlay/frontend/src/pages/clientdetailspage/displayActionPolicy.mjs
+repo-overlay/frontend/tests/displayActionPolicy.test.mjs

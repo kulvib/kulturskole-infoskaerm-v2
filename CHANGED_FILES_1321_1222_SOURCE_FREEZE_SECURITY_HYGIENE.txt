@@ -1,0 +1,21 @@
+frontend/package-lock.json
+frontend/dependency-audit-allowlist.json
+frontend/tests/dependencyRuntime.test.mjs
+scripts/tests/test_clientflow_source_freeze_security_hygiene.py
+CLIENTFLOW_1.3.21_1222_SOURCE_IDENTITY.md
+VALIDATION.txt
+CLIENTFLOW_1.3.21_1222_SOURCE_FREEZE_CLOSURE.md
+CHANGED_FILES_1321_1222_SOURCE_FREEZE_SECURITY_HYGIENE.txt
+SHA256SUMS.txt
+DELETE_FILES_1321_1222_SOURCE_FREEZE_SECURITY_HYGIENE.txt
+repo-overlay/backend/service1/display_control.py (delete)
+repo-overlay/backend/service1/routers/clients.py (delete)
+repo-overlay/backend/tests/test_clientflow_display_browser_request_projection.py (delete)
+repo-overlay/backend/tests/test_clientflow_display_runtime_permission_contract.py (delete)
+repo-overlay/client/runtime/clientflow_runtime/display_runtime.py (delete)
+repo-overlay/client/runtime/clientflow_runtime/display_shared_file.py (delete)
+repo-overlay/client/systemd/clientflow-display-runtime.service (delete)
+repo-overlay/frontend/src/pages/clientdetailspage/ClientDetailsActionsSection.jsx (delete)
+repo-overlay/frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx (delete)
+repo-overlay/frontend/src/pages/clientdetailspage/displayActionPolicy.mjs (delete)
+repo-overlay/frontend/tests/displayActionPolicy.test.mjs (delete)
