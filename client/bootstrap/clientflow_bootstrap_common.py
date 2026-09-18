@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -688,7 +689,9 @@ def remove_desktop_install_icons(user: str) -> None:
 
 
 def install_terminal_launcher(path: Path, *, title: str, command: str) -> None:
-    script = f'''#!/usr/bin/env bash\nset -euo pipefail\nRUN={json.dumps(command)}\nif command -v x-terminal-emulator >/dev/null 2>&1; then\n  exec x-terminal-emulator -T {json.dumps(title)} -e bash -lc "$RUN"\nelif command -v gnome-terminal >/dev/null 2>&1; then\n  exec gnome-terminal --title={json.dumps(title)} -- bash -lc "$RUN"\nelif command -v kgx >/dev/null 2>&1; then\n  exec kgx --title {json.dumps(title)} -- bash -lc "$RUN"\nelif command -v xterm >/dev/null 2>&1; then\n  exec xterm -T {json.dumps(title)} -e bash -lc "$RUN"\nelse\n  exec bash -lc "$RUN"\nfi\n'''
+    quoted_title = shlex.quote(title)
+    quoted_command = shlex.quote(command)
+    script = f'''#!/usr/bin/env bash\nset -euo pipefail\nif command -v ptyxis >/dev/null 2>&1; then\n  exec ptyxis --title={quoted_title} -- bash -lc {quoted_command}\nelif command -v x-terminal-emulator >/dev/null 2>&1; then\n  exec x-terminal-emulator -T {quoted_title} -e bash -lc {quoted_command}\nelif command -v gnome-terminal >/dev/null 2>&1; then\n  exec gnome-terminal --title={quoted_title} -- bash -lc {quoted_command}\nelif command -v kgx >/dev/null 2>&1; then\n  exec kgx --title {quoted_title} -- bash -lc {quoted_command}\nelif command -v xterm >/dev/null 2>&1; then\n  exec xterm -T {quoted_title} -e bash -lc {quoted_command}\nelse\n  exec bash -lc {quoted_command}\nfi\n'''
     _atomic_root_file(path, script, mode=0o755)
 
 

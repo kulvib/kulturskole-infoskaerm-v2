@@ -1,0 +1,6 @@
+CHANGED_FILES_1222_TERMINAL_LAUNCHER_FIX.txt
+CLIENTFLOW_1222_TERMINAL_LAUNCHER_FIX_REPORT.md
+SHA256SUMS.txt
+VALIDATION.txt
+client/bootstrap/clientflow_bootstrap_common.py
+scripts/tests/test_clientflow_terminal_launcher_1222.py
