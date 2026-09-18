@@ -1,20 +1,20 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1222,
-  "latest_stable": "1.3.21",
-  "default_install_version": "1.3.21",
+  "catalog_sequence": 1223,
+  "latest_stable": "1.3.22",
+  "default_install_version": "1.3.22",
   "retention_policy": {
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
   },
-  "created_at": "2026-09-14T00:00:00Z",
+  "created_at": "2026-09-18T00:00:00Z",
   "releases": [
     {
-      "version": "1.3.21",
-      "client_version": "1.3.21",
-      "release_sequence": 1222,
-      "revision": "clientflow-1.3.21-seq-1222",
+      "version": "1.3.22",
+      "client_version": "1.3.22",
+      "release_sequence": 1223,
+      "revision": "clientflow-1.3.22-seq-1223",
       "status": "stable",
       "installable": true,
       "update_allowed": true,
@@ -34,11 +34,11 @@
         "requires_platform_preflight": true
       },
       "notes": [
-        "Canonical ClientFlow 1.3.21 release containing the CF-1221-REBOOT-01 reboot-inhibitor closure, the legacy 1.1.19 two-phase installation-flow V2 parity closure, and bounded Control Room client-list/client-detail read-path performance closures. The controlled pre-activation reboot uses systemd --ignore-inhibitors without --force only after durable pending state and exact release binding.",
+        "Canonical ClientFlow 1.3.22 release containing the CF-1222-LAUNCHER-01 terminal-launcher closure and PlanIQ Display desktop-icon branding. Generated terminal launchers now defer runtime rc expansion correctly, shell-quote title/command data, and prefer Ptyxis before generic terminal fallbacks.",
         "Fresh install and in-place update remain bounded to the safe ClientFlow 1.3.11 baseline. Ubuntu Desktop 26.04 LTS amd64/Wayland platform preflight remains mandatory, and the release continues to require the controlled reboot lifecycle declared by the catalog.",
-        "Promoted only after the exact manually approved 1.3.21/1222 whole bundle from source 6c0319c931859cca9c64a6e31606ad729c92fac7 was reproducibly built from byte-identical independent candidates, passed the Ubuntu 26.04 executable-candidate gate, was approved with reference clientflow-1.3.21-seq-1222-manual-approval-30199b8691428765, published immutably to the canonical Render artifact store, and independently re-read at 223098880 bytes with SHA-256 583d8b1742a456a047ad64bbbc67aa65732483321bad3ae31e1a7569ab8a2909. The next clean Ubuntu 26.04 install is canonical physical verification and final legacy 1.1.19 GUI/process acceptance."
+        "Promoted only after the exact manually approved 1.3.22/1223 whole bundle from source 957f5d7ab7a3c7fc835565c041533df30834dd78 was reproducibly built from byte-identical independent candidates, passed the Ubuntu 26.04 executable-candidate gate, was approved with reference clientflow-1.3.22-seq-1223-manual-approval-bd9613043d5e770c, published immutably to the canonical Render artifact store, and independently re-read at 223098880 bytes with SHA-256 ca8e3b0713ae3af8fec018083235409d662aac70e71eb5062cbbe60bc4aaa6d4. The next clean Ubuntu 26.04 install is canonical physical verification of the launcher and installation-flow closure."
       ],
-      "release_id": "clientflow-1.3.21-seq-1222",
+      "release_id": "clientflow-1.3.22-seq-1223",
       "artifact_type": "runtime_release",
       "install_modes": [
         "fresh_install",
