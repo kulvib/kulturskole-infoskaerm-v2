@@ -71,6 +71,7 @@ BOOTSTRAP_FILES = (
     "clientflow_bootstrap_common.py",
     "clientflow-factory-prepare",
     "clientflow-fresh-install",
+    "planiq-display-mark.png",
 )
 
 

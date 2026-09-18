@@ -10,11 +10,15 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP = ROOT / "client/bootstrap"
 USB = BOOTSTRAP / "usb"
-PAYLOAD_NAMES = (
-    "clientflow-factory-prepare",
-    "clientflow-fresh-install",
-    "clientflow_bootstrap_common.py",
-)
+PAYLOAD_SOURCES = {
+    "clientflow-factory-prepare": (BOOTSTRAP / "clientflow-factory-prepare", 0o555),
+    "clientflow-fresh-install": (BOOTSTRAP / "clientflow-fresh-install", 0o555),
+    "clientflow_bootstrap_common.py": (BOOTSTRAP / "clientflow_bootstrap_common.py", 0o444),
+    "planiq-display-mark.png": (
+        ROOT / "frontend/public/brand/planiq-display/planiq-display-mark.png",
+        0o444,
+    ),
+}
 STATIC_NAMES = (
     "00_START_HER_KORT.txt",
     "01_START_CLIENTFLOW_USB.sh",
@@ -45,10 +49,8 @@ def build(output: Path) -> tuple[int, str]:
         entries.append(_entry(name, data, mode))
 
     checksum_lines: list[str] = []
-    for name in PAYLOAD_NAMES:
-        source = BOOTSTRAP / name
+    for name, (source, mode) in PAYLOAD_SOURCES.items():
         data = source.read_bytes()
-        mode = 0o555 if name != "clientflow_bootstrap_common.py" else 0o444
         entries.append(_entry(f"payload/{name}", data, mode))
         checksum_lines.append(f"{_sha256(data)}  payload/{name}")
     checksums = ("\n".join(checksum_lines) + "\n").encode("utf-8")

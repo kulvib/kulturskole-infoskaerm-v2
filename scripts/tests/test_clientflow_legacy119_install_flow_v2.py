@@ -153,8 +153,12 @@ def test_usb_builder_is_deterministic_and_packages_only_repo_owned_preclaim_boot
             "payload/clientflow-factory-prepare",
             "payload/clientflow-fresh-install",
             "payload/clientflow_bootstrap_common.py",
+            "payload/planiq-display-mark.png",
         }
         assert b"clientflow-factory-prepare" in archive.read("PAYLOAD_SHA256SUMS.txt")
+        assert archive.read("payload/planiq-display-mark.png") == (
+            ROOT / "frontend/public/brand/planiq-display/planiq-display-mark.png"
+        ).read_bytes()
 
 
 def test_usb_start_has_no_mutable_release_download_authority():

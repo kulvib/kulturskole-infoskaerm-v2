@@ -1,0 +1,15 @@
+ClientFlow PlanIQ Display desktop-icon branding
+
+Changed files:
+- CHANGED_FILES_PLANIQ_DISPLAY_DESKTOP_ICON_BRANDING.txt
+- CLIENTFLOW_PLANIQ_DISPLAY_DESKTOP_ICON_BRANDING_CLOSURE.md
+- SHA256SUMS.txt
+- VALIDATION.txt
+- client/bootstrap/clientflow-fresh-install
+- client/bootstrap/clientflow_bootstrap_common.py
+- client/bootstrap/usb/01_START_CLIENTFLOW_USB.sh
+- scripts/build_clientflow_usb_installer.py
+- scripts/tests/test_clientflow_desktop_icon_branding.py
+- scripts/tests/test_clientflow_legacy119_install_flow_v2.py
+
+Deleted files: none
