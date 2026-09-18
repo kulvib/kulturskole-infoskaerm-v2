@@ -72,13 +72,15 @@
       "title": "Dedicated kiosk, cfadmin, bootstrap-user cleanup and desktop session baseline",
       "status": "architecturally_replaced",
       "frozen": false,
-      "rationale": "V2 creates dedicated clientflow-kiosk and password-enabled sudo cfadmin, persists the temporary bootstrap user until healthy activation and applies a consistent desktop baseline.",
+      "rationale": "V2 factory phase creates dedicated clientflow-kiosk and password-enabled sudo cfadmin before customer handoff, records the exact temporary Ubuntu bootstrap user for post-activation cleanup, and applies a consistent desktop/session baseline.",
       "legacy_evidence": [
         "installer:install_clientflow_factory_v1_0_0.sh",
         "payload:etc/systemd/system/clientflow_kiosk_baseline.service",
         "payload:usr/local/sbin/clientflow-kiosk-baseline"
       ],
       "v2_replacements": [
+        "client/bootstrap/clientflow_bootstrap_common.py",
+        "client/bootstrap/clientflow-factory-prepare",
         "client/release/lib/clientflow_release/accounts.py",
         "client/release/lib/clientflow_release/cli.py",
         "client/runtime/clientflow_runtime/display_platform_prepare.py",
@@ -104,16 +106,18 @@
     },
     {
       "id": "network_identity_bootstrap",
-      "title": "Network readiness, client name/locality and bounded bootstrap-profile cleanup",
+      "title": "Network readiness, client identity and factory/customer network handoff",
       "status": "architecturally_replaced",
       "frozen": false,
-      "rationale": "Legacy factory network preparation is replaced by preclaim NetworkManager/backend readiness, bound name/locality and explicit UUID-owned temporary profile cleanup.",
+      "rationale": "V2 preserves preclaim NetworkManager/backend readiness and explicit name/locality, while the trusted end-of-office factory boundary deliberately removes all saved transport profiles before the client is shipped; customer-created connectivity is not part of that factory scrub.",
       "legacy_evidence": [
         "installer:install_clientflow_factory.sh",
         "installer:clientflow-cf-code-entry.py",
         "installer:clientflow-customer-activate"
       ],
       "v2_replacements": [
+        "client/bootstrap/clientflow-factory-prepare",
+        "client/bootstrap/clientflow_bootstrap_common.py",
         "client/release/lib/clientflow_release/network_bootstrap.py",
         "client/release/lib/clientflow_release/cli.py",
         "frontend/src/utils/clientflowFreshInstall.js"

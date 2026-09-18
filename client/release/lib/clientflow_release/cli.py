@@ -22,6 +22,7 @@ from .accounts import (
     cleanup_bootstrap_user,
     detect_bootstrap_user,
     provision_human_accounts,
+    validate_human_accounts,
 )
 from .constants import DOMAIN_NAMES, INSTALL_MODE_FRESH, MAX_BUNDLE_BYTES
 from .crypto import sha256_file
@@ -110,7 +111,7 @@ def _install_state_path(layout: Layout) -> Path:
     return layout.path("/var/lib/clientflow/release/install-state.json")
 
 
-def _fresh_conflicts(layout: Layout) -> list[str]:
+def _fresh_conflicts(layout: Layout, *, allow_factory_handoff: bool = False) -> list[str]:
     conflicts: list[str] = []
     for absolute in (
         "/opt/clientflow",
@@ -129,6 +130,8 @@ def _fresh_conflicts(layout: Layout) -> list[str]:
     sudoers_root = layout.path("/etc/sudoers.d")
     if sudoers_root.is_dir() and not sudoers_root.is_symlink():
         for path in sorted(sudoers_root.glob("clientflow*")):
+            if allow_factory_handoff and path.name == "clientflow-factory-activation":
+                continue
             conflicts.append(f"sudoers:{path.name}")
     if layout.root == Path("/"):
         accounts = (
@@ -150,17 +153,62 @@ def _fresh_conflicts(layout: Layout) -> list[str]:
         for user in accounts:
             try:
                 pwd.getpwnam(user)
-                conflicts.append(f"user:{user}")
+                if not (allow_factory_handoff and user in {ADMIN_USER, KIOSK_USER}):
+                    conflicts.append(f"user:{user}")
             except KeyError:
                 pass
         groups = (*accounts, "clientflow-display-control", "clientflow-livestream-control")
         for group in groups:
             try:
                 grp.getgrnam(group)
-                conflicts.append(f"group:{group}")
+                if not (allow_factory_handoff and group in {ADMIN_USER, KIOSK_USER}):
+                    conflicts.append(f"group:{group}")
             except KeyError:
                 pass
     return sorted(set(conflicts))
+
+
+def _factory_handoff_state(path: Path | None, *, client_name: str, layout: Layout) -> dict[str, object] | None:
+    if path is None:
+        return None
+    expected = Path("/var/lib/clientflow-bootstrap/factory-state.json")
+    if layout.root == Path("/") and path != expected:
+        raise RuntimeError("Factory-state skal komme fra den canonical root-owned bootstrap-path")
+    try:
+        meta = path.lstat()
+    except FileNotFoundError as exc:
+        raise RuntimeError("Factory-state mangler; kundeaktivering kan ikke stole på preprovisionerede konti") from exc
+    if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode):
+        raise RuntimeError("Factory-state er ikke en reel fil")
+    if meta.st_uid != 0 or (meta.st_mode & 0o077):
+        raise RuntimeError("Factory-state har ugyldig ownership/permissions")
+    raw = path.read_bytes()
+    if len(raw) > 128 * 1024:
+        raise RuntimeError("Factory-state er for stor")
+    try:
+        state = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Factory-state er ugyldig JSON") from exc
+    if not isinstance(state, dict) or state.get("schema_version") != 2:
+        raise RuntimeError("Factory-state har ukendt schema")
+    if state.get("handoff_ready") is not True:
+        raise RuntimeError("Factory-state er ikke valideret som klar til kundeoverdragelse")
+    if normalize_client_name(state.get("client_name")) != client_name:
+        raise RuntimeError("Factory-state klientnavn matcher ikke fresh-install input")
+    if state.get("kiosk_user") != KIOSK_USER or state.get("admin_user") != ADMIN_USER:
+        raise RuntimeError("Factory-state matcher ikke canonical ClientFlow-konti")
+    operator = str(state.get("operator_user") or "").strip()
+    if not operator or operator in {"root", KIOSK_USER, ADMIN_USER}:
+        raise RuntimeError("Factory-state mangler gyldig midlertidig Ubuntu-installationsbruger")
+    if layout.root == Path("/"):
+        try:
+            account = pwd.getpwnam(operator)
+        except KeyError as exc:
+            raise RuntimeError("Factory-state operator-bruger findes ikke længere") from exc
+        if account.pw_uid < 1000 or account.pw_uid >= 65000:
+            raise RuntimeError("Factory-state operator er ikke en normal lokal Ubuntu-bruger")
+        validate_human_accounts()
+    return state
 
 
 def _cleanup_new_install_preclaim_state(layout: Layout, *, install_id: str) -> None:
@@ -735,15 +783,23 @@ def install_fresh(args: argparse.Namespace) -> dict:
             )
         requested_bootstrap_uuid = stored_uuid
 
+    factory_handoff = _factory_handoff_state(
+        getattr(args, "factory_state", None),
+        client_name=client_name,
+        layout=layout,
+    )
+
     # Host prerequisites and network/backend reachability are proven before
     # one-time enrollment authorities are read. The network preflight is
     # read-only except for the separately completed host prerequisite repair.
     bootstrap_network_connection = stored_bootstrap_network
     if layout.root == Path("/"):
+        print("[INSTALL] Preclaim host-readiness...", flush=True)
         ensure_preclaim_host_readiness(
             args.bundle,
             expected_bundle_sha256=approved_bundle_sha256,
         )
+        print("[INSTALL] Kontrollerer netværk og ClientFlow-backend...", flush=True)
         network_preflight = ensure_preclaim_network_readiness(
             backend_url,
             ca_file=getattr(args, "ca_file", None),
@@ -755,6 +811,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
                 "Resume bootstrap NetworkManager-profil matcher ikke den oprindeligt markerede profil"
             )
         bootstrap_network_connection = current_marker
+        print("[OK] Netværk og backend-readiness er verificeret.", flush=True)
 
     enrollment_code, fresh_install_authorization = _fresh_install_authorities(args)
 
@@ -796,7 +853,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
             raise RuntimeError("Ny fresh install kræver en one-time enrollment code via stdin")
         if not fresh_install_authorization:
             raise RuntimeError("Ny fresh install kræver fresh-install authorization via stdin")
-        conflicts = _fresh_conflicts(layout)
+        conflicts = _fresh_conflicts(layout, allow_factory_handoff=factory_handoff is not None)
         if conflicts:
             raise RuntimeError(
                 "Fresh install afviste eksisterende ClientFlow-spor: " + ", ".join(conflicts)
@@ -816,7 +873,11 @@ def install_fresh(args: argparse.Namespace) -> dict:
             "bootstrap_network_connection": bootstrap_network_connection,
             # Exact pre-ClientFlow Ubuntu user.  This is lifecycle metadata, not
             # a credential, and is removed only after healthy first activation.
-            "bootstrap_user": detect_bootstrap_user() if layout.root == Path("/") else None,
+            "bootstrap_user": (
+                str(factory_handoff.get("operator_user"))
+                if factory_handoff is not None
+                else (detect_bootstrap_user() if layout.root == Path("/") else None)
+            ),
             "status": "initialized",
         }
         atomic_write_json(state_path, install_state, mode=0o600)
@@ -854,6 +915,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
         raise
 
     if not _all_credentials_present(layout):
+        print("[INSTALL] Sender consuming backend claim for exact approved release...", flush=True)
         try:
             response = claim(
                 backend_url=backend_url,
@@ -879,6 +941,8 @@ def install_fresh(args: argparse.Namespace) -> dict:
                 raise FirstClaimRejected(exc.status_code, exc.detail) from exc
             raise
 
+        print("[OK] Backend claim er accepteret.", flush=True)
+        print(f"[INSTALL] Stager exact release {release_id}...", flush=True)
         stage_bundle(
             args.bundle,
             release_id=release_id,
@@ -886,13 +950,19 @@ def install_fresh(args: argparse.Namespace) -> dict:
             install_mode=INSTALL_MODE_FRESH,
             layout=layout,
         )
-        # Backend claim is committed before local human-account mutation. This
-        # preserves the fresh-install trust boundary while restoring the proven
-        # legacy two-user product contract. Password input is read directly
-        # from the controlling TTY and is never persisted in ClientFlow state.
+        print("[OK] Exact release er verificeret og staged inaktivt.", flush=True)
+        # Human accounts may already be factory-provisioned before customer handoff.
+        # In that canonical V2 path the root-owned factory-state plus the exact
+        # account contract is revalidated fail-closed; the customer is never
+        # prompted to define cfadmin. Direct non-factory installs retain the
+        # existing post-claim provisioning path for compatibility.
         if layout.root == Path("/"):
-            provision_human_accounts(prompt_admin_password=True)
+            if factory_handoff is not None:
+                validate_human_accounts()
+            else:
+                provision_human_accounts(prompt_admin_password=True)
         kiosk_user = _validate_kiosk_user(KIOSK_USER, layout)
+        print("[INSTALL] Installerer systemd-/runtime-definitioner uden at starte runtime...", flush=True)
         install_staged_definitions(release_id, layout=layout, kiosk_user=kiosk_user, client_id=int(response["client_id"]))
         stored_ca_path = _copy_install_configuration(layout, release_id, ca_file=None, kiosk_user=kiosk_user)
         request_ca_file = layout.path(stored_ca_path) if stored_ca_path else None
@@ -900,6 +970,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
         install_state["status"] = "staged_inactive"
         atomic_write_json(state_path, install_state, mode=0o600)
 
+        print("[INSTALL] Gemmer backend-udstedte credentials sikkert lokalt...", flush=True)
         persist_enrollment(
             response,
             seed=seed,
@@ -921,6 +992,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
         _persist_updater_tls_ca(layout, stored_ca_path)
 
     if install_state.get("status") != "enrollment_completed":
+        print("[INSTALL] Afslutter consuming fresh-install transaction hos backend...", flush=True)
         complete(
             backend_url=backend_url,
             install_id=install_id,
@@ -950,6 +1022,7 @@ def install_fresh(args: argparse.Namespace) -> dict:
         bootstrap_network_connection=bootstrap_network_connection,
     )
     atomic_write_json(state_path, final_state, mode=0o600)
+    print("[OK] Fresh install er staged som pending_manual_activation; ClientFlow-runtime er stadig inaktiv.", flush=True)
     return {
         "status": "pending_manual_activation",
         "release_id": release_id,
@@ -980,6 +1053,7 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--kiosk-user", default=KIOSK_USER, choices=[KIOSK_USER])
     install.add_argument("--name")
     install.add_argument("--locality")
+    install.add_argument("--factory-state", type=Path, help=argparse.SUPPRESS)
     install.add_argument(
         "--bootstrap-network-connection-uuid",
         help="Explicit active NetworkManager WiFi/Ethernet profile owned by temporary ClientFlow bootstrap cleanup",

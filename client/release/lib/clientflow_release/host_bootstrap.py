@@ -28,24 +28,35 @@ DPKG = Path("/usr/bin/dpkg")
 DPKG_DEB = Path("/usr/bin/dpkg-deb")
 
 
-def _run(command: list[str], *, timeout: int = 300) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        command,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=timeout,
-        check=False,
-        env={
+def _run(
+    command: list[str],
+    *,
+    timeout: int = 300,
+    visible: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    kwargs = {
+        "text": True,
+        "timeout": timeout,
+        "check": False,
+        "env": {
             "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "LANG": "C.UTF-8",
             "DEBIAN_FRONTEND": "noninteractive",
         },
-    )
+    }
+    if visible:
+        result = subprocess.run(command, **kwargs)
+    else:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            **kwargs,
+        )
     if result.returncode != 0:
+        detail = "" if visible else f"\n{(result.stdout or '')[-4000:]}"
         raise HostBootstrapError(
-            f"Host-bootstrap kommando fejlede ({result.returncode}): {' '.join(command)}\n"
-            + result.stdout[-4000:]
+            f"Host-bootstrap kommando fejlede ({result.returncode}): {' '.join(command)}{detail}"
         )
     return result
 
@@ -267,7 +278,7 @@ def _install_apt_from_file(package_path: Path, artifact: dict[str, Any]) -> None
                 "Installeret apt-version er nyere end release-bundlens recovery-artifact; "
                 "fresh install afviser automatisk downgrade"
             )
-    _run([str(DPKG), "--install", str(package_path)], timeout=180)
+    _run([str(DPKG), "--install", str(package_path)], timeout=180, visible=True)
     if not _binary_works(APT_GET, "--version"):
         raise HostBootstrapError("APT recovery-artifact blev installeret, men apt-get er stadig ikke funktionsdygtig")
     identity = _installed_package_identity("apt")
@@ -318,7 +329,7 @@ def _ensure_curl() -> None:
         return
     if not _binary_works(APT_GET, "--version"):
         raise HostBootstrapError("curl mangler og APT er ikke funktionsdygtig efter recovery")
-    _run([str(APT_GET), "-o", "DPkg::Lock::Timeout=120", "update"], timeout=300)
+    _run([str(APT_GET), "-o", "DPkg::Lock::Timeout=120", "update"], timeout=300, visible=True)
     _run(
         [
             str(APT_GET),
@@ -331,6 +342,7 @@ def _ensure_curl() -> None:
             "curl",
         ],
         timeout=300,
+        visible=True,
     )
     if not _binary_works(CURL, "--version"):
         raise HostBootstrapError("curl kunne ikke etableres automatisk via canonical Ubuntu APT")
@@ -340,12 +352,17 @@ def ensure_preclaim_host_readiness(bundle: Path, *, expected_bundle_sha256: str)
     """Establish the non-ClientFlow host prerequisites before enrollment can be consumed."""
     if os.geteuid() != 0:
         raise HostBootstrapError("Preclaim host-bootstrap kræver root")
+    print("[INSTALL] Kontrollerer Ubuntu 26.04 host-prerequisites...", flush=True)
     _require_target_host()
     apt_state = "present"
     if not _binary_works(APT_GET, "--version"):
+        print("[INSTALL] APT kræver recovery; installer-output vises direkte nedenfor.", flush=True)
         _recover_apt_from_bundle(bundle, expected_bundle_sha256=expected_bundle_sha256)
         apt_state = "recovered_from_approved_bundle"
+    if not _binary_works(CURL, "--version"):
+        print("[INSTALL] curl mangler; almindelig apt-output vises under installationen.", flush=True)
     _ensure_curl()
     if not _binary_works(APT_GET, "--version") or not _binary_works(CURL, "--version"):
         raise HostBootstrapError("Preclaim host-readiness kunne ikke bevises fail-closed")
+    print(f"[OK] Host-prerequisites er klar (apt={apt_state}, curl=ready).", flush=True)
     return {"apt": apt_state, "curl": "ready"}

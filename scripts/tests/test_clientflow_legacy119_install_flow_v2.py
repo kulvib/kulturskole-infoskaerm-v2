@@ -25,36 +25,41 @@ def _load(path: Path, name: str):
     return module
 
 
-def test_factory_flow_preserves_legacy_visible_phase_order_without_preclaim_human_account_mutation():
+def test_factory_flow_preserves_legacy_customer_handoff_before_reboot():
     source = FACTORY.read_text(encoding="utf-8")
     body = source[source.index("def factory_prepare"):source.index("def main")]
     order = [
         'configure_network_interactive("klient-/factory-klargøring")',
         "prompt_client_name_confirmed(existing)",
-        "write_factory_state(client_name=client_name, operator_user=operator)",
-        "_install_customer_launcher(operator)",
-        "forget_owned_connection(owned_marker)",
+        "write_factory_state(client_name=client_name, operator_user=operator, handoff_ready=False)",
+        "provision_factory_human_accounts()",
+        "prepare_factory_graphical_login()",
+        "_install_customer_launcher(KIOSK_USER)",
+        "install_customer_launcher_trust_helper(KIOSK_USER)",
+        "install_customer_activation_sudoers()",
+        "remove_desktop_install_icons(operator)",
+        "forget_saved_networks()",
+        "validate_factory_handoff(client_name=client_name, operator_user=operator)",
         'confirmed_reboot("klient klargøring gennemført", seconds=5)',
     ]
     positions = [body.index(token) for token in order]
     assert positions == sorted(positions)
     assert "01 Klient klargøring.desktop" in source
     assert "02 Aktiver ClientFlow.desktop" in source
-    assert "provision_human_accounts" not in source
-    assert "cfadmin-password sættes først efter en gyldig backend-claim" in source
+    assert '"sudo -n /usr/local/lib/clientflow-bootstrap/clientflow-fresh-install; "' in source
+    assert "cfadmin-password sættes først efter en gyldig backend-claim" not in source
 
 
+def test_factory_cleanup_deletes_all_saved_shipping_network_profiles_fail_closed():
+    source = COMMON.read_text(encoding="utf-8")
+    cleanup = source[source.index("def forget_saved_networks"):source.index("def validate_factory_handoff")]
+    assert '"wifi", "802-11-wireless", "ethernet", "802-3-ethernet", "gsm", "cdma", "vpn", "wireguard"' in cleanup
+    assert '"connection", "delete", "uuid", connection_uuid' in cleanup
+    assert "Gemte netværksprofiler findes stadig efter factory-cleanup" in cleanup
+    factory = FACTORY.read_text(encoding="utf-8")
+    body = factory[factory.index("def factory_prepare"):factory.index("def main")]
+    assert body.index("forget_saved_networks()") < body.index("validate_factory_handoff(")
 
-
-def test_factory_cleanup_tracks_usb_and_replacement_clientflow_owned_network_profiles():
-    source = FACTORY.read_text(encoding="utf-8")
-    body = source[source.index("def factory_prepare"):source.index("def main")]
-    assert "owned_markers: list[dict[str, str]] = []" in body
-    assert "owned_markers.append({str(key): str(value) for key, value in raw_marker.items()})" in body
-    assert "owned_markers.append(current_marker)" in body
-    assert "for owned_marker in owned_markers:" in body
-    assert "forget_owned_connection(owned_marker)" in body
-    assert "connection delete" not in body.lower()
 
 
 def test_product_resume_after_pending_crash_cannot_fall_back_to_old_manual_activation_path():
@@ -79,6 +84,9 @@ def test_customer_flow_matches_legacy_customer_order_and_removes_second_manual_a
         "_download_exact_bundle(code, binding, directory)",
         "_cache_exact_bundle(downloaded, binding)",
         "_run_canonical_installer(",
+        "remove_customer_activation_sudoers()",
+        "cleanup_customer_launcher_trust_helper(KIOSK_USER)",
+        "remove_desktop_install_icons(KIOSK_USER)",
         "_prepare_pre_activation_graphical_session()",
         "_install_activation_waiter()",
         'confirmed_reboot("kundeaktivering gennemført", seconds=5)',
@@ -88,6 +96,8 @@ def test_customer_flow_matches_legacy_customer_order_and_removes_second_manual_a
     assert "Midlertidig bootstrap-netværksprofil UUID" not in source
     assert "CF-____-____-____" in source
     assert "kræves ikke et ekstra klik" in source
+    assert "cfadmin er allerede defineret i 01 Klient klargøring" in source
+    assert '"--factory-state"' in source
 
 
 def test_cf_code_editor_matches_legacy_visible_contract_and_normalizes_paste():
@@ -108,6 +118,19 @@ def test_network_bootstrap_uses_interactive_secret_agent_and_exact_uuid_cleanup(
     assert "_new_owned_connection(before, profile_name)" in connect
     assert '"connection", "delete", "uuid", connection_uuid' in cleanup
     assert 'current["name"] != expected_name or current["type"] != expected_type' in cleanup
+
+
+def test_terminal_ux_keeps_legacy_network_help_and_visible_install_progress():
+    common = COMMON.read_text(encoding="utf-8")
+    assert "Denne fase kontrollerer altid kablet netværk først. Hvis Ethernet ikke virker, vises en WiFi-liste." in common
+    assert 'print("[STATUS] NetworkManager-enheder")' in common
+    assert 'print("[STATUS] IP-adresser")' in common
+    customer = CUSTOMER.read_text(encoding="utf-8")
+    assert "download:" in customer
+    assert "Installationslinjer vises løbende nedenfor" in customer
+    host = (ROOT / "client/release/lib/clientflow_release/host_bootstrap.py").read_text(encoding="utf-8")
+    assert "visible=True" in host
+    assert "almindelig apt-output vises under installationen" in host
 
 
 def test_reboot_contract_is_confirmed_narrow_inhibitor_override_and_never_force():

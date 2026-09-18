@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import getpass
 import os
-from pathlib import Path
 import pwd
 import grp
 import re
@@ -100,7 +99,7 @@ def _account_groups(user: str) -> set[str]:
     return names
 
 
-def _validate_human_accounts() -> None:
+def validate_human_accounts() -> None:
     kiosk = pwd.getpwnam(KIOSK_USER)
     admin = pwd.getpwnam(ADMIN_USER)
     if kiosk.pw_uid < 1000 or kiosk.pw_uid == 0 or admin.pw_uid < 1000 or admin.pw_uid == 0:
@@ -114,7 +113,22 @@ def _validate_human_accounts() -> None:
         raise AccountProvisioningError("Kiosk-brugeren har privilegerede lokale grupper")
     if "sudo" not in _account_groups(ADMIN_USER):
         raise AccountProvisioningError("cfadmin mangler sudo-gruppen")
+    admin_status = subprocess.run(
+        ["/usr/bin/passwd", "--status", ADMIN_USER],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    fields = (admin_status.stdout or "").split()
+    if admin_status.returncode != 0 or len(fields) < 2 or fields[1] != "P":
+        raise AccountProvisioningError("cfadmin mangler et aktivt password")
 
+
+
+def _validate_human_accounts() -> None:
+    """Compatibility seam for tests/callers; canonical validation is public."""
+    validate_human_accounts()
 
 
 def detect_bootstrap_user() -> str | None:

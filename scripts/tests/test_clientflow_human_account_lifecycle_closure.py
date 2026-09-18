@@ -166,3 +166,66 @@ def test_pending_manual_activation_state_preserves_exact_bootstrap_user():
     assert final["fresh_install_binding"] == binding
     assert "credential_seed_b64" not in final
 
+
+
+def test_factory_handoff_conflicts_allow_only_canonical_preprovisioned_accounts_and_activation_sudoers(monkeypatch, tmp_path: Path):
+    def fake_getpwnam(name: str):
+        if name in {accounts.KIOSK_USER, accounts.ADMIN_USER}:
+            return SimpleNamespace(pw_uid=1001)
+        raise KeyError(name)
+
+    def fake_getgrnam(name: str):
+        if name in {accounts.KIOSK_USER, accounts.ADMIN_USER}:
+            return SimpleNamespace(gr_gid=1001)
+        raise KeyError(name)
+
+    monkeypatch.setattr(cli.pwd, "getpwnam", fake_getpwnam)
+    monkeypatch.setattr(cli.grp, "getgrnam", fake_getgrnam)
+
+    class FakeLayout:
+        root = Path("/")
+
+        def path(self, absolute: str) -> Path:
+            return tmp_path / absolute.lstrip("/")
+
+    sudoers = tmp_path / "etc/sudoers.d"
+    sudoers.mkdir(parents=True)
+    (sudoers / "clientflow-factory-activation").write_text("factory", encoding="utf-8")
+
+    normal = cli._fresh_conflicts(FakeLayout())
+    assert f"user:{accounts.KIOSK_USER}" in normal
+    assert f"user:{accounts.ADMIN_USER}" in normal
+    assert "sudoers:clientflow-factory-activation" in normal
+
+    factory = cli._fresh_conflicts(FakeLayout(), allow_factory_handoff=True)
+    assert f"user:{accounts.KIOSK_USER}" not in factory
+    assert f"user:{accounts.ADMIN_USER}" not in factory
+    assert "sudoers:clientflow-factory-activation" not in factory
+
+
+def test_factory_handoff_state_requires_schema2_ready_exact_identity(tmp_path: Path):
+    state_path = tmp_path / "factory-state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "client_name": "Holstebro1",
+                "operator_user": "viborg1",
+                "kiosk_user": accounts.KIOSK_USER,
+                "admin_user": accounts.ADMIN_USER,
+                "handoff_ready": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_path.chmod(0o600)
+    layout = Layout(tmp_path / "synthetic-root")
+    state = cli._factory_handoff_state(state_path, client_name="Holstebro1", layout=layout)
+    assert state is not None
+    assert state["operator_user"] == "viborg1"
+
+    state["handoff_ready"] = False
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    state_path.chmod(0o600)
+    with pytest.raises(RuntimeError, match="ikke valideret"):
+        cli._factory_handoff_state(state_path, client_name="Holstebro1", layout=layout)

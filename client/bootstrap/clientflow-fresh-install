@@ -36,15 +36,16 @@ from clientflow_bootstrap_common import (  # noqa: E402
     PERSISTENT_ROOT,
     USB_STATE,
     banner,
+    cleanup_customer_launcher_trust_helper,
     configure_network_interactive,
     confirmed_reboot,
     install_persistent_bootstrap,
     load_factory_state,
     ok,
     phase,
-    prompt_client_name_confirmed,
     prompt_locality,
     read_cf_code,
+    remove_customer_activation_sudoers,
     remove_desktop_install_icons,
     require_root,
     warn,
@@ -142,6 +143,9 @@ def _download_exact_bundle(code: str, binding: dict[str, object], directory: Pat
     path = directory / "clientflow-approved.tar"
     digest = hashlib.sha256()
     size = 0
+    expected_size = int(binding["bundle_size"])
+    next_report = 0
+    print(f"Henter exact approved release: {binding['release_id']} ({expected_size} bytes)", flush=True)
     with urllib.request.urlopen(request, timeout=120) as response, path.open("xb") as output:
         while True:
             chunk = response.read(1024 * 1024)
@@ -150,13 +154,18 @@ def _download_exact_bundle(code: str, binding: dict[str, object], directory: Pat
             output.write(chunk)
             digest.update(chunk)
             size += len(chunk)
+            if size >= next_report or size == expected_size:
+                percent = min(100, int((size * 100) / expected_size)) if expected_size else 0
+                print(f"  download: {size}/{expected_size} bytes ({percent}%)", flush=True)
+                next_report = size + 16 * 1024 * 1024
         output.flush()
         os.fsync(output.fileno())
     os.chmod(path, 0o400)
-    if size != int(binding["bundle_size"]):
+    if size != expected_size:
         raise RuntimeError(f"Approved bundle size mismatch: {size}")
     if digest.hexdigest() != binding["bundle_sha256"]:
         raise RuntimeError("Approved bundle SHA-256 mismatch")
+    print("  download: exact størrelse og SHA-256 verificeret.", flush=True)
     return path
 
 
@@ -265,14 +274,18 @@ def _run_canonical_installer(
             BACKEND_URL,
             "--name",
             name,
+            "--factory-state",
+            str(FACTORY_STATE),
         ]
         if authorities is not None:
             command.append("--fresh-install-authority-stdin")
         if locality:
             command += ["--locality", locality]
+        print("Starter canonical ClientFlow fresh-installer. Installationslinjer vises løbende nedenfor.", flush=True)
         return int(subprocess.run(command, input=authorities, check=False).returncode)
 
 def _materialize_installer(bundle: Path, binding: dict[str, object], directory: Path) -> Path:
+    print("Verificerer embedded canonical fresh-installer i approved bundle...", flush=True)
     with tarfile.open(bundle, mode="r:*") as archive:
         manifest_member = archive.getmember("manifest.json")
         if not manifest_member.isfile() or manifest_member.size > 1024 * 1024:
@@ -311,6 +324,7 @@ def _materialize_installer(bundle: Path, binding: dict[str, object], directory: 
         output.flush()
         os.fsync(output.fileno())
     os.chmod(installer, 0o500)
+    print(f"  installer: {filename} · SHA-256 OK · størrelse OK", flush=True)
     return installer
 
 
@@ -701,9 +715,13 @@ def _activation_wait() -> int:
 def _factory_identity() -> tuple[str, str | None]:
     state = load_factory_state()
     if state is None:
-        return prompt_client_name_confirmed(), None
-    if state.get("schema_version") != 1:
+        raise BootstrapError("Factory-state mangler. Kør 01 Klient klargøring på kontoret først.")
+    if state.get("schema_version") != 2:
         raise BootstrapError("Factory-state har ukendt schema")
+    if state.get("handoff_ready") is not True:
+        raise BootstrapError("Factory-state er ikke valideret som klar til kundeoverdragelse")
+    if state.get("kiosk_user") != KIOSK_USER or state.get("admin_user") != "cfadmin":
+        raise BootstrapError("Factory-state matcher ikke canonical ClientFlow-konti")
     name = str(state.get("client_name") or "").strip()
     operator = str(state.get("operator_user") or "").strip() or None
     if not name:
@@ -733,7 +751,7 @@ def _customer_install() -> int:
             binding = _resume_binding(existing)
             bundle = _cached_exact_bundle(binding)
             phase("4/8 · Exact release og integrity · resume")
-            phase("5/8 · Backend claim og lokale konti · resume")
+            phase("5/8 · Backend claim og installation · resume")
             result = _run_canonical_installer(
                 bundle=bundle,
                 binding=binding,
@@ -772,10 +790,10 @@ def _customer_install() -> int:
                     raise
                 bundle = _cache_exact_bundle(downloaded, binding)
 
-            phase("5/8 · Backend claim og lokale konti")
+            phase("5/8 · Backend claim og installation")
             print(
-                "Efter backend har accepteret den gyldige claim, sættes cfadmin-password direkte i terminalen. "
-                "Password gemmes ikke i bootstrap-state."
+                "cfadmin er allerede defineret i 01 Klient klargøring. Kundeaktiveringen spørger ikke efter "
+                "lokal administratoradgangskode."
             )
             authorities = f"{code}\n{binding['authorization']}\n".encode("utf-8")
             result = _run_canonical_installer(
@@ -805,13 +823,20 @@ def _customer_install() -> int:
             _clear_cached_bundle()
             break
 
+    # The temporary customer-activation capability exists only until the
+    # canonical installer has durably committed pending_manual_activation.
+    remove_customer_activation_sudoers()
+    cleanup_customer_launcher_trust_helper(KIOSK_USER)
+    remove_desktop_install_icons(KIOSK_USER)
+    if operator:
+        remove_desktop_install_icons(operator)
+    ok("Midlertidig kundeaktiveringsret og 02-ikon er fjernet efter durable pending-state.")
+
     phase("6/8 · Kiosk-session før activation")
     _prepare_pre_activation_graphical_session()
 
     phase("7/8 · Automatisk approval/activation")
     _install_activation_waiter()
-    if operator:
-        remove_desktop_install_icons(operator)
     ok(
         "CF-koden er accepteret. Efter reboot afventer ClientFlow selv backend-godkendelsen og aktiverer "
         "automatisk den exact staged release; der kræves ikke et ekstra klik."

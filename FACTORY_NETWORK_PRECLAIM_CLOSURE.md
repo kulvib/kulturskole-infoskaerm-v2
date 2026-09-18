@@ -1,5 +1,7 @@
 # ClientFlow factory/network preclaim lifecycle closure
 
+> **Superseded shipping-boundary note:** The earlier closure intentionally limited cleanup to an explicitly owned bootstrap profile. The later factory → customer handoff closure changes only the trusted end-of-`01` office boundary: before shipping, all saved transport profiles are now deliberately removed and rechecked so office connectivity cannot follow the appliance to the customer. Customer/site connectivity created during `02` remains outside that factory scrub. See `FACTORY_CUSTOMER_HANDOFF_CLOSURE.md`.
+
 Branch: `fix/factory-network-preclaim-lifecycle`
 
 Fresh-main archive SHA256 reviewed: `d8f6a7b2a4c4025796d1ba0b0e5d806c50a9b9f1c2423b49c8f947b18f07e5b8`
