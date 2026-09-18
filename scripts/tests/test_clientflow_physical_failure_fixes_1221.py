@@ -36,18 +36,20 @@ def _class_tuple(source: str, class_name: str, name: str):
     raise AssertionError(f"{class_name}.{name} not found")
 
 
-def test_source_1321_1222_and_catalog_align_after_exact_immutable_publication():
-    # CF-1221-REBOOT-01 is fixed in source, and 1.3.21/1222 becomes selected
-    # only after its exact approved bytes were immutably published and re-read.
-    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.21"
+def test_source_1322_1223_retains_exact_published_1321_1222_catalog_until_promotion():
+    # The physical launcher failure is repaired in the next source identity.
+    # The published selector must remain 1.3.21/1222 until exact 1.3.22/1223
+    # approved bytes have been immutably published and independently re-read.
+    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.22"
     release_input = json.loads(_source(RELEASE_INPUT))
-    assert release_input["release_sequence"] == 1222
+    assert release_input["release_sequence"] == 1223
     assert release_input["minimum_ubuntu_lts"] == "26.04"
     assert release_input["architecture"] == "amd64"
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
     assert catalog["catalog_sequence"] == 1222
+    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
     assert catalog["latest_stable"] == "1.3.21"
     assert catalog["default_install_version"] == "1.3.21"
     selected = catalog["releases"][0]
