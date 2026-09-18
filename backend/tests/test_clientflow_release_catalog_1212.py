@@ -63,7 +63,7 @@ def test_catalog_1222_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1222_aligns_with_source_only_after_exact_publication() -> None:
+def test_catalog_1222_remains_selected_while_1322_1223_source_is_staged() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -73,12 +73,12 @@ def test_catalog_1222_aligns_with_source_only_after_exact_publication() -> None:
     )
     source_sequence = int(release_input["release_sequence"])
 
-    # Catalog promotion is a separate source change and occurs only after the
-    # exact 1.3.21/1222 approved bundle was immutably published and re-read.
-    assert source_version == "1.3.21"
-    assert source_sequence == 1222
+    # 1.3.22/1223 source may lead the selector by exactly one while its exact
+    # approved bundle has not yet been immutably published and re-read.
+    assert source_version == "1.3.22"
+    assert source_sequence == 1223
     assert data["catalog_sequence"] == 1222
-    assert source_sequence == data["catalog_sequence"]
+    assert source_sequence == data["catalog_sequence"] + 1
 
     assert data["latest_stable"] == "1.3.21"
     assert data["default_install_version"] == "1.3.21"

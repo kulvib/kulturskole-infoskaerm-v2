@@ -1,85 +1,65 @@
-ClientFlow 1.3.21 / sequence 1222 post-promotion physical acceptance and CF-1222-LAUNCHER-01 fix validation
+ClientFlow 1.3.22 / sequence 1223 source-freeze validation
 Date: 2026-09-18
 
-Immutable release identity:
-- source-freeze commit: 6c0319c931859cca9c64a6e31606ad729c92fac7
-- version / sequence: 1.3.21 / 1222
-- release id: clientflow-1.3.21-seq-1222
-- candidate SHA256: 30199b8691428765c7c943acc7af0cc12aaae1f38969806a4c197ef981535099
-- installer SHA256: f6af58a5735acc8e95df3dd655b9de4c62fadf95f51606c3ea45235ba276c4dc
-- approved bundle SHA256: 583d8b1742a456a047ad64bbbc67aa65732483321bad3ae31e1a7569ab8a2909
-- approved bundle size: 223098880
-- approval reference: clientflow-1.3.21-seq-1222-manual-approval-30199b8691428765
-- immutable store: /var/data/clientflow-release-artifacts/store/clientflow-1.3.21-seq-1222.tar
+Canonical pre-freeze baseline:
+- main commit: edb740b5a32055918e36ad0ec28232b4b1ae6ab7
+- canonical push CI: #705 / run 35338908603 / completed success
+- baseline source identity: 1.3.21 / 1222
+- published runtime catalog: 1.3.21 / 1222
+- immutable 1.3.21/1222 bundle remains unchanged and must not be republished in place
 
-Catalog promotion:
-- promotion main commit: 0cdbcfff9519e72599bf70c2779a4234a30bde3d
+Physical failure carried forward as release reason:
+- CF-1222-LAUNCHER-01 was reproduced on clean Ubuntu Desktop 26.04 / Wayland.
+- USB integrity, desktop-file validation, executable mode and metadata::trusted were all PASS.
+- journal proved generated launcher failure: rc: unbound variable.
+- root cause: outer set -u wrapper expanded $rc before inner bash -lc execution.
+
+Merged source closures now frozen into 1.3.22/1223:
+PASS: launcher command/title shell-quoted with shlex.quote().
+PASS: runtime $?/rc expansion deferred to inner shell.
+PASS: explicit Ptyxis path precedes generic x-terminal-emulator fallback.
+PASS: execution regression coverage exists for generated launchers.
+PASS: existing repo PlanIQ Display mark is used by both installation desktop icons.
+PASS: exact brand bytes are packaged in canonical USB payload and checksum manifests.
+PASS: bootstrap cleanup includes the installed brand asset.
+PASS: Livestream, Terminal and Remote Desktop implementation domains remain untouched by this freeze package.
+
+Staged source/build identity:
+- client/VERSION: 1.3.22
+- release_sequence: 1223
+- candidate release id: clientflow-1.3.22-seq-1223
+- minimum Ubuntu LTS: 26.04
+- architecture: amd64
+- runtime Python: 3.13.14
+
+Catalog boundary retained:
 - catalog_sequence: 1222
 - latest_stable: 1.3.21
 - default_install_version: 1.3.21
 - selected release: clientflow-1.3.21-seq-1222
+PASS: source sequence leads catalog sequence by exactly one.
+PASS: catalog is not promoted by this source-freeze change.
+PASS: canonical pre-freeze main CI #705 / run 35338908603 completed successfully.
 
-PASS: exact source-freeze commit passed canonical GitHub push CI.
-PASS: runtime-input transport matched the repo-pinned platform lock.
-PASS: independent release builds were byte-identical.
-PASS: Ubuntu 26.04 executable-candidate gate passed.
-PASS: exact reproducible candidate was manually approved.
-PASS: approved bundle was transported without becoming catalog authority.
-PASS: exact approved bytes were published immutably to the canonical Render store.
-PASS: immutable store re-read returned exactly 223098880 bytes and SHA256 583d8b1742a456a047ad64bbbc67aa65732483321bad3ae31e1a7569ab8a2909.
-PASS: re-read manifest proved deployable/source/candidate/approval/installer binding.
-PASS: separate catalog promotion merged, canonical CI passed, and deployed backend selected only 1.3.21/1222 while the immutable store SHA remained exact.
-PASS: nanoid remains patched at 3.3.18 without advisory waiver.
+Source hygiene retained:
 PASS: repo-overlay remains absent.
+PASS: nanoid remains patched at exactly 3.3.18 without GHSA-2v37-7h3g-55p8 waiver.
+PASS: SHA256SUMS.txt is refreshed against all listed canonical files.
 
-Physical Ubuntu 26.04 acceptance:
-PASS: canonical USB exact file set and both SHA-256 manifests verified before use.
-PASS: USB preflight reached backend and created /home/viborg2/Skrivebord/01 Klient klargøring.desktop.
-PASS: desktop entry was mode 0755, user-owned, desktop-file-validate exit 0, and metadata::trusted=true.
-PASS: generated /usr/local/bin/clientflow-open-factory-prepare was root-owned, mode 0755, and bash -n clean.
-FAIL: clicking 01 Klient klargøring did not open the operator flow.
-FAIL: physical journal proved generated launcher runtime error: rc: unbound variable.
-ROOT CAUSE: install_terminal_launcher() used a JSON double-quoted RUN assignment, so the outer set -u shell expanded $rc before the inner bash -lc execution.
+Local validation:
+PASS: focused source/release/catalog/launcher/branding regression set: 54 passed.
+PASS: complete scripts/tests suite: 236 passed.
+PASS: compileall for changed Python/test domains.
+PASS: deterministic branded USB builder remains byte-identical; size 201487; SHA256 11dc2553912e1ca94cfc0d1fac9db0770f9a338274703f3c6fe9ce15156af992.
+NOTE: full backend/tests cannot be reproduced in this offline execution environment because locked runtime dependencies such as sqlmodel/passlib are not installed; canonical GitHub CI is the final backend gate.
 
-CF-1222-LAUNCHER-01 source fix:
-FIX: shell-quote title and complete inner command with shlex.quote().
-FIX: pass the quoted command directly as the single bash -lc command argument; remove unsafe outer RUN assignment.
-FIX: prefer explicit Ptyxis -- PROGRAM ARGS invocation on Ubuntu 26.04 before the generic x-terminal-emulator fallback.
-PASS: new regression tests fail 2/3 against unmodified 1.3.21/1222 source and pass 3/3 against fixed source.
-PASS: focused bootstrap/fresh-install regression set: 48 passed.
-PASS: complete scripts/tests with PYTHONPATH=backend:client/runtime:client/release/lib: 233 passed.
-PASS: release/catalog/source-identity contract subset: 30 passed.
-PASS: compileall for client/bootstrap and scripts/tests.
-PASS: deterministic fixed-tree USB builds were byte-identical; size 21443; SHA256 cf478abf4bf055ae7a0c21cc83d3fbfa52a1a9f95bddd2a6fc685827d1676351.
-PASS: fixed-tree USB embedded USB_SHA256SUMS.txt and PAYLOAD_SHA256SUMS.txt independently verified.
-PASS: client/VERSION remains 1.3.21 and release_sequence remains 1222 in this isolated source fix.
-PASS: runtime catalog remains 1.3.21/1222 in this isolated source fix.
-PASS: immutable 1.3.21/1222 bytes are not modified or republished.
-PASS: Livestream, Terminal and Remote Desktop implementation domains are untouched.
-
-PASS: canonical GitHub CI #701 / run 35337096131 completed successfully for merged CF-1222-LAUNCHER-01 source fix at main ed97072a3eafabd85f3ebaa7f24cf5f368cd4f70.
-
-PlanIQ Display desktop-icon branding pre-freeze package:
-- existing repo brand authority: frontend/public/brand/planiq-display/planiq-display-mark.png
-- desktop Icon= now resolves to /usr/local/lib/clientflow-bootstrap/planiq-display-mark.png
-- both 01 Klient klargøring and 02 Aktiver ClientFlow use the same repo-owned PlanIQ Display mark
-- deterministic USB payload includes the exact existing mark bytes and binds them in both checksum manifests
-- exact bootstrap cleanup includes planiq-display-mark.png
-- no duplicate/redrawn brand asset is introduced
-- client/VERSION remains 1.3.21 and release_sequence remains 1222 in this isolated branding package
-- runtime catalog remains 1.3.21/1222
-- Livestream, Terminal and Remote Desktop implementation domains are untouched
-
-PENDING: canonical GitHub CI for the isolated PlanIQ Display desktop-icon branding package.
-PENDING: after green merge, allocate source/build identity 1.3.22 / 1223 in a separate source-freeze change and repeat the complete release chain.
-
-Local validation for PlanIQ Display desktop-icon branding package:
-PASS: scripts/tests complete suite: 236 passed.
-PASS: focused release/catalog/bootstrap/branding regression set: 54 passed.
-PASS: dedicated branding + legacy V2 + launcher + source-hygiene set: 26 passed.
-PASS: compileall/py_compile for changed Python/bootstrap code.
-PASS: bash -n for client/bootstrap/usb/01_START_CLIENTFLOW_USB.sh.
-PASS: existing repo PlanIQ Display mark SHA256 = 1bd4142c4e3279542123d1df26c54dfdfc0ebaa9f4cc53087adfe48424cf5b98.
-PASS: deterministic branded USB builds are byte-identical; size 201487; SHA256 11dc2553912e1ca94cfc0d1fac9db0770f9a338274703f3c6fe9ce15156af992.
-PASS: branded USB embedded USB_SHA256SUMS.txt and PAYLOAD_SHA256SUMS.txt independently verified.
-NOTE: exact repo-pinned Ruff 0.15.21 and full backend dependency suite cannot be reproduced in this offline execution environment because the locked dependencies are not installed and external package retrieval is unavailable; canonical GitHub CI remains the final gate and must run the repo-pinned toolchain.
+Post-merge release gates:
+PENDING: record exact 40-character source-freeze commit SHA after canonical push CI success.
+PENDING: lock/verify sequence-1223 runtime-input transport.
+PENDING: run two independent canonical release builds for exact source/runtime inputs.
+PENDING: require byte-identical outputs and Ubuntu 26.04 executable-candidate PASS.
+PENDING: manually approve exact candidate.
+PENDING: immutably publish exact approved bytes and independently re-read size/SHA-256.
+PENDING: separate catalog promotion to 1.3.22/1223.
+PENDING: regenerate canonical USB from promoted main.
+PENDING: restart canonical clean Ubuntu 26.04 physical fresh-install acceptance from the beginning.
