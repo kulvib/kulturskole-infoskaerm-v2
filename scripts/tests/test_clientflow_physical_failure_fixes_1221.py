@@ -36,10 +36,10 @@ def _class_tuple(source: str, class_name: str, name: str):
     raise AssertionError(f"{class_name}.{name} not found")
 
 
-def test_source_1322_1223_retains_exact_published_1321_1222_catalog_until_promotion():
-    # The physical launcher failure is repaired in the next source identity.
-    # The published selector must remain 1.3.21/1222 until exact 1.3.22/1223
-    # approved bytes have been immutably published and independently re-read.
+def test_source_1322_1223_matches_promoted_catalog_after_immutable_publication():
+    # CF-1222-LAUNCHER-01 is repaired in 1.3.22/1223. Promotion is permitted
+    # only after the exact approved bytes have been immutably published and
+    # independently re-read from the canonical backend artifact store.
     assert VERSION.read_text(encoding="utf-8").strip() == "1.3.22"
     release_input = json.loads(_source(RELEASE_INPUT))
     assert release_input["release_sequence"] == 1223
@@ -48,13 +48,13 @@ def test_source_1322_1223_retains_exact_published_1321_1222_catalog_until_promot
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
-    assert catalog["catalog_sequence"] == 1222
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert catalog["latest_stable"] == "1.3.21"
-    assert catalog["default_install_version"] == "1.3.21"
+    assert catalog["catalog_sequence"] == 1223
+    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert catalog["latest_stable"] == "1.3.22"
+    assert catalog["default_install_version"] == "1.3.22"
     selected = catalog["releases"][0]
-    assert selected["release_id"] == "clientflow-1.3.21-seq-1222"
-    assert selected["release_sequence"] == 1222
+    assert selected["release_id"] == "clientflow-1.3.22-seq-1223"
+    assert selected["release_sequence"] == 1223
 
 def test_dispatch_uses_staged_immutable_release_cli_not_stable_updater():
     source = _source(HELPER)
