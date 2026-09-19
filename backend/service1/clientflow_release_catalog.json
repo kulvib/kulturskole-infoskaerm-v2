@@ -1,20 +1,20 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1223,
-  "latest_stable": "1.3.22",
-  "default_install_version": "1.3.22",
+  "catalog_sequence": 1224,
+  "latest_stable": "1.3.23",
+  "default_install_version": "1.3.23",
   "retention_policy": {
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
   },
-  "created_at": "2026-09-18T00:00:00Z",
+  "created_at": "2026-09-19T00:00:00Z",
   "releases": [
     {
-      "version": "1.3.22",
-      "client_version": "1.3.22",
-      "release_sequence": 1223,
-      "revision": "clientflow-1.3.22-seq-1223",
+      "version": "1.3.23",
+      "client_version": "1.3.23",
+      "release_sequence": 1224,
+      "revision": "clientflow-1.3.23-seq-1224",
       "status": "stable",
       "installable": true,
       "update_allowed": true,
@@ -34,11 +34,12 @@
         "requires_platform_preflight": true
       },
       "notes": [
-        "Canonical ClientFlow 1.3.22 release containing the CF-1222-LAUNCHER-01 terminal-launcher closure and PlanIQ Display desktop-icon branding. Generated terminal launchers now defer runtime rc expansion correctly, shell-quote title/command data, and prefer Ptyxis before generic terminal fallbacks.",
-        "Fresh install and in-place update remain bounded to the safe ClientFlow 1.3.11 baseline. Ubuntu Desktop 26.04 LTS amd64/Wayland platform preflight remains mandatory, and the release continues to require the controlled reboot lifecycle declared by the catalog.",
-        "Promoted only after the exact manually approved 1.3.22/1223 whole bundle from source 957f5d7ab7a3c7fc835565c041533df30834dd78 was reproducibly built from byte-identical independent candidates, passed the Ubuntu 26.04 executable-candidate gate, was approved with reference clientflow-1.3.22-seq-1223-manual-approval-bd9613043d5e770c, published immutably to the canonical Render artifact store, and independently re-read at 223098880 bytes with SHA-256 ca8e3b0713ae3af8fec018083235409d662aac70e71eb5062cbbe60bc4aaa6d4. The next clean Ubuntu 26.04 install is canonical physical verification of the launcher and installation-flow closure."
+        "Canonical ClientFlow 1.3.23 release containing the completed two-phase factory/customer fresh-install lifecycle: office-side 01 Klient klargøring provisions clientflow-kiosk and cfadmin, scrubs factory network profiles and hands off the no-sudo 02 Aktiver ClientFlow flow; the customer path is exact-release-bound, resumable on ambiguous claim outcomes, enters pending_manual_activation, shows the approval-gated legacy-layout preactivation GUI and automatically activates after backend approval.",
+        "The release also contains the database/request consolidation, direct browser-to-backend API transport and auth-route churn closures. Production acceptance measured the direct transport at 125.4 ms median for /clients/ versus 840.9 ms through the former Render rewrite, and 119 ms for /chrome-status versus 427.6 ms, while preserving the existing auth, Terminal, Remote Desktop and Livestream trust boundaries.",
+        "Fresh install and in-place update remain bounded to the safe ClientFlow 1.3.11 baseline. Ubuntu Desktop 26.04 LTS amd64/Wayland platform preflight remains mandatory, rollback remains disabled and the controlled reboot lifecycle remains required.",
+        "Promoted only after source 98380ac6254f9bbd214223c3f6a1703d3a13c732 passed canonical push CI, runtime-input transport 1224 was pinned, two independent 1.3.23/1224 candidate builds were byte-identical, the Ubuntu 26.04 executable-candidate gate passed, the exact candidate was manually approved with reference clientflow-1.3.23-seq-1224/manual-approval/candidate-2d3a6f28856920295fe3e6129cb8edd667bb13f18796dbbdba2ce1c581576cc1, and the approved 223119360-byte bundle was immutably published and independently re-read at SHA-256 32241e0e2db55d2345a3144e6c11bb9c80aaf99c07ec061ba1358a8b8bb4b53c before this catalog change."
       ],
-      "release_id": "clientflow-1.3.22-seq-1223",
+      "release_id": "clientflow-1.3.23-seq-1224",
       "artifact_type": "runtime_release",
       "install_modes": [
         "fresh_install",
