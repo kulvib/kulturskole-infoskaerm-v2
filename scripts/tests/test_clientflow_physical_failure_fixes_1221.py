@@ -139,13 +139,10 @@ def test_gui_matches_deployed_1_1_19_visible_structure_and_order():
     assert 'title="ClientFlow Status"' in source
     assert 'Gtk.Button(label="Start kiosk")' in source
     assert 'Gtk.Button(label="Stop kiosk")' in source
-    # Existing V2 technician switching remains available, but is rendered as a
-    # subordinate second-row action so the two legacy primary buttons keep
-    # their equal-width geometry.
-    assert 'Gtk.Button(label="Skift til administrator")' in source
-    assert 'SWITCH_USER_HELPER' in source
-    assert '[str(SWITCH_USER_HELPER)]' in source
-    assert 'timeout=10' in source
+    # The GUI now matches the legacy primary action geometry exactly: no
+    # administrator-switch extension is exposed in the appliance status UI.
+    assert 'Gtk.Button(label="Skift til administrator")' not in source
+    assert 'SWITCH_USER_HELPER' not in source
     assert 'shell=True' not in source
     assert 'Gtk.Label(label="ClientFlow"' not in source
     assert 'button = Gtk.Button(label="⧉")' in source

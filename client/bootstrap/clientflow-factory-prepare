@@ -12,21 +12,27 @@ if str(HERE) not in sys.path:
 from clientflow_bootstrap_common import (  # noqa: E402
     BootstrapError,
     banner,
+    ADMIN_USER,
+    KIOSK_USER,
     clear_usb_state,
     configure_network_interactive,
     confirmed_reboot,
-    forget_owned_connection,
+    forget_saved_networks,
+    install_customer_activation_sudoers,
+    install_customer_launcher_trust_helper,
     install_persistent_bootstrap,
     install_terminal_launcher,
     load_factory_state,
     load_usb_state,
     ok,
     phase,
+    prepare_factory_graphical_login,
     prompt_client_name_confirmed,
+    provision_factory_human_accounts,
     remove_desktop_install_icons,
     require_root,
     sudo_user,
-    warn,
+    validate_factory_handoff,
     write_desktop_launcher,
     write_factory_state,
     write_usb_state,
@@ -62,7 +68,7 @@ def _install_customer_launcher(operator: str) -> None:
         CUSTOMER_LAUNCHER,
         title="02 Aktiver ClientFlow",
         command=(
-            "sudo /usr/local/lib/clientflow-bootstrap/clientflow-fresh-install; "
+            "sudo -n /usr/local/lib/clientflow-bootstrap/clientflow-fresh-install; "
             "rc=$?; echo; if [ $rc -ne 0 ]; then echo \"Kundeaktivering stoppede med fejlkode $rc.\"; fi; "
             "read -r -p \"Tryk Enter for at lukke vinduet...\" _ || true; exit $rc"
         ),
@@ -94,55 +100,44 @@ def factory_prepare() -> int:
     install_persistent_bootstrap(HERE)
 
     banner("01 · Klient-/factory-klargøring · V2 · manuel desktopflow")
-    phase("1/4 · Netværk")
+    phase("1/6 · Netværkskontrol i factory-fasen")
     usb_state = load_usb_state()
-    owned_markers: list[dict[str, str]] = []
     if usb_state is not None:
         recorded_operator = str(usb_state.get("operator_user") or "")
         if recorded_operator != operator:
             raise BootstrapError("USB-klargøringen tilhører en anden lokal Ubuntu-bruger")
-        raw_marker = usb_state.get("network_marker")
-        if raw_marker is not None and not isinstance(raw_marker, dict):
-            raise BootstrapError("USB-netværksmarkøren har ugyldigt format")
-        if isinstance(raw_marker, dict):
-            owned_markers.append({str(key): str(value) for key, value in raw_marker.items()})
-    current_marker = configure_network_interactive("klient-/factory-klargøring")
-    if current_marker is not None:
-        owned_markers.append(current_marker)
+    configure_network_interactive("klient-/factory-klargøring")
 
-    phase("2/4 · Klientnavn")
+    phase("2/6 · Klientnavn, kiosk-bruger og lokal admin")
     previous = load_factory_state()
     existing = str(previous.get("client_name") or "") if previous else None
     client_name = prompt_client_name_confirmed(existing)
-    write_factory_state(client_name=client_name, operator_user=operator)
+    write_factory_state(client_name=client_name, operator_user=operator, handoff_ready=False)
     ok(f"Klientnavn bekræftet: {client_name}")
+    ok(f"Kiosk-bruger fastlagt: ClientFlow kiosk user ({KIOSK_USER})")
+    print(f"Lokal admin-bruger fastlægges som: {ADMIN_USER}")
+    provision_factory_human_accounts()
 
-    print()
-    warn(
-        "Sikkerhedsgrænse i V2: cfadmin-password sættes først efter en gyldig backend-claim i fase 2 "
-        "og gemmes aldrig mellem de to faser."
-    )
+    phase("3/6 · Kiosk-login til kundeoverdragelse")
+    prepare_factory_graphical_login()
 
-    phase("3/4 · Skrivebordsikon til næste flow")
-    _install_customer_launcher(operator)
+    phase("4/6 · Skrivebordsikon til kundeaktivering")
+    _install_customer_launcher(KIOSK_USER)
+    install_customer_launcher_trust_helper(KIOSK_USER)
+    install_customer_activation_sudoers()
+    remove_desktop_install_icons(operator)
+    ok("02 Aktiver ClientFlow er oprettet hos kiosk-brugeren og kræver ikke kundens sudo-password.")
 
-    phase("4/4 · Kontornetværk og bekræftet reboot")
-    if owned_markers:
-        removed = 0
-        for owned_marker in owned_markers:
-            if forget_owned_connection(owned_marker):
-                removed += 1
-        if removed:
-            ok(f"{removed} præcis(e) NetworkManager-profil(er), som ClientFlow oprettede til kontorklargøringen, er fjernet.")
-    else:
-        warn(
-            "ClientFlow oprettede ikke selv den aktive kontorforbindelse og sletter derfor ikke en ukendt "
-            "NetworkManager-profil. Dette er en bevidst sikkerhedsafgrænsning."
-        )
+    phase("5/6 · Glem kontor-/factory-netværk")
+    forget_saved_networks()
     clear_usb_state()
+
+    phase("6/6 · Sikkerhedstjek før reboot")
+    validate_factory_handoff(client_name=client_name, operator_user=operator)
     ok(
-        "Klient klargøring færdig. Klientnavn er defineret på kontoret. Ingen client secret er oprettet endnu. "
-        "Kunden aktiverer manuelt ved at klikke på skrivebordsikonet 02 Aktiver ClientFlow."
+        "Klient klargøring færdig. Maskinen er klar til kundeoverdragelse: klientnavn og cfadmin er defineret, "
+        "clientflow-kiosk bliver næste grafiske login, 02 Aktiver ClientFlow ligger på kiosk-skrivebordet, "
+        "og gemte kontor-netværksprofiler er fjernet. Ingen client secret er oprettet endnu."
     )
     confirmed_reboot("klient klargøring gennemført", seconds=5)
     return 0

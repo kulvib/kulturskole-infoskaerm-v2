@@ -15,7 +15,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import pwd
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -36,15 +38,16 @@ from clientflow_bootstrap_common import (  # noqa: E402
     PERSISTENT_ROOT,
     USB_STATE,
     banner,
+    cleanup_customer_launcher_trust_helper,
     configure_network_interactive,
     confirmed_reboot,
     install_persistent_bootstrap,
     load_factory_state,
     ok,
     phase,
-    prompt_client_name_confirmed,
     prompt_locality,
     read_cf_code,
+    remove_customer_activation_sudoers,
     remove_desktop_install_icons,
     require_root,
     warn,
@@ -62,6 +65,9 @@ KIOSK_USER = "clientflow-kiosk"
 LOGINCTL = Path("/usr/bin/loginctl")
 SYSTEMCTL = Path("/usr/bin/systemctl")
 PENDING_BUNDLE = BOOTSTRAP_ROOT / "pending-approved-bundle.tar"
+PREACTIVATION_GUI_UNIT = Path("/etc/systemd/system/clientflow-preactivation-gui.service")
+PREACTIVATION_GUI_SERVICE = "clientflow-preactivation-gui.service"
+SYSTEM_PYTHON = Path("/usr/bin/python3")
 FIRST_CLAIM_REJECTED_EXIT = 20
 BOOTSTRAP_LAUNCHERS = (
     Path("/usr/local/bin/clientflow-open-factory-prepare"),
@@ -142,6 +148,9 @@ def _download_exact_bundle(code: str, binding: dict[str, object], directory: Pat
     path = directory / "clientflow-approved.tar"
     digest = hashlib.sha256()
     size = 0
+    expected_size = int(binding["bundle_size"])
+    next_report = 0
+    print(f"Henter exact approved release: {binding['release_id']} ({expected_size} bytes)", flush=True)
     with urllib.request.urlopen(request, timeout=120) as response, path.open("xb") as output:
         while True:
             chunk = response.read(1024 * 1024)
@@ -150,13 +159,18 @@ def _download_exact_bundle(code: str, binding: dict[str, object], directory: Pat
             output.write(chunk)
             digest.update(chunk)
             size += len(chunk)
+            if size >= next_report or size == expected_size:
+                percent = min(100, int((size * 100) / expected_size)) if expected_size else 0
+                print(f"  download: {size}/{expected_size} bytes ({percent}%)", flush=True)
+                next_report = size + 16 * 1024 * 1024
         output.flush()
         os.fsync(output.fileno())
     os.chmod(path, 0o400)
-    if size != int(binding["bundle_size"]):
+    if size != expected_size:
         raise RuntimeError(f"Approved bundle size mismatch: {size}")
     if digest.hexdigest() != binding["bundle_sha256"]:
         raise RuntimeError("Approved bundle SHA-256 mismatch")
+    print("  download: exact størrelse og SHA-256 verificeret.", flush=True)
     return path
 
 
@@ -265,14 +279,18 @@ def _run_canonical_installer(
             BACKEND_URL,
             "--name",
             name,
+            "--factory-state",
+            str(FACTORY_STATE),
         ]
         if authorities is not None:
             command.append("--fresh-install-authority-stdin")
         if locality:
             command += ["--locality", locality]
+        print("Starter canonical ClientFlow fresh-installer. Installationslinjer vises løbende nedenfor.", flush=True)
         return int(subprocess.run(command, input=authorities, check=False).returncode)
 
 def _materialize_installer(bundle: Path, binding: dict[str, object], directory: Path) -> Path:
+    print("Verificerer embedded canonical fresh-installer i approved bundle...", flush=True)
     with tarfile.open(bundle, mode="r:*") as archive:
         manifest_member = archive.getmember("manifest.json")
         if not manifest_member.isfile() or manifest_member.size > 1024 * 1024:
@@ -311,6 +329,7 @@ def _materialize_installer(bundle: Path, binding: dict[str, object], directory: 
         output.flush()
         os.fsync(output.fileno())
     os.chmod(installer, 0o500)
+    print(f"  installer: {filename} · SHA-256 OK · størrelse OK", flush=True)
     return installer
 
 
@@ -454,6 +473,206 @@ def _prepare_pre_activation_graphical_session() -> None:
     )
     if result.returncode != 0:
         raise RuntimeError("Canonical grafisk kiosk-session baseline kunne ikke materialiseres")
+
+
+def _pending_staged_release() -> tuple[dict[str, object], str, Path]:
+    state = _existing_install_state()
+    if not isinstance(state, dict):
+        raise RuntimeError("Pre-activation GUI mangler install-state")
+    if state.get("status") != "pending_manual_activation":
+        raise RuntimeError("Pre-activation GUI kræver pending_manual_activation")
+    binding = state.get("fresh_install_binding")
+    if not isinstance(binding, dict):
+        raise RuntimeError("Pre-activation GUI mangler exact release-binding")
+    release_id = str(binding.get("release_id") or "").strip()
+    if not RELEASE_ID_RE.fullmatch(release_id):
+        raise RuntimeError("Pre-activation GUI har ugyldig release-id")
+    release_root = RELEASES_ROOT / release_id
+    if release_root.parent != RELEASES_ROOT or not release_root.is_dir() or release_root.is_symlink():
+        raise RuntimeError("Pre-activation GUI mangler canonical staged release")
+    if os.path.lexists("/opt/clientflow/active"):
+        raise RuntimeError("Pre-activation GUI må ikke køre med active release-symlink")
+    return state, release_id, release_root
+
+
+def _wait_for_kiosk_wayland_socket(uid: int, *, timeout: float = 180.0) -> tuple[str, Path]:
+    runtime_dir = Path(f"/run/user/{uid}")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        current = _existing_install_state()
+        if not isinstance(current, dict) or current.get("status") != "pending_manual_activation":
+            raise RuntimeError("Pre-activation GUI er ikke længere i pending state")
+        try:
+            session_id = _canonical_kiosk_session()
+        except RuntimeError:
+            session_id = None
+        if session_id is not None and _session_properties(session_id).get("Active") == "yes":
+            try:
+                candidates = sorted(runtime_dir.glob("wayland-*"))
+            except OSError:
+                candidates = []
+            for candidate in candidates:
+                if candidate.name.endswith(".lock"):
+                    continue
+                try:
+                    meta = candidate.stat()
+                except OSError:
+                    continue
+                if stat.S_ISSOCK(meta.st_mode) and meta.st_uid == uid:
+                    return session_id, candidate
+        time.sleep(1.0)
+    raise RuntimeError("Canonical kiosk Wayland-socket blev ikke klar til pre-activation GUI")
+
+
+def _preactivation_gui() -> int:
+    """Exec the staged release's existing local GUI as kiosk in status-only mode."""
+    require_root()
+    existing = _existing_install_state()
+    if isinstance(existing, dict) and existing.get("status") == "activated":
+        return 0
+    _state, _release_id, release_root = _pending_staged_release()
+    local_gui = release_root / "client-runtime/libexec/local-gui"
+    version_path = release_root / "VERSION"
+    _secure_root_regular(local_gui, executable=True)
+    _secure_root_regular(version_path)
+    try:
+        system_python_target = SYSTEM_PYTHON.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError("Ubuntu system-Python mangler til pre-activation GUI") from exc
+    _secure_root_regular(system_python_target, executable=True)
+    try:
+        account = pwd.getpwnam(KIOSK_USER)
+    except KeyError as exc:
+        raise RuntimeError("Canonical kioskbruger mangler til pre-activation GUI") from exc
+    if account.pw_uid == 0 or account.pw_gid == 0:
+        raise RuntimeError("Canonical kioskbruger må ikke være root")
+
+    _session_id, wayland_socket = _wait_for_kiosk_wayland_socket(account.pw_uid)
+    runtime_dir = wayland_socket.parent
+    gui_root = Path("/var/lib/clientflow/preactivation-gui")
+    gui_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chown(gui_root, account.pw_uid, account.pw_gid)
+    xdg: dict[str, Path] = {}
+    for name in ("cache", "config", "data"):
+        directory = gui_root / name
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chown(directory, account.pw_uid, account.pw_gid)
+        xdg[name] = directory
+
+    environment = {
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+        "HOME": account.pw_dir,
+        "USER": KIOSK_USER,
+        "LOGNAME": KIOSK_USER,
+        "XDG_RUNTIME_DIR": str(runtime_dir),
+        "XDG_SESSION_TYPE": "wayland",
+        "WAYLAND_DISPLAY": wayland_socket.name,
+        "DBUS_SESSION_BUS_ADDRESS": f"unix:path={runtime_dir / 'bus'}",
+        "GDK_BACKEND": "wayland",
+        "XDG_CACHE_HOME": str(xdg["cache"]),
+        "XDG_CONFIG_HOME": str(xdg["config"]),
+        "XDG_DATA_HOME": str(xdg["data"]),
+        "CLIENTFLOW_GUI_MODE": "preactivation",
+        "CLIENTFLOW_VERSION_PATH": str(version_path),
+        "CLIENTFLOW_GUI_STATUS_PATH": str(gui_root / "local-gui-status.json"),
+        "CLIENTFLOW_DISPLAY_RUNTIME_SOCKET": str(gui_root / "no-runtime.sock"),
+        "CLIENTFLOW_DISPLAY_STATUS_PATH": str(gui_root / "runtime-status.json"),
+        "CLIENTFLOW_DISPLAY_CONFIG_PATH": str(gui_root / "configuration.json"),
+        "CLIENTFLOW_DISPLAY_RESOLUTION_PATH": str(gui_root / "resolution.json"),
+        "CLIENTFLOW_DISPLAY_RESOLUTION_DESIRED_PATH": str(gui_root / "resolution-desired.json"),
+        "CLIENTFLOW_CALENDAR_PREVIEW_PATH": str(gui_root / "calendar.json"),
+        "CLIENTFLOW_PUBLIC_CLIENT_PATH": "/var/lib/clientflow/client-public.json",
+    }
+    os.initgroups(KIOSK_USER, account.pw_gid)
+    os.setgid(account.pw_gid)
+    os.setuid(account.pw_uid)
+    try:
+        os.chdir(account.pw_dir)
+    except OSError:
+        os.chdir("/")
+    os.execve(str(SYSTEM_PYTHON), [str(SYSTEM_PYTHON), str(local_gui)], environment)
+    return 0
+
+
+def _install_preactivation_gui_service() -> None:
+    install_persistent_bootstrap(HERE)
+    _write_root_text(
+        PREACTIVATION_GUI_UNIT,
+        """[Unit]
+Description=ClientFlow pending-approval local GUI
+Wants=display-manager.service
+After=display-manager.service
+Before=clientflow.target
+Conflicts=clientflow.target
+ConditionPathExists=/var/lib/clientflow/release/install-state.json
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/clientflow-bootstrap/clientflow-fresh-install --preactivation-gui
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_SETGID CAP_SETUID
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target
+""",
+        mode=0o644,
+    )
+    reload_result = subprocess.run([str(SYSTEMCTL), "daemon-reload"], check=False, timeout=10)
+    if reload_result.returncode != 0:
+        raise RuntimeError("Kunne ikke genindlæse systemd efter pre-activation GUI")
+    enable_result = subprocess.run(
+        [str(SYSTEMCTL), "enable", PREACTIVATION_GUI_SERVICE], check=False, timeout=10
+    )
+    if enable_result.returncode != 0:
+        raise RuntimeError("Kunne ikke enable pre-activation GUI")
+
+
+def _ensure_preactivation_gui_started() -> None:
+    if not PREACTIVATION_GUI_UNIT.is_file():
+        return
+    state = _existing_install_state()
+    if not isinstance(state, dict) or state.get("status") != "pending_manual_activation":
+        return
+    subprocess.run(
+        [str(SYSTEMCTL), "start", PREACTIVATION_GUI_SERVICE],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=10,
+    )
+
+
+def _disable_preactivation_gui(*, remove_unit: bool = False) -> None:
+    subprocess.run(
+        [str(SYSTEMCTL), "disable", "--now", PREACTIVATION_GUI_SERVICE],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        timeout=10,
+    )
+    if remove_unit:
+        try:
+            PREACTIVATION_GUI_UNIT.unlink()
+        except FileNotFoundError:
+            pass
+        shutil.rmtree(Path("/var/lib/clientflow/preactivation-gui"), ignore_errors=True)
+        subprocess.run(
+            [str(SYSTEMCTL), "daemon-reload"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=10,
+        )
 
 
 def _canonical_staged_activation(release_id: str, approval: str) -> int:
@@ -632,6 +851,7 @@ def _disable_activation_waiter(*, remove_unit: bool = False) -> None:
 def _cleanup_completed_bootstrap() -> None:
     """Remove only exact bootstrap artifacts after healthy canonical activation."""
     _disable_activation_waiter(remove_unit=True)
+    _disable_preactivation_gui(remove_unit=True)
     for path in (*BOOTSTRAP_LAUNCHERS, FACTORY_STATE, USB_STATE, PENDING_BUNDLE):
         try:
             path.unlink()
@@ -685,6 +905,7 @@ def _activation_wait() -> int:
         try:
             result = _canonical_staged_activation(release_id, approval)
         except Exception as exc:
+            _ensure_preactivation_gui_started()
             print(f"ClientFlow activation er endnu ikke klar: {exc}", file=sys.stderr)
             time.sleep(10)
             continue
@@ -694,6 +915,7 @@ def _activation_wait() -> int:
                 _cleanup_completed_bootstrap()
                 print("ClientFlow er backend-godkendt og automatisk aktiveret.")
                 return 0
+        _ensure_preactivation_gui_started()
         print("ClientFlow afventer backend-godkendelse; prøver igen om 10 sekunder.")
         time.sleep(10)
 
@@ -701,9 +923,13 @@ def _activation_wait() -> int:
 def _factory_identity() -> tuple[str, str | None]:
     state = load_factory_state()
     if state is None:
-        return prompt_client_name_confirmed(), None
-    if state.get("schema_version") != 1:
+        raise BootstrapError("Factory-state mangler. Kør 01 Klient klargøring på kontoret først.")
+    if state.get("schema_version") != 2:
         raise BootstrapError("Factory-state har ukendt schema")
+    if state.get("handoff_ready") is not True:
+        raise BootstrapError("Factory-state er ikke valideret som klar til kundeoverdragelse")
+    if state.get("kiosk_user") != KIOSK_USER or state.get("admin_user") != "cfadmin":
+        raise BootstrapError("Factory-state matcher ikke canonical ClientFlow-konti")
     name = str(state.get("client_name") or "").strip()
     operator = str(state.get("operator_user") or "").strip() or None
     if not name:
@@ -733,7 +959,7 @@ def _customer_install() -> int:
             binding = _resume_binding(existing)
             bundle = _cached_exact_bundle(binding)
             phase("4/8 · Exact release og integrity · resume")
-            phase("5/8 · Backend claim og lokale konti · resume")
+            phase("5/8 · Backend claim og installation · resume")
             result = _run_canonical_installer(
                 bundle=bundle,
                 binding=binding,
@@ -772,10 +998,10 @@ def _customer_install() -> int:
                     raise
                 bundle = _cache_exact_bundle(downloaded, binding)
 
-            phase("5/8 · Backend claim og lokale konti")
+            phase("5/8 · Backend claim og installation")
             print(
-                "Efter backend har accepteret den gyldige claim, sættes cfadmin-password direkte i terminalen. "
-                "Password gemmes ikke i bootstrap-state."
+                "cfadmin er allerede defineret i 01 Klient klargøring. Kundeaktiveringen spørger ikke efter "
+                "lokal administratoradgangskode."
             )
             authorities = f"{code}\n{binding['authorization']}\n".encode("utf-8")
             result = _run_canonical_installer(
@@ -805,16 +1031,28 @@ def _customer_install() -> int:
             _clear_cached_bundle()
             break
 
-    phase("6/8 · Kiosk-session før activation")
-    _prepare_pre_activation_graphical_session()
-
-    phase("7/8 · Automatisk approval/activation")
-    _install_activation_waiter()
+    # The temporary customer-activation capability exists only until the
+    # canonical installer has durably committed pending_manual_activation.
+    remove_customer_activation_sudoers()
+    cleanup_customer_launcher_trust_helper(KIOSK_USER)
+    remove_desktop_install_icons(KIOSK_USER)
     if operator:
         remove_desktop_install_icons(operator)
+    ok("Midlertidig kundeaktiveringsret og 02-ikon er fjernet efter durable pending-state.")
+
+    phase("6/8 · Kiosk-session og lokal GUI før activation")
+    _prepare_pre_activation_graphical_session()
+    _install_preactivation_gui_service()
+
+    phase("7/8 · Automatisk approval/activation")
+    try:
+        _install_activation_waiter()
+    except Exception:
+        _disable_preactivation_gui(remove_unit=True)
+        raise
     ok(
         "CF-koden er accepteret. Efter reboot afventer ClientFlow selv backend-godkendelsen og aktiverer "
-        "automatisk den exact staged release; der kræves ikke et ekstra klik."
+        "automatisk den exact staged release; den lokale status-GUI vises imens, og der kræves ikke et ekstra klik."
     )
 
     phase("8/8 · Kundeaktivering færdig")
@@ -823,6 +1061,16 @@ def _customer_install() -> int:
     return 0
 
 def main() -> int:
+    if "--preactivation-gui" in sys.argv[1:]:
+        if sys.argv[1:] != ["--preactivation-gui"]:
+            print("--preactivation-gui kan ikke kombineres med andre argumenter", file=sys.stderr)
+            return 2
+        try:
+            return _preactivation_gui()
+        except Exception as exc:
+            print(f"ClientFlow pre-activation GUI fejlede: {exc}", file=sys.stderr)
+            return 1
+
     if "--activation-wait" in sys.argv[1:]:
         if sys.argv[1:] != ["--activation-wait"]:
             print("--activation-wait kan ikke kombineres med andre argumenter", file=sys.stderr)

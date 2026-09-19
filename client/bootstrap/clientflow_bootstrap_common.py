@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import getpass
+import grp
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,9 +28,19 @@ PERSISTENT_ROOT = Path("/usr/local/lib/clientflow-bootstrap")
 PLANIQ_DISPLAY_DESKTOP_ICON = PERSISTENT_ROOT / "planiq-display-mark.png"
 SYSTEMCTL = Path("/usr/bin/systemctl")
 NMCLI = Path("/usr/bin/nmcli")
+IP = Path("/usr/sbin/ip")
 RUNUSER = Path("/usr/sbin/runuser")
 XDG_USER_DIR = Path("/usr/bin/xdg-user-dir")
 GIO = Path("/usr/bin/gio")
+VISUDO = Path("/usr/sbin/visudo")
+GDM_CONFIG = Path("/etc/gdm3/custom.conf")
+ACCOUNTS_SERVICE_ROOT = Path("/var/lib/AccountsService/users")
+FACTORY_ACTIVATION_SUDOERS = Path("/etc/sudoers.d/clientflow-factory-activation")
+KIOSK_USER = "clientflow-kiosk"
+KIOSK_DISPLAY_NAME = "ClientFlow kiosk user"
+ADMIN_USER = "cfadmin"
+ADMIN_DISPLAY_NAME = "ClientFlow local admin"
+_PRIVILEGED_KIOSK_GROUPS = ("sudo", "adm", "admin", "wheel", "lpadmin", "lxd")
 MAX_JSON_BYTES = 128 * 1024
 _ALLOWED_NETWORK_TYPES = {"wifi", "802-11-wireless", "ethernet", "802-3-ethernet"}
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -188,16 +201,346 @@ def load_factory_state() -> dict[str, object] | None:
     return _safe_json_read(FACTORY_STATE)
 
 
-def write_factory_state(*, client_name: str, operator_user: str) -> None:
+def write_factory_state(*, client_name: str, operator_user: str, handoff_ready: bool = False) -> None:
     _atomic_root_json(
         FACTORY_STATE,
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "client_name": normalize_client_name(client_name),
             "operator_user": validate_local_user(operator_user),
+            "kiosk_user": KIOSK_USER,
+            "admin_user": ADMIN_USER,
+            "handoff_ready": bool(handoff_ready),
         },
     )
 
+
+
+def _run_account_command(command: list[str], *, input_text: str | None = None) -> None:
+    result = subprocess.run(
+        command,
+        input=input_text,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+        env={"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
+    )
+    if result.returncode != 0:
+        raise BootstrapError(
+            f"Kommando fejlede ({result.returncode}): {' '.join(command)}\n{(result.stdout or '')[-2000:]}"
+        )
+
+
+def _account_groups(user: str) -> set[str]:
+    account = pwd.getpwnam(user)
+    names: set[str] = set()
+    for gid in os.getgrouplist(user, account.pw_gid):
+        try:
+            names.add(grp.getgrgid(gid).gr_name)
+        except KeyError:
+            continue
+    return names
+
+
+def _remove_group_membership(user: str, group: str) -> None:
+    try:
+        members = grp.getgrnam(group).gr_mem
+    except KeyError:
+        return
+    if user not in members:
+        return
+    result = subprocess.run(
+        ["/usr/bin/gpasswd", "--delete", user, group],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if result.returncode not in {0, 3}:
+        raise BootstrapError(f"Kunne ikke fjerne {user} fra gruppen {group}")
+
+
+def _ensure_factory_user(name: str, *, comment: str) -> None:
+    try:
+        pwd.getpwnam(name)
+    except KeyError:
+        _run_account_command([
+            "/usr/sbin/useradd",
+            "--create-home",
+            "--user-group",
+            "--shell",
+            "/bin/bash",
+            "--comment",
+            comment,
+            name,
+        ])
+    else:
+        _run_account_command(["/usr/sbin/usermod", "--shell", "/bin/bash", "--comment", comment, name])
+
+
+def _prompt_admin_password() -> str:
+    print("Adminbrugeren oprettes altid som: cfadmin")
+    print("Password vises ikke, gemmes ikke i ClientFlow-state og skrives ikke i loggen.")
+    while True:
+        first = getpass.getpass("Nyt password til cfadmin: ")
+        second = getpass.getpass("Gentag password til cfadmin: ")
+        if first != second:
+            warn("De to cfadmin-passwords er ikke ens. Prøv igen.")
+            continue
+        if len(first) < 8:
+            warn("cfadmin-password skal være mindst 8 tegn. Prøv igen.")
+            continue
+        if any(ch in first for ch in ("\n", "\r", ":")):
+            warn("cfadmin-password indeholder ugyldige tegn. Prøv igen.")
+            continue
+        return first
+
+
+def validate_factory_human_accounts() -> None:
+    try:
+        kiosk = pwd.getpwnam(KIOSK_USER)
+        admin = pwd.getpwnam(ADMIN_USER)
+    except KeyError as exc:
+        raise BootstrapError(f"Factory-konto mangler: {exc.args[0]}") from exc
+    if kiosk.pw_uid < 1000 or kiosk.pw_uid == 0 or admin.pw_uid < 1000 or admin.pw_uid == 0:
+        raise BootstrapError("Kiosk/admin skal være normale lokale brugere")
+    if kiosk.pw_dir != f"/home/{KIOSK_USER}" or admin.pw_dir != f"/home/{ADMIN_USER}":
+        raise BootstrapError("Kiosk/admin home matcher ikke factory-kontrakten")
+    if kiosk.pw_shell != "/bin/bash" or admin.pw_shell != "/bin/bash":
+        raise BootstrapError("Kiosk/admin shell matcher ikke factory-kontrakten")
+    privileged = _account_groups(KIOSK_USER).intersection(_PRIVILEGED_KIOSK_GROUPS)
+    if privileged:
+        raise BootstrapError(f"Kiosk-brugeren har privilegerede grupper: {', '.join(sorted(privileged))}")
+    if "sudo" not in _account_groups(ADMIN_USER):
+        raise BootstrapError("cfadmin mangler sudo-gruppen")
+    kiosk_status = subprocess.run(
+        ["/usr/bin/passwd", "--status", KIOSK_USER],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if kiosk_status.returncode != 0 or len(kiosk_status.stdout.split()) < 2 or kiosk_status.stdout.split()[1] == "L":
+        raise BootstrapError("Kiosk-brugeren er låst og kan ikke bruges til GDM autologin")
+    admin_status = subprocess.run(
+        ["/usr/bin/passwd", "--status", ADMIN_USER],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if admin_status.returncode != 0 or len(admin_status.stdout.split()) < 2 or admin_status.stdout.split()[1] != "P":
+        raise BootstrapError("cfadmin mangler et aktivt password")
+
+
+def provision_factory_human_accounts() -> None:
+    require_root()
+    password = _prompt_admin_password()
+    _ensure_factory_user(KIOSK_USER, comment=KIOSK_DISPLAY_NAME)
+    _ensure_factory_user(ADMIN_USER, comment=ADMIN_DISPLAY_NAME)
+    for group in _PRIVILEGED_KIOSK_GROUPS:
+        _remove_group_membership(KIOSK_USER, group)
+    _run_account_command(["/usr/bin/passwd", "--delete", KIOSK_USER])
+    _run_account_command(["/usr/sbin/usermod", "--unlock", KIOSK_USER])
+    try:
+        grp.getgrnam("sudo")
+    except KeyError:
+        _run_account_command(["/usr/sbin/groupadd", "--force", "sudo"])
+    _run_account_command(["/usr/sbin/usermod", "--append", "--groups", "sudo", ADMIN_USER])
+    try:
+        _run_account_command(["/usr/sbin/chpasswd"], input_text=f"{ADMIN_USER}:{password}\n")
+    finally:
+        password = ""
+    validate_factory_human_accounts()
+    ok("cfadmin og clientflow-kiosk er oprettet og valideret; kiosk har ingen privilegerede grupper.")
+
+
+def _replace_ini_section_keys(text: str, section: str, replacements: dict[str, str]) -> str:
+    if f"[{section}]" not in text:
+        text = f"[{section}]\n" + text
+    lines = text.splitlines()
+    out: list[str] = []
+    in_section = False
+    seen: set[str] = set()
+    inserted_missing = False
+    for line_text in lines:
+        stripped = line_text.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section and not inserted_missing:
+                for key, value in replacements.items():
+                    if key not in seen:
+                        out.append(f"{key}={value}")
+                inserted_missing = True
+            in_section = stripped == f"[{section}]"
+        if in_section and "=" in line_text and not stripped.startswith(("#", ";")):
+            key = line_text.split("=", 1)[0].strip()
+            if key in replacements:
+                if key not in seen:
+                    out.append(f"{key}={replacements[key]}")
+                    seen.add(key)
+                continue
+        out.append(line_text)
+    if in_section and not inserted_missing:
+        for key, value in replacements.items():
+            if key not in seen:
+                out.append(f"{key}={value}")
+    return "\n".join(out).rstrip() + "\n"
+
+
+def prepare_factory_graphical_login() -> None:
+    require_root()
+    if not Path("/usr/sbin/gdm3").is_file():
+        raise BootstrapError("GDM3 mangler; factory-handoff kan ikke etablere kiosk-login")
+    if not Path("/usr/share/wayland-sessions/ubuntu.desktop").is_file():
+        raise BootstrapError("Ubuntu Wayland-session mangler; factory-handoff kan ikke fortsætte")
+    GDM_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    current = GDM_CONFIG.read_text(encoding="utf-8") if GDM_CONFIG.exists() else "[daemon]\n"
+    updated = _replace_ini_section_keys(
+        current,
+        "daemon",
+        {"AutomaticLoginEnable": "true", "AutomaticLogin": KIOSK_USER, "WaylandEnable": "true"},
+    )
+    _atomic_root_file(GDM_CONFIG, updated, mode=0o644)
+    ACCOUNTS_SERVICE_ROOT.mkdir(parents=True, exist_ok=True)
+    account_file = ACCOUNTS_SERVICE_ROOT / KIOSK_USER
+    account_text = "[User]\nSession=ubuntu\nXSession=ubuntu\nSystemAccount=false\nFullName=ClientFlow kiosk user\n"
+    _atomic_root_file(account_file, account_text, mode=0o644)
+    subprocess.run([str(SYSTEMCTL), "set-default", "graphical.target"], check=False)
+    enabled = subprocess.run([str(SYSTEMCTL), "enable", "gdm.service"], check=False).returncode == 0
+    if not enabled:
+        subprocess.run([str(SYSTEMCTL), "enable", "gdm3.service"], check=False)
+    ok("GDM autologin er klargjort til clientflow-kiosk på Ubuntu Wayland.")
+
+
+def install_customer_activation_sudoers() -> None:
+    require_root()
+    helper = PERSISTENT_ROOT / "clientflow-fresh-install"
+    meta = helper.lstat()
+    if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0 or (meta.st_mode & 0o022):
+        raise BootstrapError("Kundeaktiveringshelper har ugyldig ownership/permissions")
+    digest = hashlib.sha256(helper.read_bytes()).hexdigest()
+    FACTORY_ACTIVATION_SUDOERS.parent.mkdir(parents=True, exist_ok=True)
+    content = (
+        "# Temporary ClientFlow factory-to-customer activation capability.\n"
+        f"{KIOSK_USER} ALL=(root) NOPASSWD: sha256:{digest} {helper} \"\"\n"
+    )
+    _atomic_root_file(FACTORY_ACTIVATION_SUDOERS, content, mode=0o440)
+    if not VISUDO.is_file():
+        raise BootstrapError("visudo mangler; midlertidig kundeaktiveringsret kan ikke valideres")
+    result = subprocess.run(
+        [str(VISUDO), "-cf", str(FACTORY_ACTIVATION_SUDOERS)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        FACTORY_ACTIVATION_SUDOERS.unlink(missing_ok=True)
+        raise BootstrapError(f"Midlertidig sudoers-regel er ugyldig: {(result.stdout or '')[-1000:]}")
+    ok("Kiosk-brugeren har kun passwordfri ret til den eksakte, root-ejede kundeaktiveringshelper uden argumenter.")
+
+
+def remove_customer_activation_sudoers() -> None:
+    FACTORY_ACTIVATION_SUDOERS.unlink(missing_ok=True)
+
+
+def install_customer_launcher_trust_helper(user: str) -> None:
+    account = pwd.getpwnam(validate_local_user(user))
+    home = Path(account.pw_dir)
+    helper = Path("/usr/local/bin/clientflow-trust-customer-activation")
+    desktop_candidates = [str(desktop_dir(user)), str(home / "Desktop"), str(home / "Skrivebord")]
+    script = "#!/usr/bin/env bash\nset -u\n" + "\n".join(
+        f'if [ -f {shlex.quote(path + "/02 Aktiver ClientFlow.desktop")} ]; then gio set {shlex.quote(path + "/02 Aktiver ClientFlow.desktop")} metadata::trusted true >/dev/null 2>&1 || true; fi'
+        for path in dict.fromkeys(desktop_candidates)
+    ) + "\n"
+    _atomic_root_file(helper, script, mode=0o755)
+    config = home / ".config"
+    autostart = config / "autostart"
+    for directory in (config, autostart):
+        try:
+            metadata = directory.lstat()
+        except FileNotFoundError:
+            directory.mkdir(mode=0o755)
+            os.chown(directory, account.pw_uid, account.pw_gid)
+            metadata = directory.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise BootstrapError(f"Kiosk autostart-katalog er ugyldigt: {directory}")
+        if metadata.st_uid != account.pw_uid:
+            raise BootstrapError(f"Kiosk autostart-katalog ejes ikke af kiosk-brugeren: {directory}")
+    target = autostart / "clientflow-trust-customer-activation.desktop"
+    content = "\n".join([
+        "[Desktop Entry]",
+        "Type=Application",
+        "Name=ClientFlow activation icon trust",
+        "Exec=/usr/local/bin/clientflow-trust-customer-activation",
+        "Terminal=false",
+        "X-GNOME-Autostart-enabled=true",
+        "NoDisplay=true",
+        "",
+    ])
+    _write_user_file_no_follow(target, content, user=user, mode=0o644)
+
+
+def cleanup_customer_launcher_trust_helper(user: str) -> None:
+    try:
+        home = user_home(user)
+    except (BootstrapError, KeyError):
+        return
+    (home / ".config/autostart/clientflow-trust-customer-activation.desktop").unlink(missing_ok=True)
+    Path("/usr/local/bin/clientflow-trust-customer-activation").unlink(missing_ok=True)
+
+
+def forget_saved_networks() -> int:
+    _networkmanager_ready()
+    allowed = {"wifi", "802-11-wireless", "ethernet", "802-3-ethernet", "gsm", "cdma", "vpn", "wireguard"}
+    rows = _all_connections()
+    deleted = 0
+    for connection_uuid, row in rows.items():
+        if row.get("type") not in allowed:
+            continue
+        print(f"Sletter gemt forbindelse: {row.get('name') or 'ukendt'} ({row.get('type')})")
+        result = _run([str(NMCLI), "connection", "delete", "uuid", connection_uuid], timeout=30)
+        if result.returncode == 0:
+            deleted += 1
+        else:
+            raise BootstrapError(f"Kunne ikke slette gemt NetworkManager-profil: {row.get('name') or connection_uuid}")
+    remaining = [row for row in _all_connections().values() if row.get("type") in allowed]
+    if remaining:
+        names = ", ".join(str(row.get("name") or row.get("uuid")) for row in remaining)
+        raise BootstrapError(f"Gemte netværksprofiler findes stadig efter factory-cleanup: {names}")
+    if deleted:
+        ok(f"Slettede {deleted} gemte netværksforbindelse(r).")
+    else:
+        ok("Ingen gemte NetworkManager-forbindelser fundet.")
+    return deleted
+
+
+def validate_factory_handoff(*, client_name: str, operator_user: str) -> None:
+    state = load_factory_state()
+    if not isinstance(state, dict) or state.get("schema_version") != 2:
+        raise BootstrapError("Factory-state mangler eller har forkert schema")
+    if state.get("client_name") != normalize_client_name(client_name):
+        raise BootstrapError("Factory-state klientnavn matcher ikke")
+    if state.get("operator_user") != validate_local_user(operator_user):
+        raise BootstrapError("Factory-state operator matcher ikke")
+    validate_factory_human_accounts()
+    gdm = GDM_CONFIG.read_text(encoding="utf-8") if GDM_CONFIG.is_file() else ""
+    if "AutomaticLoginEnable=true" not in gdm or f"AutomaticLogin={KIOSK_USER}" not in gdm or "WaylandEnable=true" not in gdm:
+        raise BootstrapError("GDM factory-handoff peger ikke på canonical kiosk-bruger")
+    launcher = desktop_dir(KIOSK_USER) / "02 Aktiver ClientFlow.desktop"
+    if not launcher.is_file():
+        raise BootstrapError("02 Aktiver ClientFlow mangler på kiosk-skrivebordet")
+    if not FACTORY_ACTIVATION_SUDOERS.is_file():
+        raise BootstrapError("Midlertidig kundeaktiveringsret mangler")
+    result = subprocess.run([str(VISUDO), "-cf", str(FACTORY_ACTIVATION_SUDOERS)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
+    if result.returncode != 0:
+        raise BootstrapError("Midlertidig kundeaktiveringsret kan ikke valideres med visudo")
+    leftovers = [row for row in _all_connections().values() if row.get("type") in {"wifi", "802-11-wireless", "ethernet", "802-3-ethernet", "gsm", "cdma", "vpn", "wireguard"}]
+    if leftovers:
+        raise BootstrapError("Factory-handoff har stadig gemte NetworkManager-profiler")
+    write_factory_state(client_name=client_name, operator_user=operator_user, handoff_ready=True)
+    ok("Factory → kunde handoff er valideret fail-closed før reboot.")
 
 def load_usb_state() -> dict[str, object] | None:
     return _safe_json_read(USB_STATE)
@@ -490,19 +833,86 @@ def _connect_wifi(ssid: str, *, hidden: bool = False) -> dict[str, str] | None:
     return _new_owned_connection(before, profile_name)
 
 
+def _show_network_status() -> tuple[bool, bool]:
+    print("[STATUS] Samlet netværksstatus")
+    rows = _nm_rows("DEVICE,TYPE,STATE,CONNECTION", "device", "status")
+    wired_connected = False
+    any_connected = False
+    print("[STATUS] Kablet netværk / Ethernet")
+    wired_found = False
+    for parts in rows:
+        if len(parts) < 4:
+            continue
+        device, type_name, state = parts[0].strip(), parts[1].strip(), parts[2].strip()
+        connection = ":".join(parts[3:]).strip()
+        if state == "connected":
+            any_connected = True
+        if type_name not in {"ethernet", "802-3-ethernet"}:
+            continue
+        wired_found = True
+        if state == "connected":
+            wired_connected = True
+        ip_address = "ingen"
+        if IP.is_file():
+            result = _run([str(IP), "-4", "-o", "addr", "show", "dev", device], timeout=10)
+            if result.returncode == 0 and result.stdout.strip():
+                fields = result.stdout.split()
+                if "inet" in fields:
+                    index = fields.index("inet")
+                    if index + 1 < len(fields):
+                        ip_address = fields[index + 1].split("/", 1)[0]
+        mac_path = Path("/sys/class/net") / device / "address"
+        carrier_path = Path("/sys/class/net") / device / "carrier"
+        mac = mac_path.read_text(encoding="ascii", errors="ignore").strip() if mac_path.is_file() else "ukendt"
+        carrier = carrier_path.read_text(encoding="ascii", errors="ignore").strip() if carrier_path.is_file() else "?"
+        print(
+            f"  {device}: state={state or '?'} connection={connection} carrier={carrier} "
+            f"ip={ip_address} mac={mac or 'ukendt'}"
+        )
+    if not wired_found:
+        warn("Ingen kablede netværksenheder fundet. Fortsætter med mulighed for WiFi.")
+    elif wired_connected:
+        ok("Kablet netværk er aktivt i NetworkManager.")
+    else:
+        warn("Ingen aktiv kablet forbindelse fundet. Tilslut kabel eller brug WiFi.")
+
+    print("[STATUS] NetworkManager-enheder")
+    for parts in rows:
+        print("  " + ":".join(parts))
+    if IP.is_file():
+        print("[STATUS] IP-adresser")
+        result = _run([str(IP), "-brief", "addr"], timeout=10)
+        for line_text in result.stdout.splitlines():
+            print(f"  {line_text}")
+    if _backend_healthy():
+        ok("ClientFlow-backend svarer.")
+        backend_ok = True
+    else:
+        warn("ClientFlow-backend svarer ikke endnu.")
+        backend_ok = False
+    return wired_connected, any_connected and backend_ok
+
+
 def configure_network_interactive(label: str) -> dict[str, str] | None:
     _networkmanager_ready()
     print()
     line()
     print(f"NETVÆRKSKONTROL · {label} · kablet først, WiFi hvis nødvendigt")
     line()
+    print(f"[STATUS] Netværk for {label}")
+    print("Denne fase kontrollerer altid kablet netværk først. Hvis Ethernet ikke virker, vises en WiFi-liste.")
     while True:
-        active = _active_connections()
-        if active and _backend_healthy():
-            ok("Netværk er aktivt, og ClientFlow-backend kan nås.")
+        wired_connected, backend_ready = _show_network_status()
+        if backend_ready:
+            if wired_connected:
+                ok("Kablet netværk er aktivt, og ClientFlow-backend kan nås.")
+            else:
+                ok("Netværk er aktivt via WiFi/anden forbindelse, og ClientFlow-backend kan nås.")
             return None
 
         warn("Der er ikke bekræftet forbindelse til ClientFlow-backend endnu.")
+        if not wired_connected:
+            warn("Kablet netværk virker ikke. Viser WiFi-liste nu.")
         networks = _wifi_scan()
         if networks:
             print("\nTilgængelige WiFi-netværk:")
