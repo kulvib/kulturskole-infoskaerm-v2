@@ -4,6 +4,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from service1 import display_control
+from service1.client_presence import ClientPresence, DomainPresence
 
 
 def test_display_projection_separates_process_running_from_browser_request(monkeypatch):
@@ -77,10 +78,15 @@ def test_chrome_status_route_surfaces_browser_request_state(monkeypatch):
         lambda *_args, **_kwargs: {4242: projection},
     )
     monkeypatch.setattr(clients, "_require_client_read_access", lambda *_args, **_kwargs: None)
+    presence = ClientPresence(
+        status=DomainPresence(domain="status", is_online=True, reason="fresh_online_status"),
+        display=DomainPresence(domain="display", is_online=True, reason="fresh_online_status"),
+        system=DomainPresence(domain="system", is_online=True, reason="fresh_online_status"),
+    )
     monkeypatch.setattr(
         clients,
         "load_client_presences_with_status_rows",
-        lambda *_args, **_kwargs: ({4242: object()}, {(4242, "display"): object()}),
+        lambda *_args, **_kwargs: ({4242: presence}, {(4242, "display"): object()}),
     )
     monkeypatch.setattr(
         clients,
@@ -92,6 +98,7 @@ def test_chrome_status_route_surfaces_browser_request_state(monkeypatch):
 
     payload = clients.get_chrome_status(4242, session=_Session(), user=object())
 
+    assert payload["presence"] == presence.public_dict()
     assert payload["chrome_running"] is False
     assert payload["browser_requested"] is True
     assert payload["chrome_step"] == "chrome_failed"

@@ -6,6 +6,7 @@ backend/service1/routers/clients.py
 backend/tests/test_client_list_projection_performance.py
 backend/tests/test_client_liveness_52a_source.py
 backend/tests/test_clientflow_performance_observability_source.py
+backend/tests/test_clientflow_display_browser_request_projection.py
 frontend/src/api/api.js
 frontend/src/pages/clientdetailspage/ClientDetailsActionsSection.jsx
 frontend/src/pages/clientdetailspage/ClientDetailsInfoSection.jsx

@@ -42,6 +42,10 @@ changed by this package.
 6. `/api/clients*` responses expose only a dataminimized `Server-Timing: app`
    duration. This makes actual backend processing time observable in browser
    DevTools without exposing SQL, hostnames, query text or credentials.
+7. The existing browser-request projection test now uses the real canonical
+   `ClientPresence`/`DomainPresence` contract and verifies the transported
+   presence payload. This fixes the CI fixture mismatch without weakening the
+   production type/serialization contract.
 
 For the detail hot path, the known SELECT budget over five seconds falls from
 `5 * 6 + 3 = 33` to `5 * 5 = 25`, about 24% fewer database round-trips. This is a
