@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from time import perf_counter
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
@@ -410,8 +411,12 @@ async def request_observability_middleware(request: Request, call_next):
     """Knyt alle HTTP-svar og uventede fejl til et sikkert request-id.
 
     Middleware-laget ligger yderst omkring Display-specifik HLS/CORS-håndtering,
-    så også HLS-preflight og globale fejl får samme korrelations-id.
+    så også HLS-preflight og globale fejl får samme korrelations-id. ClientFlow
+    client-API'er får desuden en dataminimeret Server-Timing ``app`` duration,
+    så faktisk backend-latency kan måles i browserens DevTools uden at eksponere
+    querytekst, databasehost eller andre infrastrukturdetaljer.
     """
+    started_at = perf_counter()
     request_id, token = bind_request_id(request)
     try:
         try:
@@ -447,6 +452,9 @@ async def request_observability_middleware(request: Request, call_next):
             )
 
         response = _apply_cors_headers(request, response)
+        if request.url.path.startswith("/api/clients"):
+            duration_ms = max(0.0, (perf_counter() - started_at) * 1000.0)
+            response.headers.setdefault("Server-Timing", f"app;dur={duration_ms:.2f}")
         return add_request_id_header(response, request_id)
     finally:
         reset_request_id(token)

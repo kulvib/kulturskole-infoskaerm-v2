@@ -256,9 +256,10 @@ def test_clients_list_projection_query_count_is_constant(client_count: int) -> N
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
 
-    # 1 client-list query + 2 presence queries + 2 Display batch queries +
-    # 1 latest-System-command window query. This must not grow with N.
-    assert select_count == 6
+    # 1 client-list query + 1 joined presence/credential query +
+    # 2 Display batch queries + 1 latest-System-command window query.
+    # This must not grow with N.
+    assert select_count == 5
 
 
 def test_batched_client_list_projection_matches_single_client_projection() -> None:
@@ -303,13 +304,15 @@ def test_chrome_status_projection_query_count_is_constant(seed_count: int) -> No
                 user=SimpleNamespace(is_superadmin=True),
             )
             assert payload["client_id"] == 1
+            assert payload["presence"]["status"]["domain"] == "status"
             assert payload["browser_requested"] is True
             assert payload["pending_reboot"] is True
             assert payload["pending_os_update"] is False
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
 
-    # 1 Client lookup + 2 presence queries + 2 Display batch queries +
-    # 1 latest-System-command window query. The 1-second detail poll must not
-    # grow with the number of clients present in the database.
-    assert select_count == 6
+    # 1 Client lookup + 1 joined presence/credential query +
+    # 2 Display batch queries + 1 latest-System-command window query. The
+    # 1-second detail poll must not grow with the number of clients present in
+    # the database.
+    assert select_count == 5

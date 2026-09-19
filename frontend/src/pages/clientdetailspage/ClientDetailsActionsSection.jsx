@@ -432,12 +432,17 @@ export default function ClientDetailsActionsSection({
       return undefined;
     }
     let active = true;
+    let inFlight = false;
     const refreshDeployment = async () => {
+      if (!active || inFlight) return;
+      inFlight = true;
       try {
         const current = await getActiveClientflowDeployment(clientId);
         if (active) setClientflowDeployment(current || null);
       } catch {
         if (active) setClientflowDeployment(null);
+      } finally {
+        inFlight = false;
       }
     };
     refreshDeployment();

@@ -25,7 +25,6 @@ import { compactDarkChipSx } from "../../utils/chipStyles";
 
 import {
   getChromeStatus,
-  getClientPresence,
   clientAction,
   openRemoteDesktop,
   getClient,
@@ -321,6 +320,31 @@ function getNetworkStatusMessage(client) {
 function isNetworkUnavailable(client) {
   const status = normalizeNetworkStatus(client?.network_status);
   return client?.network_has_connection === false || ["no_network", "missing", "disconnected"].includes(status);
+}
+
+function presenceFetchFailed(previous) {
+  return {
+    ...(previous || {}),
+    is_online: false,
+    status: {
+      ...(previous?.status || {}),
+      domain: "status",
+      is_online: false,
+      reason: "presence_fetch_failed",
+    },
+    display: {
+      ...(previous?.display || {}),
+      domain: "display",
+      is_online: false,
+      reason: "presence_fetch_failed",
+    },
+    system: {
+      ...(previous?.system || {}),
+      domain: "system",
+      is_online: false,
+      reason: "presence_fetch_failed",
+    },
+  };
 }
 
 function resolveChromeStepPayload(data) {
@@ -996,56 +1020,10 @@ export default function ClientDetailsPage({
   }, [client?.id]);
 
   // ---------------------------------------------------------------------------
-  // Canonical presence polling. 5 s is presentation latency only; the backend
-  // owns the 90 s freshness lease and evaluates expiry fail-closed.
+  // Canonical presence rides on the existing /chrome-status hot poll. The
+  // backend evaluates the same Status/Display/System authority server-side, so
+  // a second 5-second HTTP/DB poll would only duplicate work.
   // ---------------------------------------------------------------------------
-  useEffect(() => {
-    if (!client?.id) return undefined;
-    let cancelled = false;
-
-    async function refreshPresence() {
-      try {
-        const presence = await getClientPresence(client.id);
-        if (!cancelled) setLivePresence(presence);
-      } catch {
-        // Presence is authoritative server state. If the UI cannot obtain a fresh
-        // evaluation, fail closed locally instead of displaying cached domain
-        // presence past its server-evaluated lease.
-        if (!cancelled) {
-          setLivePresence((previous) => ({
-            ...(previous || {}),
-            is_online: false,
-            status: {
-              ...(previous?.status || {}),
-              domain: "status",
-              is_online: false,
-              reason: "presence_fetch_failed",
-            },
-            display: {
-              ...(previous?.display || {}),
-              domain: "display",
-              is_online: false,
-              reason: "presence_fetch_failed",
-            },
-            system: {
-              ...(previous?.system || {}),
-              domain: "system",
-              is_online: false,
-              reason: "presence_fetch_failed",
-            },
-          }));
-        }
-      }
-    }
-
-    refreshPresence();
-    const timer = setInterval(refreshPresence, 5000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [client?.id]);
-
   // ---------------------------------------------------------------------------
   // Chrome-status polling — hvert 1s
   // ---------------------------------------------------------------------------
@@ -1062,6 +1040,7 @@ export default function ClientDetailsPage({
           const data = await getChromeStatus(client.id, { fallbackToClient: true });
           if (cancelled || !mountedRef.current) break;
 
+          if (data?.presence) setLivePresence(data.presence);
           if (data?.chrome_status != null) setLiveChromeStatus(data.chrome_status);
           if (data?.chrome_color != null)  setLiveChromeColor(data.chrome_color);
           let polledChromeRunning = null;
@@ -1127,7 +1106,13 @@ export default function ClientDetailsPage({
             }
           }
         } catch {
-          // Ignorer poll-fejl
+          // Presence is canonical server state. If the hot poll cannot obtain a
+          // fresh server evaluation, fail closed locally instead of keeping a
+          // stale online value. Other chrome/runtime fields keep their last
+          // observation until the next successful poll.
+          if (!cancelled && mountedRef.current) {
+            setLivePresence((previous) => presenceFetchFailed(previous));
+          }
         }
         await new Promise((res) => setTimeout(res, CHROME_STATUS_POLL_MS));
       }

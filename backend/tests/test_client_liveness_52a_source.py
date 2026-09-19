@@ -70,7 +70,9 @@ def test_reads_use_batch_presence_and_dedicated_presence_endpoint():
     assert 'response.headers["Cache-Control"] = "no-store, max-age=0"' in presence_route
     assert "ClientDomainStatus.client_id.in_(client_ids)" in presence
     assert "return _load_client_presence_batch(session, clients, now=now)" in presence
-    assert "ClientDomainCredential.id.in_(credential_ids)" in presence
+    assert "select(ClientDomainStatus, ClientDomainCredential)" in presence
+    assert "ClientDomainCredential.id == ClientDomainStatus.credential_id" in presence
+    assert "credential_ids" not in presence
     chrome_get = clients.split('@router.get("/clients/{id}/chrome-status")', 1)[1].split('@router.put("/clients/{id}/chrome-status")', 1)[0]
     assert '"last_seen"' not in chrome_get
     assert '"isOnline"' not in chrome_get
