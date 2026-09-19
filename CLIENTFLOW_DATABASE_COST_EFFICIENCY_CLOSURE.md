@@ -89,3 +89,21 @@ The existing SQLAlchemy QueuePool remains intentionally unchanged until actual
 production pool/latency metrics justify a different size. Database tuning must
 be based on measured `Server-Timing`, pool status, Neon metrics and PostgreSQL
 query plans rather than arbitrary pool/index changes.
+
+## CI contract alignment after first executable run
+
+The first GitHub CI run exposed two stale source-level contracts rather than
+product regressions:
+
+- lifecycle decommission coverage still required the retired two-read
+  `session.get(Client)` authorization shape.  It now asserts the joined
+  credential/client authorization predicates that preserve approved/not-deleted
+  parent-client revalidation in the same SELECT;
+- the frontend overlap contract expected an in-flight guard without the new
+  page-visibility condition.  It now requires the stronger guard that prevents
+  both overlapping requests and hidden-tab polling.
+
+An executable SQLModel regression also proves that an already-issued shared
+agent token is rejected when its parent client becomes non-approved or deleted.
+This keeps the database-efficiency change fail-closed instead of relying only on
+source-text inspection.

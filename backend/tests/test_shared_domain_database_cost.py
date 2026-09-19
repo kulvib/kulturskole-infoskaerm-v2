@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import event
 from sqlmodel import SQLModel, Session, create_engine
 
@@ -31,6 +32,39 @@ def _seed_credential(engine, *, domain: str) -> tuple[int, str]:
         session.refresh(credential)
         token, _expires_at = create_shared_domain_token(credential)
         return client_id, token
+
+
+@pytest.mark.parametrize(
+    ("status", "deleted"),
+    [
+        ("pending", False),
+        ("approved", True),
+    ],
+)
+def test_shared_agent_token_revalidates_parent_client_lifecycle(status: str, deleted: bool):
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    client_id, token = _seed_credential(engine, domain="system")
+
+    with Session(engine) as session:
+        client = session.get(Client, client_id)
+        assert client is not None
+        client.status = status
+        if deleted:
+            client.deleted_at = utcnow()
+        session.add(client)
+        session.commit()
+
+    with Session(engine) as session:
+        with pytest.raises(HTTPException) as exc_info:
+            require_shared_agent_token(
+                session,
+                f"Bearer {token}",
+                client_id=client_id,
+                domain="system",
+            )
+
+    assert exc_info.value.status_code == 401
 
 
 def _count_selects(engine):

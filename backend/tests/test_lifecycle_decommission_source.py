@@ -33,8 +33,15 @@ def test_platform_owned_domain_tokens_revalidate_parent_client():
     shared = read("service1/shared_domain.py")
     assert "client = session.get(Client, client_id)" in livestream
     assert 'lower() != "approved"' in livestream
-    assert "client = session.get(Client, client_id)" in shared
-    assert 'lower() != "approved"' in shared
+
+    # Shared Status/Display/System credentials deliberately revalidate the
+    # parent Client in the same joined SELECT as the credential.  This keeps
+    # the lifecycle security boundary while avoiding a second Neon round-trip.
+    assert ".join(Client, Client.id == ClientDomainCredential.client_id)" in shared
+    assert 'func.lower(Client.status) == "approved"' in shared
+    assert "Client.deleted_at.is_(None)" in shared
+    assert "ClientDomainCredential.revoked_at.is_(None)" in shared
+    assert 'ClientDomainCredential.token_version == int(claims["token_version"])' in shared
 
 
 def test_privileged_websockets_revalidate_login_and_domain_authority():
