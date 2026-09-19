@@ -1,26 +1,32 @@
-ClientFlow 1.3.23 / sequence 1224 source-freeze validation
+ClientFlow 1.3.23 / sequence 1224 source re-freeze validation
 Date: 2026-09-19
 
-Canonical pre-freeze baseline:
-- main commit: a969a7f046f748243e539f208d3c5e69c5585e72
-- canonical push CI: #722 / run 35429313779 / completed success
-- baseline source identity: 1.3.22 / 1223
+Canonical pre-refreeze baseline:
+- main commit: a7dbbfaea404733d00a0070e62c644cd5460e6eb
+- canonical push CI: #758 / run 35449745659 / completed success
+- staged source identity: 1.3.23 / 1224
 - published runtime catalog: 1.3.22 / 1223
-- immutable 1.3.22/1223 bundle remains unchanged and must not be republished in place
+- immutable 1.3.22/1223 bundle remains unchanged
 
-Merged lifecycle closures now frozen into 1.3.23/1224:
-PASS: 01 establishes clientflow-kiosk/cfadmin and office-side cfadmin password.
-PASS: post-01 shipping state autologins as clientflow-kiosk and exposes kiosk-owned 02.
-PASS: 02 uses temporary exact SHA-256-bound sudo -n activation with no arguments and no customer sudo prompt.
-PASS: all saved WiFi/Ethernet/GSM/CDMA/VPN/WireGuard profiles are scrubbed and rechecked before shipping reboot.
-PASS: canonical fresh install accepts pre-provisioned accounts only through validated schema-2 handoff state.
-PASS: operator terminal UX restores cable-first diagnostics and visible installation/download progress without exposing secrets.
-PASS: pending_manual_activation reboot exposes the existing legacy-layout GTK4 GUI in status-only pre-activation mode.
-PASS: Start/Stop kiosk remain disabled before approval; no administrator-switch action is exposed.
-PASS: clientflow.target and operational runtime domains remain inactive until backend approval.
-PASS: Livestream, Terminal and Remote Desktop implementation domains remain untouched by this freeze package.
+Reason for re-freeze:
+PASS: initial 1.3.23/1224 freeze was stopped before runtime-input transport/build/approval/publication/promotion.
+PASS: no 1.3.23/1224 approved artifact was published.
+PASS: performance, database-efficiency, observability, shared-live-state, direct-API and auth-route closures were merged afterwards.
+PASS: same staged sequence 1224 is retained, preserving the source=catalog+1 anti-rollback boundary.
 
-Staged source/build identity:
+Merged lifecycle + performance closures now included:
+PASS: factory/customer account, network scrub, no-sudo customer activation and pending-manual-activation flow remain intact.
+PASS: pre-activation legacy-layout GUI remains approval-gated with no administrator-switch control.
+PASS: presence/polling/database hotpaths have consolidated query/request budgets.
+PASS: database request observability and safe Server-Timing are present.
+PASS: duplicate deployment/Ubuntu/local-management DB polling has been removed.
+PASS: ordinary browser API traffic uses the direct backend origin while login/refresh/logout remain same-origin.
+PASS: production acceptance measured /clients/ median 840.9 -> 125.4 ms (85.1% faster).
+PASS: production acceptance measured /chrome-status median 427.6 -> 119 ms (72.2% faster).
+PASS: route navigation no longer creates duplicate /auth/me DB reads.
+PASS: Livestream, product Terminal and Remote Desktop capability semantics remain frozen.
+
+Staged source/build identity retained:
 - client/VERSION: 1.3.23
 - release_sequence: 1224
 - candidate release id: clientflow-1.3.23-seq-1224
@@ -33,29 +39,33 @@ Catalog boundary retained:
 - latest_stable: 1.3.22
 - default_install_version: 1.3.22
 - selected release: clientflow-1.3.22-seq-1223
-PASS: source sequence leads catalog sequence by exactly one.
-PASS: catalog is not promoted by this source-freeze change.
-PASS: canonical pre-freeze main CI #722 / run 35429313779 completed successfully.
+PASS: source sequence leads catalog by exactly one.
+PASS: catalog is not promoted by this re-freeze package.
 
-Source hygiene retained:
+Fresh-main final audit:
+PASS: no ordinary raw relative frontend fetch('/api/...') bypasses direct transport.
+PASS: no new release-blocking product defect found.
+PASS: complete scripts/tests suite on fresh pre-refreeze main: 251 passed.
+PASS: canonical pre-refreeze push CI #758 / run 35449745659 completed successfully.
+PASS: large-file refactoring deferred because file size alone is not a release blocker.
+
+Source hygiene:
 PASS: repo-overlay remains absent.
-PASS: nanoid remains patched at exactly 3.3.18 without GHSA-2v37-7h3g-55p8 waiver.
-PASS: SHA256SUMS.txt is refreshed against all listed canonical files.
+PASS: nanoid security pin remains 3.3.18 without advisory waiver.
+PASS: SHA256SUMS.txt is refreshed against every listed canonical file.
 
-Local validation:
-PASS: focused source/release/catalog identity regression set: 32 passed.
-PASS: complete scripts/tests suite: 243 passed.
-PASS: compileall for client/scripts and changed backend identity tests.
-PASS: deterministic USB builder is byte-identical across two builds; size 208021; SHA256 de9f6b1ab704b53933c5c266c494662fe3d0fbfeaa627300af53e82abeaeb937.
-NOTE: full backend/tests cannot be reproduced in this offline execution environment because locked runtime dependencies such as sqlmodel/passlib are not installed; canonical GitHub CI is the final backend gate.
+Re-freeze package local validation:
+PASS: complete scripts/tests suite: 252 passed.
+PASS: focused source-freeze/release-procedure/physical-boundary regressions: 24 passed.
+PASS: Python compileall for client, scripts and backend/service1.
 
 Post-merge release gates:
-PENDING: record exact 40-character source-freeze commit SHA after canonical push CI success.
-PENDING: build/verify deterministic sequence-1224 runtime-input transport.
+PENDING: record exact 40-character re-freeze source SHA after canonical push CI success.
+PENDING: build/verify deterministic sequence-1224 runtime-input transport from that exact authority.
 PENDING: dispatch canonical reproducible release build for exact source/runtime inputs.
 PENDING: require byte-identical candidate outputs and Ubuntu 26.04 executable-candidate PASS.
 PENDING: manually approve exact candidate.
 PENDING: immutably publish exact approved bytes and independently re-read size/SHA-256.
-PENDING: separate catalog promotion to 1.3.23/1224.
+PENDING: separately promote catalog to 1.3.23/1224.
 PENDING: regenerate canonical USB from promoted main.
-PENDING: restart canonical clean Ubuntu 26.04 physical fresh-install acceptance from the beginning.
+PENDING: restart clean Ubuntu 26.04 physical fresh-install acceptance from phase 0.

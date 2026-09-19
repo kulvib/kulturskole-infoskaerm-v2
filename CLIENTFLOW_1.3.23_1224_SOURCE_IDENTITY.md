@@ -1,5 +1,10 @@
 # ClientFlow 1.3.23 / sequence 1224 — staged source/build identity
 
+> **CURRENT STATUS:** The staged identity remains 1.3.23/1224, but the initial
+> source-freeze boundary was superseded before any sequence-1224 build/approval/
+> publication. See `CLIENTFLOW_1.3.23_1224_SOURCE_REFREEZE_CLOSURE.md` for the
+> current source authority and next gates.
+
 ## Status
 
 This change allocates the next ClientFlow source/build identity after the
