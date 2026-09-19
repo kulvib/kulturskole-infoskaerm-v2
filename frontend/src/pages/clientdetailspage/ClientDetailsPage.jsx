@@ -1260,7 +1260,7 @@ export default function ClientDetailsPage({
     }
 
     pollForConfirmation();
-  }, [client?.id, silentRefresh, handleRefresh]);
+  }, [silentRefresh, handleRefresh]);
 
   // ---------------------------------------------------------------------------
   // Handlinger
