@@ -188,7 +188,7 @@
       "title": "Local GUI, support bundle, recovery and switch-user workflow",
       "status": "implemented",
       "frozen": false,
-      "rationale": "GTK4 local GUI preserves legacy functional sections/copy affordances; bounded recovery and switch-user helpers preserve technician support without generic privileged shell access.",
+      "rationale": "GTK4 local GUI preserves legacy functional sections/copy affordances and is reused status-only while a claimed client awaits backend approval; Start/Stop remain disabled in that phase, no administrator-switch action is exposed in the GUI, and bounded recovery/switch-user helpers remain separate technician mechanisms without generic privileged shell access.",
       "legacy_evidence": [
         "payload:opt/clientflow/api/clientflow_gui.py",
         "payload:usr/local/bin/clientflow-recovery",

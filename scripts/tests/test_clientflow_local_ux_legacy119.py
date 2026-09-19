@@ -76,8 +76,10 @@ def test_local_gui_preserves_legacy119_sections_copy_and_safe_actions() -> None:
     assert '"Kopieret!"' in source
     assert '"Start kiosk"' in source
     assert '"Stop kiosk"' in source
-    assert '"Skift til administrator"' in source
-    assert 'SWITCH_USER_HELPER' in source
+    assert '"Skift til administrator"' not in source
+    assert 'SWITCH_USER_HELPER' not in source
+    assert 'PREACTIVATION_MODE' in source
+    assert 'Kioskstyring aktiveres først efter backend-godkendelse.' in source
 
     # The local GUI keeps the frozen domains read-only and only mutates Display
     # through the existing narrow RPC.

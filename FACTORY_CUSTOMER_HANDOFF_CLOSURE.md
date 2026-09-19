@@ -19,7 +19,7 @@ After **01 Klient klargøring** and its confirmed reboot, the machine is a shipp
 
 The canonical installer accepts these pre-existing human accounts only when the private root-owned schema-2 factory state is `handoff_ready=true`, matches the explicit client identity and canonical account names, and the account contract revalidates. Every other pre-existing ClientFlow trace remains a fresh-install conflict.
 
-After the customer flow reaches durable `pending_manual_activation`, the temporary activation sudoers file, trust helper and **02** desktop icon are removed before the pre-activation reboot.
+After the customer flow reaches durable `pending_manual_activation`, the temporary activation sudoers file, trust helper and **02** desktop icon are removed before the pre-activation reboot. The staged release's existing legacy-layout local GUI is then exposed through a temporary bootstrap-owned `clientflow-preactivation-gui.service`. It runs as `clientflow-kiosk` in an explicit status-only mode, shows `Registreret – afventer godkendelse`, keeps Start/Stop kiosk disabled, exposes no administrator-switch action, and starts no ClientFlow runtime domain. The service conflicts with `clientflow.target`, so backend-approved activation replaces it with the normal release-owned runtime GUI rather than running two GUI lifecycles in parallel.
 
 ## Terminal UX
 

@@ -7,10 +7,10 @@ preserving the technician-facing grouping and copy affordances:
 Handlinger, Systeminfo, Kioskinfo, Netværksinfo and Kalender – næste 7 dage.
 
 The mutating Display controls are Start/Stop kiosk through the narrow Display
-runtime RPC.  "Skift til administrator" only invokes the canonical
-clientflow-switch-user-admin helper, which locks the exact active local kiosk
-session so GDM can present cfadmin.  No domain credential or secret is read by
-this process.
+runtime RPC after backend-approved activation. In pre-activation mode the same
+legacy-layout GUI is strictly status-only: no Display RPC or frozen runtime
+domain is started or mutated. No domain credential or secret is read by this
+process.
 """
 from __future__ import annotations
 
@@ -37,8 +37,9 @@ RESOLUTION_DESIRED_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_RESOLUTION_DESIRED_
 GUI_STATUS_PATH = Path(os.getenv("CLIENTFLOW_GUI_STATUS_PATH", "/var/lib/clientflow/display-runtime/local-gui-status.json"))
 CALENDAR_PREVIEW_PATH = Path(os.getenv("CLIENTFLOW_CALENDAR_PREVIEW_PATH", "/var/lib/clientflow/display-runtime/calendar-preview.json"))
 PUBLIC_CLIENT_PATH = Path(os.getenv("CLIENTFLOW_PUBLIC_CLIENT_PATH", "/var/lib/clientflow/client-public.json"))
-VERSION_PATH = Path("/opt/clientflow/active/VERSION")
-SWITCH_USER_HELPER = Path("/opt/clientflow/active/client-runtime/libexec/clientflow-switch-user-admin")
+VERSION_PATH = Path(os.getenv("CLIENTFLOW_VERSION_PATH", "/opt/clientflow/active/VERSION"))
+GUI_MODE = str(os.getenv("CLIENTFLOW_GUI_MODE") or "active").strip().lower()
+PREACTIVATION_MODE = GUI_MODE == "preactivation"
 CLIENT_ID = str(os.getenv("CLIENTFLOW_CLIENT_ID") or "-").strip() or "-"
 
 # Deployed ClientFlow 1.1.19 GUI visual contract.
@@ -209,7 +210,7 @@ def _version() -> str:
         return "-"
 
 
-def _calendar_rows() -> list[tuple[str, str, str, str]]:
+def _calendar_rows(*, preactivation: bool = False) -> list[tuple[str, str, str, str]]:
     preview = _read_json(CALENDAR_PREVIEW_PATH)
     rows = preview.get("days") if isinstance(preview.get("days"), list) else []
     by_date = {str(row.get("date")): row for row in rows if isinstance(row, dict)}
@@ -225,7 +226,9 @@ def _calendar_rows() -> list[tuple[str, str, str, str]]:
         row = by_date.get(current.isoformat(), {})
         status = str(row.get("status") or "off").strip().lower()
         date_text = f"{weekdays[current.weekday()]} {current.day}. {months[current.month - 1]} {current.year}"
-        if status == "on":
+        if preactivation:
+            state, opens, closes = "–", "", ""
+        elif status == "on":
             state = "On"
             opens = str(row.get("onTime") or "–")[:5]
             closes = str(row.get("offTime") or "–")[:5]
@@ -274,8 +277,6 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         self.calendar_labels: list[tuple[Gtk.Label, Gtk.Label, Gtk.Label, Gtk.Label]] = []
         self.field_grids: list[Gtk.Grid] = []
         self.action_grid: Gtk.Grid | None = None
-        self.admin_button: Gtk.Button | None = None
-        self._admin_switch_inflight = False
         self.startup_disable_until = time.monotonic() + 10.0
         self._layout_mode = "standard"
         self._layout_scale = 1.0
@@ -393,13 +394,6 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         .start-button:hover {{ background-image: none; background-color: #4BB543; }}
         .stop-button {{ background-image: none; background-color: {COLOR_RED}; }}
         .stop-button:hover {{ background-image: none; background-color: {COLOR_RED}; }}
-        .admin-button {{
-            font-family: Arial, sans-serif;
-            font-size: {normal}px;
-            font-weight: normal;
-            min-height: {max(22, round(26 * scale))}px;
-            margin-top: {max(2, round(4 * scale))}px;
-        }}
         .copy-button {{
             background: transparent;
             border: 0;
@@ -519,14 +513,6 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         action_grid.attach(self.start_button, 0, 0, 1, 1)
         action_grid.attach(self.stop_button, 1, 0, 1, 1)
 
-        # V2-safe technician action retained from the pre-parity GTK4 GUI.
-        # It is deliberately subordinate to the two legacy primary actions so
-        # Start/Stop keep the deployed 1.1.19 equal-width geometry.
-        self.admin_button = Gtk.Button(label="Skift til administrator")
-        self.admin_button.add_css_class("admin-button")
-        self.admin_button.set_hexpand(True)
-        self.admin_button.connect("clicked", self._switch_to_admin)
-        action_grid.attach(self.admin_button, 0, 1, 2, 1)
 
         system_frame, system_box = self._frame("Systeminfo")
         outer.append(system_frame)
@@ -785,47 +771,10 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         error = str(resolution.get("error") or "").strip()
         return (f"Fejl: {error}" if error else "Klar / ingen aktiv ændring"), (COLOR_RED if error else COLOR_GRAY)
 
-    def _switch_to_admin(self, _button: Gtk.Button) -> None:
-        if self._admin_switch_inflight:
-            return
-        if not SWITCH_USER_HELPER.is_file() or not os.access(SWITCH_USER_HELPER, os.X_OK):
-            self.error_label.set_text("Administratorskift er ikke tilgængeligt på denne klient.")
-            return
-        self._admin_switch_inflight = True
-        if self.admin_button is not None:
-            self.admin_button.set_sensitive(False)
-        self.error_label.set_text("")
-
-        def worker() -> None:
-            try:
-                result = subprocess.run(
-                    [str(SWITCH_USER_HELPER)],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    timeout=10,
-                    check=False,
-                    env={
-                        **os.environ,
-                        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                        "LANG": os.getenv("LANG", "C.UTF-8"),
-                    },
-                )
-                if result.returncode != 0:
-                    raise RuntimeError((result.stdout or "Skift af bruger fejlede").strip()[:180])
-            except Exception as exc:
-                GLib.idle_add(self.error_label.set_text, f"Administratorskift fejlede: {str(exc)[:180]}")
-            finally:
-                def complete() -> bool:
-                    self._admin_switch_inflight = False
-                    if self.admin_button is not None:
-                        self.admin_button.set_sensitive(True)
-                    return False
-                GLib.idle_add(complete)
-
-        threading.Thread(target=worker, daemon=True).start()
-
     def _send_action(self, action: str) -> None:
+        if PREACTIVATION_MODE:
+            self.error_label.set_text("Kioskstyring aktiveres først efter backend-godkendelse.")
+            return
         self.start_button.set_sensitive(False)
         self.stop_button.set_sensitive(False)
         self.error_label.set_text("")
@@ -851,7 +800,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             resolution = _read_json(RESOLUTION_STATUS_PATH)
             resolution_desired = _read_json(RESOLUTION_DESIRED_PATH)
             network = _network_snapshot()
-            calendar = _calendar_rows()
+            calendar = _calendar_rows(preactivation=PREACTIVATION_MODE)
 
             client_id = str(public.get("client_id") or CLIENT_ID or "-")
             client_name = str(public.get("name") or "-")
@@ -860,7 +809,10 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             self._set("name_locality", f"{client_name} / {locality}")
 
             backend_state = _service_state("clientflow-status-agent.service")
-            if client_id not in {"", "-"} and backend_state == "active":
+            if PREACTIVATION_MODE and client_id not in {"", "-"}:
+                self._set("backend", "Registreret / afventer godkendelse", COLOR_ORANGE)
+                backend_approved = False
+            elif client_id not in {"", "-"} and backend_state == "active":
                 self._set("backend", "Approved / Godkendt", COLOR_GREEN)
                 backend_approved = True
             elif client_id not in {"", "-"}:
@@ -871,40 +823,58 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 backend_approved = False
 
             self._set("version", f"v{_version().lstrip('v')}", COLOR_GREEN)
-            for key, unit in (
-                ("backend_sync", "clientflow-display-agent.service"),
-                ("calendar_service", "clientflow-calendar.service"),
-                ("browser_guard", "clientflow-browser-guard.service"),
-                ("admin_terminal", "clientflow-root-terminal-broker.socket"),
-            ):
-                value, color = self._service_display(unit)
-                self._set(key, value, color)
+            if PREACTIVATION_MODE:
+                for key in (
+                    "backend_sync",
+                    "calendar_service",
+                    "browser_guard",
+                    "admin_terminal",
+                    "terminal",
+                    "remote_desktop",
+                    "livestream",
+                    "update",
+                    "ubuntu_update",
+                ):
+                    self._set(key, "Ikke aktiveret", COLOR_GRAY)
+            else:
+                for key, unit in (
+                    ("backend_sync", "clientflow-display-agent.service"),
+                    ("calendar_service", "clientflow-calendar.service"),
+                    ("browser_guard", "clientflow-browser-guard.service"),
+                    ("admin_terminal", "clientflow-root-terminal-broker.socket"),
+                ):
+                    value, color = self._service_display(unit)
+                    self._set(key, value, color)
 
-            # Frozen-domain observability remains deliberately explicit and
-            # read-only.  These calls only inspect systemd state; no frozen
-            # service, socket or credential is mutated by Local GUI.
-            for key, state in (
-                ("terminal", _service_state("clientflow-terminal-agent.service")),
-                ("remote_desktop", _service_state("clientflow-remote-desktop-agent.service")),
-                ("livestream", _service_state("clientflow-livestream-producer.service")),
-            ):
-                value, color = self._service_display_state(state)
-                self._set(key, value, color)
-            value, color = self._ready_unit("clientflow-updater.timer")
-            self._set("update", value, color)
-            value, color = self._ready_unit("clientflow-system-broker.socket")
-            self._set("ubuntu_update", value, color)
+                # Frozen-domain observability remains deliberately explicit and
+                # read-only. These calls only inspect systemd state; no frozen
+                # service, socket or credential is mutated by Local GUI.
+                for key, state in (
+                    ("terminal", _service_state("clientflow-terminal-agent.service")),
+                    ("remote_desktop", _service_state("clientflow-remote-desktop-agent.service")),
+                    ("livestream", _service_state("clientflow-livestream-producer.service")),
+                ):
+                    value, color = self._service_display_state(state)
+                    self._set(key, value, color)
+                value, color = self._ready_unit("clientflow-updater.timer")
+                self._set("update", value, color)
+                value, color = self._ready_unit("clientflow-system-broker.socket")
+                self._set("ubuntu_update", value, color)
             self._set("uptime", _uptime())
 
             kiosk_url = str(configuration.get("kiosk_url") or "Afventer godkendelse / ingen kiosk-URL endnu")
             self._set("kiosk_url", kiosk_url)
-            try:
-                refresh_seconds = max(0, int(configuration.get("browser_refresh_interval_sec") or 0))
-            except (TypeError, ValueError):
-                refresh_seconds = 0
-            self._set("browser_refresh", "slået fra" if refresh_seconds == 0 else f"{refresh_seconds} sek.")
-            browser_status, browser_color = self._browser_status(runtime)
-            self._set("display", browser_status, browser_color)
+            if PREACTIVATION_MODE:
+                self._set("browser_refresh", "Ikke aktiveret", COLOR_GRAY)
+                self._set("display", "Afventer godkendelse", COLOR_ORANGE)
+            else:
+                try:
+                    refresh_seconds = max(0, int(configuration.get("browser_refresh_interval_sec") or 0))
+                except (TypeError, ValueError):
+                    refresh_seconds = 0
+                self._set("browser_refresh", "slået fra" if refresh_seconds == 0 else f"{refresh_seconds} sek.")
+                browser_status, browser_color = self._browser_status(runtime)
+                self._set("display", browser_status, browser_color)
             self._set("resolution_current", self._format_current_resolution(resolution))
             self._set("resolution_desired", self._format_desired_resolution(resolution_desired))
             resolution_text, resolution_color = self._format_resolution_status(resolution, resolution_desired)
@@ -922,6 +892,8 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                     op_text, op_color = "Approved – kalender On, kiosk starter/venter", COLOR_ORANGE
                 else:
                     op_text, op_color = "Approved – kalender Off", COLOR_BLUE
+            elif PREACTIVATION_MODE and client_id not in {"", "-"}:
+                op_text, op_color = "Registreret – afventer godkendelse", COLOR_ORANGE
             elif client_id not in {"", "-"}:
                 op_text, op_color = "Registreret – henter status", COLOR_ORANGE
             else:
@@ -963,7 +935,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                     widget.set_visible(visible)
 
             for labels, values in zip(self.calendar_labels, calendar):
-                row_color = COLOR_GREEN if values[1] == "On" else COLOR_RED
+                row_color = COLOR_GRAY if PREACTIVATION_MODE else (COLOR_GREEN if values[1] == "On" else COLOR_RED)
                 css = self._color_class(row_color)
                 for label, value in zip(labels, values):
                     for old in ("status-green", "status-red"):
@@ -976,10 +948,12 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             busy = state in {"countdown", "resetting", "waiting_session"}
             startup_locked = time.monotonic() < self.startup_disable_until
             power_locked = power_state == "off"
-            self.start_button.set_sensitive(not startup_locked and not busy and not power_locked and not running)
-            self.stop_button.set_sensitive(not startup_locked and not busy and not power_locked and running)
-            if self.admin_button is not None:
-                self.admin_button.set_sensitive(not self._admin_switch_inflight)
+            if PREACTIVATION_MODE:
+                self.start_button.set_sensitive(False)
+                self.stop_button.set_sensitive(False)
+            else:
+                self.start_button.set_sensitive(not startup_locked and not busy and not power_locked and not running)
+                self.stop_button.set_sensitive(not startup_locked and not busy and not power_locked and running)
             _write_gui_status("running")
         except Exception as exc:
             self.error_label.set_text(f"GUI refresh-fejl: {str(exc)[:180]}")
