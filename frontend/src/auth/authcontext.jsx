@@ -4,7 +4,7 @@
 // 25+5 minutters idle-advarsel, servervalideret fortsættelse,
 // cross-tab logout/aktivitet og absolut sessiongrænse.
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   apiUrl,
   authHeaders,
@@ -47,7 +47,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [sessionExpiresAt, setSessionExpiresAtState] = useState(null);
   const navigate = useNavigate();
-  const location = useLocation();
+  const [bootPathname] = useState(() => window.location.pathname);
 
   const endLocalSession = useCallback(async () => {
     // Start server-logout mens det nuværende access-token stadig er tilgængeligt.
@@ -95,7 +95,7 @@ export function AuthProvider({ children }) {
 
       // Login/nulstil-adgangskode er offentlige sider. Her skal en manglende
       // refresh-cookie ikke skabe et forventet 401-kald i baggrunden.
-      if (isPublicAuthPath(location.pathname)) {
+      if (isPublicAuthPath(bootPathname)) {
         if (!cancelled) {
           setUser(null);
           setSessionExpiresAtState(null);
@@ -142,7 +142,7 @@ export function AuthProvider({ children }) {
 
     boot();
     return () => { cancelled = true; };
-  }, [location.pathname]);
+  }, [bootPathname]);
 
   const isSuperadmin = hasSuperadminRole(user);
   const isViewer = isViewerRole(user);
