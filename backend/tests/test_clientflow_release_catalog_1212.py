@@ -63,7 +63,7 @@ def test_catalog_1223_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1223_matches_promoted_1322_1223_source_identity() -> None:
+def test_catalog_1223_stays_selected_while_source_is_frozen_at_1323_1224() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -73,12 +73,13 @@ def test_catalog_1223_matches_promoted_1322_1223_source_identity() -> None:
     )
     source_sequence = int(release_input["release_sequence"])
 
-    # Promotion is allowed only after the exact approved 1.3.22/1223 bytes
-    # have been immutably published and independently re-read.
-    assert source_version == "1.3.22"
-    assert source_sequence == 1223
+    # Source/build identity may lead the selector only by one sequence. The
+    # catalog remains on the last physically published approved release until
+    # the new exact bundle has been approved, published and independently read.
+    assert source_version == "1.3.23"
+    assert source_sequence == 1224
     assert data["catalog_sequence"] == 1223
-    assert source_sequence == data["catalog_sequence"]
+    assert source_sequence == data["catalog_sequence"] + 1
 
     assert data["latest_stable"] == "1.3.22"
     assert data["default_install_version"] == "1.3.22"
@@ -98,7 +99,6 @@ def test_catalog_1223_matches_promoted_1322_1223_source_identity() -> None:
         "source_commit",
     ):
         assert field not in release
-
 
 def test_catalog_1223_resolvers_select_1322_for_update_and_fresh_install() -> None:
     load_catalog.cache_clear()
