@@ -19,7 +19,9 @@ test("always-on ClientFlow database polling pauses while the browser page is hid
 
   assert.match(listPage, /if \(isPageVisible\(\)\) fetchClients\(false, false\);/);
   assert.match(detailsPage, /if \(!isPageVisible\(\)\) \{\s*await new Promise/);
-  assert.match(actions, /if \(!active \|\| inFlight \|\| !isPageVisible\(\)\) return;/);
+  assert.doesNotMatch(actions, /getActiveClientflowDeployment|refreshDeployment/);
+  assert.match(detailsPage, /if \(isPageVisible\(\)\) refreshClientflowDeployment\(\);/);
+  assert.match(detailsPage, /if \(!client\?\.id \|\| !isSuperadmin \|\| !clientflowDeploymentActive\) return undefined;/);
   assert.match(info, /configRefreshInFlightRef\.current \|\| !isPageVisible\(\)/);
   assert.match(info, /diagnosticsRefreshInFlightRef\.current \|\| !isPageVisible\(\)/);
 });

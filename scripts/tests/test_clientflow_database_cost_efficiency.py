@@ -66,6 +66,9 @@ def test_frontend_always_on_database_polls_are_visibility_aware():
 
     assert "if (isPageVisible()) fetchClients(false, false);" in list_page
     assert "if (!isPageVisible()) {" in details_page
-    assert "if (!active || inFlight || !isPageVisible()) return;" in actions
+    assert "getActiveClientflowDeployment" not in actions
+    assert "refreshDeployment" not in actions
+    assert "if (isPageVisible()) refreshClientflowDeployment();" in details_page
+    assert "!clientflowDeploymentActive" in details_page
     assert "configRefreshInFlightRef.current || !isPageVisible()" in info
     assert "diagnosticsRefreshInFlightRef.current || !isPageVisible()" in info

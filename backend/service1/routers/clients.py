@@ -1558,6 +1558,18 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "ubuntu_update_progress": getattr(client, "ubuntu_update_progress", None),
         "ubuntu_update_package_count": getattr(client, "ubuntu_update_package_count", None),
         "ubuntu_update_reboot_required": getattr(client, "ubuntu_update_reboot_required", None),
+        # Local-management is already projected from the same latest System
+        # command batch above. Expose it on the hot read without another DB
+        # query so the UI does not need a second 2-second polling endpoint.
+        "local_management_action": getattr(client, "local_management_action", None),
+        "local_management_request_id": getattr(client, "local_management_request_id", None),
+        "local_management_desired_hostname": getattr(client, "local_management_desired_hostname", None),
+        "local_management_status": getattr(client, "local_management_status", None),
+        "local_management_message": getattr(client, "local_management_message", None),
+        "local_management_requested_at": getattr(client, "local_management_requested_at", None),
+        "local_management_started_at": getattr(client, "local_management_started_at", None),
+        "local_management_finished_at": getattr(client, "local_management_finished_at", None),
+        "local_management_error": getattr(client, "local_management_error", None),
         "ubuntu_version": getattr(client, "ubuntu_version", None),
         "service_selfupdate_status": getattr(client, "service_selfupdate_status", None),
         "service_ubuntu_update_status": getattr(client, "service_ubuntu_update_status", None),

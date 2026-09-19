@@ -1156,8 +1156,12 @@ export async function getClientflowReleases() {
   return readJsonResponse(res);
 }
 
-export async function getClientflowDeployments(clientId) {
-  const res = await apiFetch(`${apiUrl}/api/clients/${encodeURIComponent(clientId)}/clientflow-deployments`, {
+export async function getClientflowDeployments(clientId, { limit = null } = {}) {
+  const params = new URLSearchParams();
+  if (Number.isInteger(limit) && limit > 0) params.set("limit", String(limit));
+  const query = params.toString();
+  const suffix = query ? `?${query}` : "";
+  const res = await apiFetch(`${apiUrl}/api/clients/${encodeURIComponent(clientId)}/clientflow-deployments${suffix}`, {
     headers: authHeaders(),
     credentials: "include",
   });
