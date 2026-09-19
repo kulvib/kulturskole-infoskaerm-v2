@@ -75,3 +75,21 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CLIENTFLOW_1.3.23_1224_SOURCE_IDENTITY.md" in seen
     assert "CLIENTFLOW_1.3.23_1224_SOURCE_FREEZE_CLOSURE.md" in seen
     assert "CHANGED_FILES_1323_1224_SOURCE_FREEZE.txt" in seen
+    assert "CLIENTFLOW_1.3.23_1224_SOURCE_REFREEZE_CLOSURE.md" in seen
+    assert "CHANGED_FILES_1323_1224_SOURCE_REFREEZE.txt" in seen
+
+
+def test_1323_1224_initial_freeze_is_explicitly_superseded_before_build() -> None:
+    initial = (ROOT / "CLIENTFLOW_1.3.23_1224_SOURCE_FREEZE_CLOSURE.md").read_text(
+        encoding="utf-8"
+    )
+    refreeze = (ROOT / "CLIENTFLOW_1.3.23_1224_SOURCE_REFREEZE_CLOSURE.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "SUPERSEDED BEFORE BUILD" in initial
+    assert "a7dbbfaea404733d00a0070e62c644cd5460e6eb" in refreeze
+    assert "#758" in refreeze
+    assert "35449745659" in refreeze
+    assert "sequence-1224 runtime-input transport" in refreeze
+    assert "source release sequence" in refreeze and "catalog sequence" in refreeze

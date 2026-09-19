@@ -1,5 +1,10 @@
 # ClientFlow 1.3.23 / sequence 1224 — source-freeze closure
 
+> **SUPERSEDED BEFORE BUILD:** This initial freeze boundary is historical.
+> Additional source changes were merged before sequence-1224 runtime-input
+> transport, release build, approval, publication or catalog promotion. The
+> current authority is `CLIENTFLOW_1.3.23_1224_SOURCE_REFREEZE_CLOSURE.md`.
+
 ## Scope
 
 This is the source-freeze gate for the release carrying the merged factory →
