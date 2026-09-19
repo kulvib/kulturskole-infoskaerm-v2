@@ -36,6 +36,7 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowDeployments, getClientflowReleases, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
+import { isPageVisible } from "../../utils/pageVisibility";
 import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
 
 const UKEDAGE = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag"];
@@ -3287,7 +3288,7 @@ export default function ClientDetailsInfoSection({
     let alive = true;
 
     const refreshConfig = async () => {
-      if (!alive || configRefreshInFlightRef.current) return;
+      if (!alive || configRefreshInFlightRef.current || !isPageVisible()) return;
       configRefreshInFlightRef.current = true;
       try {
         await onDiagnosticsRefresh();
@@ -3315,7 +3316,7 @@ export default function ClientDetailsInfoSection({
     let alive = true;
 
     const refreshDiagnostics = async () => {
-      if (!alive || diagnosticsRefreshInFlightRef.current) return;
+      if (!alive || diagnosticsRefreshInFlightRef.current || !isPageVisible()) return;
       diagnosticsRefreshInFlightRef.current = true;
       try {
         await onDiagnosticsRefresh();

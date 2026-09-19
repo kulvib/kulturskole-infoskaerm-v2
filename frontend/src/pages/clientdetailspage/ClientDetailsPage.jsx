@@ -22,6 +22,7 @@ const ClientDetailsActionsSection = lazy(() => import("./ClientDetailsActionsSec
 const ClientDetailsLivestreamSection = lazy(() => import("./ClientDetailsLivestreamSection"));
 const ClientCalendarDialog = lazy(() => import("../calendarpage/ClientCalendarDialog"));
 import { compactDarkChipSx } from "../../utils/chipStyles";
+import { isPageVisible } from "../../utils/pageVisibility";
 
 import {
   getChromeStatus,
@@ -1036,6 +1037,10 @@ export default function ClientDetailsPage({
 
     async function poll() {
       while (!cancelled && mountedRef.current) {
+        if (!isPageVisible()) {
+          await new Promise((res) => setTimeout(res, CHROME_STATUS_POLL_MS));
+          continue;
+        }
         try {
           const data = await getChromeStatus(client.id, { fallbackToClient: true });
           if (cancelled || !mountedRef.current) break;

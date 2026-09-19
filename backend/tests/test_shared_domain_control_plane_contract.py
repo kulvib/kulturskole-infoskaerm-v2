@@ -51,7 +51,7 @@ def test_shared_tokens_are_bound_to_domain_client_credential_and_version():
         '"domain": credential.domain',
         '"token_version": credential.token_version',
         'audience=f"clientflow-domain:{domain}"',
-        'credential.token_version != int(claims["token_version"])',
+        'ClientDomainCredential.token_version == int(claims["token_version"])',
     ):
         assert marker in source
 
@@ -80,6 +80,6 @@ def test_client_command_model_matches_canonical_shared_vocabulary():
 
 def test_shared_agent_token_preserves_zero_token_version():
     source = (ROOT / "service1" / "shared_domain.py").read_text(encoding="utf-8")
-    assert 'credential.token_version != int(claims["token_version"])' in source
+    assert 'ClientDomainCredential.token_version == int(claims["token_version"])' in source
     assert 'claims.get("token_version") or -1' not in source
 

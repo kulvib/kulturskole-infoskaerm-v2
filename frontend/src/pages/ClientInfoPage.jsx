@@ -39,6 +39,7 @@ import DevicesIcon from "@mui/icons-material/Devices";
 import PendingActionsIcon from "@mui/icons-material/PendingActions";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { compactDarkChipSx } from "../utils/chipStyles";
+import { isPageVisible } from "../utils/pageVisibility";
 import {
   pageHeaderIconSx,
   pageHeaderPaperSx,
@@ -673,7 +674,7 @@ export default function ClientInfoPage() {
     fetchClients(false, true);
     fetchDeletedClients(false);
     const timer = setInterval(() => {
-      fetchClients(false, false);
+      if (isPageVisible()) fetchClients(false, false);
     }, CLIENT_LIST_POLL_MS);
     return () => clearInterval(timer);
   }, [fetchClients, fetchDeletedClients]);

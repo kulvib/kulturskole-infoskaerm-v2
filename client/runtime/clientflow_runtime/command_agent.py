@@ -6,7 +6,7 @@ import threading
 import time
 from typing import Any, Callable
 
-from .constants import SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS
+from .constants import SHARED_DOMAIN_COMMAND_POLL_SECONDS, SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS
 from .logging_utils import configure_logging
 from .net import DomainTransport, TransportError, backoff_seconds
 from .status import report_status
@@ -74,7 +74,7 @@ class QueueAgent:
         transport: DomainTransport,
         handler: Callable[[CommandContext], dict[str, Any]],
         *,
-        poll_seconds: float = 2.0,
+        poll_seconds: float = SHARED_DOMAIN_COMMAND_POLL_SECONDS,
         lease_seconds: int = 60,
         status_payload: Callable[[], dict[str, Any]] | None = None,
         report_status_after_command: bool = False,
