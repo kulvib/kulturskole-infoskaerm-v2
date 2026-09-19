@@ -15,6 +15,7 @@ from service1.clientflow_deployments import (
 )
 from service1.clientflow_update_models import ClientFlowDeployment, ClientFlowUpdateCredential
 from service1.models import Client, User
+from service1.routers.clientflow_deployments import list_clientflow_deployments
 
 
 TEST_UPDATE_PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
@@ -94,6 +95,39 @@ def test_one_active_deployment_per_client_and_cancel_releases_slot(session):
     value.commit()
     assert second.state == "authorized"
 
+
+
+
+def test_deployment_history_can_be_bounded_to_latest_row(session):
+    value, client, user = session
+    first = _create(value, client, user)
+    value.commit()
+    cancel_deployment(value, deployment_id=first.id, reason="finished first")
+    value.commit()
+
+    second = create_authorized_deployment(
+        value,
+        client_id=int(client.id),
+        requested_by_user_id=int(user.id),
+        target_release_id="clientflow-1.3.1-seq-1301",
+        target_version="1.3.1",
+        target_release_sequence=1301,
+        bundle_sha256="b" * 64,
+        bundle_size=123457,
+        release_approval_reference="approval-1301",
+        allow_downgrade=False,
+        reason=None,
+    )
+    value.commit()
+
+    rows = list_clientflow_deployments(
+        int(client.id),
+        limit=1,
+        session=value,
+        _user=user,
+    )
+    assert len(rows) == 1
+    assert rows[0].id == second.id
 
 def test_activation_gate_is_atomic_and_cannot_be_cancelled_after_activation(session):
     value, client, user = session

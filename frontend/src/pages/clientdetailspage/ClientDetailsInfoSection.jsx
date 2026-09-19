@@ -33,7 +33,7 @@ import SaveIcon from "@mui/icons-material/Save";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import DeleteSweepIcon from "@mui/icons-material/DeleteSweep";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowDeployments, getClientflowReleases, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
+import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import { isPageVisible } from "../../utils/pageVisibility";
@@ -91,7 +91,6 @@ const UBUNTU_UPDATE_STEPS = [
 
 const UBUNTU_UPDATE_BUSY_STEPS = new Set(UBUNTU_UPDATE_STEPS.map((step) => step.key));
 const UBUNTU_FINISHED_FEEDBACK_MS = UPDATE_DETAIL_FINISHED_FEEDBACK_MS;
-const UBUNTU_POLL_MS = 5_000;
 const UBUNTU_REQUEST_WAIT_TIMEOUT_MS = 120_000;
 
 function normalizeClientflowDeploymentState(value) {
@@ -177,8 +176,7 @@ function UpdateStepTimeline({ steps, currentIndex = -1, terminal = false, error 
   );
 }
 
-function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, showSnackbar, onFinished }) {
-  const [deployment, setDeployment] = React.useState(null);
+function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, showSnackbar, onFinished, deployment, onDeploymentChange }) {
   const [polling, setPolling] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
@@ -219,66 +217,19 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   const showPanel = Boolean(deployment) && (inProgress || feedbackVisible);
   const canCancel = CLIENTFLOW_DEPLOYMENT_CANCELLABLE_STATES.has(state);
 
-  const refreshStatus = React.useCallback(async () => {
-    if (!clientId) return null;
-    try {
-      const rows = await getClientflowDeployments(clientId);
-      const latest = Array.isArray(rows) && rows.length ? rows[0] : null;
-      setDeployment(latest);
-      const latestState = normalizeClientflowDeploymentState(latest?.state);
-      if (CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(latestState)) {
-        setFeedbackVisible(true);
-        setPolling(true);
-      }
-      return latest;
-    } catch {
-      return null;
+  React.useEffect(() => {
+    const latestState = normalizeClientflowDeploymentState(deployment?.state);
+    if (CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(latestState)) {
+      setFeedbackVisible(true);
+      setPolling(true);
+      return;
     }
-  }, [clientId]);
-
-  React.useEffect(() => {
-    let active = true;
-    getClientflowReleases()
-      .then((catalog) => {
-        if (!active) return;
-        setReleaseCatalog(catalog);
-        setSelectedVersion("latest");
-      })
-      .catch((errorValue) => {
-        if (active) showSnackbar?.({ message: errorValue?.message || "Kunne ikke hente ClientFlow-versioner", severity: "error" });
-      });
-    return () => { active = false; };
-  }, [showSnackbar]);
-
-  React.useEffect(() => {
-    refreshStatus();
-  }, [refreshStatus]);
-
-  React.useEffect(() => {
-    if (!polling || !clientId) return undefined;
-    let alive = true;
-    let inFlight = false;
-    const pollDeployment = async () => {
-      if (!alive || inFlight) return;
-      inFlight = true;
-      try {
-        const latest = await refreshStatus();
-        const latestState = normalizeClientflowDeploymentState(latest?.state);
-        if (alive && !CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(latestState)) {
-          setFeedbackVisible(true);
-          setPolling(false);
-          onFinished?.();
-        }
-      } finally {
-        inFlight = false;
-      }
-    };
-    const timer = window.setInterval(pollDeployment, 2500);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [polling, clientId, refreshStatus, onFinished]);
+    if (polling && CLIENTFLOW_DEPLOYMENT_TERMINAL_STATES.has(latestState)) {
+      setFeedbackVisible(true);
+      setPolling(false);
+      onFinished?.();
+    }
+  }, [deployment?.state, polling, onFinished]);
 
   React.useEffect(() => {
     if (!feedbackVisible || inProgress || starting || cancelling || !finished) return undefined;
@@ -296,7 +247,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
         confirmDowngrade,
         reason,
       });
-      setDeployment(created);
+      onDeploymentChange?.(created || null);
       setPolling(CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(normalizeClientflowDeploymentState(created?.state)));
       showSnackbar?.({ message: `ClientFlow-deployment til v${created?.target_version || resolvedSelectedVersion} er autoriseret`, severity: "success" });
     } catch (err) {
@@ -311,7 +262,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
     setCancelling(true);
     try {
       const cancelled = await cancelClientflowDeployment(deployment.id);
-      setDeployment(cancelled);
+      onDeploymentChange?.(cancelled || null);
       setPolling(false);
       setFeedbackVisible(true);
       showSnackbar?.({ message: "ClientFlow-deployment annulleret", severity: "info" });
@@ -790,59 +741,39 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) 
     }
   }, [client, polling, sawBusyState]);
 
+  // The parent /chrome-status hot poll already carries every Ubuntu field.
+  // React to those prop changes directly instead of starting a second full-
+  // client DB poll while an update is running.
   React.useEffect(() => {
-    if (!polling || typeof onStarted !== "function") return undefined;
+    if (!polling || inProgress || !sawBusyState) return;
+    const terminalPhase = ["success", "up_to_date", "error"].includes(phase) ? phase : "success";
+    setLocalStatus((prev) => ({
+      ...prev,
+      phase: terminalPhase,
+      finishedAt: prev.finishedAt || new Date().toISOString(),
+    }));
+    setFeedbackVisible(true);
+    setPolling(false);
+    setSawBusyState(false);
+  }, [polling, inProgress, sawBusyState, phase]);
 
-    let alive = true;
-    let inFlight = false;
-    const pollUbuntuUpdate = async () => {
-      if (!alive || inFlight) return;
-      inFlight = true;
-      try {
-        try {
-          await onStarted({ optimistic: false });
-        } catch {
-          // Ignorer refresh-fejl mens vi venter på klientstatus.
-        }
-
-        if (!alive) return;
-        const startedAtMs = requestStartedAtRef.current ? new Date(requestStartedAtRef.current).getTime() : Date.now();
-        const waitedMs = Date.now() - startedAtMs;
-
-        if (!inProgress && sawBusyState) {
-          const terminalPhase = ["success", "up_to_date", "error"].includes(phase) ? phase : "success";
-          setLocalStatus((prev) => ({
-            ...prev,
-            phase: terminalPhase,
-            finishedAt: prev.finishedAt || new Date().toISOString(),
-          }));
-          setFeedbackVisible(true);
-          setPolling(false);
-          setSawBusyState(false);
-          return;
-        }
-
-        if (!inProgress && !sawBusyState && waitedMs > UBUNTU_REQUEST_WAIT_TIMEOUT_MS) {
-          setLocalStatus((prev) => ({
-            ...prev,
-            phase: "error",
-            error: "Ubuntu-opdateringen svarede ikke inden for timeout. Brug remote terminal eller reset Ubuntu-update-status.",
-            finishedAt: new Date().toISOString(),
-          }));
-          setFeedbackVisible(true);
-          setPolling(false);
-        }
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    const timer = window.setInterval(pollUbuntuUpdate, UBUNTU_POLL_MS);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [polling, inProgress, sawBusyState, phase, onStarted]);
+  React.useEffect(() => {
+    if (!polling || inProgress || sawBusyState || !requestStartedAtRef.current) return undefined;
+    const startedAtMs = new Date(requestStartedAtRef.current).getTime();
+    const elapsed = Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0;
+    const remaining = Math.max(0, UBUNTU_REQUEST_WAIT_TIMEOUT_MS - elapsed);
+    const timer = window.setTimeout(() => {
+      setLocalStatus((prev) => ({
+        ...prev,
+        phase: "error",
+        error: "Ubuntu-opdateringen svarede ikke inden for timeout. Brug remote terminal eller reset Ubuntu-update-status.",
+        finishedAt: new Date().toISOString(),
+      }));
+      setFeedbackVisible(true);
+      setPolling(false);
+    }, remaining);
+    return () => window.clearTimeout(timer);
+  }, [polling, inProgress, sawBusyState]);
 
   React.useEffect(() => {
     if (!feedbackVisible || inProgress || starting || polling) return undefined;
@@ -1711,7 +1642,7 @@ function ScheduleStrip({ markedDays, onOpenCalendar, calendarLoading, clientId, 
   );
 }
 
-function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onUbuntuUpdateStarted, onDiagnosticsRefresh }) {
+function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onUbuntuUpdateStarted, onDiagnosticsRefresh, clientflowDeployment, onClientflowDeploymentChange }) {
   return (
     <Grid container spacing={1.75}>
       <Grid
@@ -1751,6 +1682,8 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
               pendingOsUpdate={client?.pending_os_update}
               showSnackbar={showSnackbar}
               onFinished={onDiagnosticsRefresh}
+              deployment={clientflowDeployment}
+              onDeploymentChange={onClientflowDeploymentChange}
             />
             <UbuntuUpdateControl
               client={client}
@@ -1869,30 +1802,9 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     return next;
   }, [client?.id]);
 
-  React.useEffect(() => {
-    const status = normalizeLocalManagementStatus(localManagementSnapshot.status);
-    if (!client?.id || (status !== "pending" && status !== "running")) return undefined;
-    let cancelled = false;
-    let inFlight = false;
-    const pollLocalManagement = async () => {
-      if (cancelled || inFlight) return;
-      inFlight = true;
-      try {
-        const next = await apiGetClientLocalManagement(client.id);
-        if (!cancelled) setLocalManagementSnapshot(pickLocalManagementFields(next));
-      } catch {
-        // Silent polling-fejl må ikke støje i UI. Manuel Opdater kan stadig bruges.
-      } finally {
-        inFlight = false;
-      }
-    };
-    const timer = window.setInterval(pollLocalManagement, 2000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [client?.id, localManagementSnapshot.status]);
-
+  // Local-management lifecycle now arrives on the shared /chrome-status hot
+  // read. The manual refresh endpoint remains available, but there is no
+  // second 2-second DB polling loop while a local operation is active.
 
   const rawFormDirty = React.useMemo(() => (
     form.name !== initialForm.name ||
@@ -3250,6 +3162,8 @@ export default function ClientDetailsInfoSection({
   onDiagnosticsRefresh,
   onConfigSaved,
   handleClientAction,
+  clientflowDeployment,
+  onClientflowDeploymentChange,
 }) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
@@ -3390,6 +3304,8 @@ export default function ClientDetailsInfoSection({
           showSnackbar={showSnackbar}
           onUbuntuUpdateStarted={onUbuntuUpdateStarted}
           onDiagnosticsRefresh={onDiagnosticsRefresh}
+          clientflowDeployment={clientflowDeployment}
+          onClientflowDeploymentChange={onClientflowDeploymentChange}
         />
       )}
 

@@ -308,6 +308,8 @@ def test_chrome_status_projection_query_count_is_constant(seed_count: int) -> No
             assert payload["browser_requested"] is True
             assert payload["pending_reboot"] is True
             assert payload["pending_os_update"] is False
+            assert payload["local_management_status"] == "ready"
+            assert payload["local_management_message"] == "Ingen lokal klienthandling i gang"
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
 

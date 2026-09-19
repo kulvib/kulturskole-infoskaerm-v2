@@ -23,9 +23,11 @@ const ClientDetailsLivestreamSection = lazy(() => import("./ClientDetailsLivestr
 const ClientCalendarDialog = lazy(() => import("../calendarpage/ClientCalendarDialog"));
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import { isPageVisible } from "../../utils/pageVisibility";
+import { useAuth } from "../../auth/AuthProvider";
 
 import {
   getChromeStatus,
+  getClientflowDeployments,
   clientAction,
   openRemoteDesktop,
 } from "../../api";
@@ -88,6 +90,10 @@ import {
 
 const CHROME_STATUS_POLL_MS = 1000;
 const ACTION_POLL_MS        = 1500;
+const CLIENTFLOW_DEPLOYMENT_POLL_MS = 2500;
+const CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES = new Set([
+  "authorized", "downloading", "verified", "staged", "activating", "health_check", "rolling_back",
+]);
 
 function SectionLoadingFallback({ label }) {
   return (
@@ -279,6 +285,17 @@ const UPDATE_LIVE_FIELDS = [
   "ubuntu_update_progress",
   "ubuntu_update_package_count",
   "ubuntu_update_reboot_required",
+  // Local-management is projected by the same System batch that powers the
+  // hot read; carrying it here removes the separate 2-second DB poll.
+  "local_management_action",
+  "local_management_request_id",
+  "local_management_desired_hostname",
+  "local_management_status",
+  "local_management_message",
+  "local_management_requested_at",
+  "local_management_started_at",
+  "local_management_finished_at",
+  "local_management_error",
 ];
 
 function pickLiveFields(data, fields) {
@@ -865,6 +882,8 @@ export default function ClientDetailsPage({
   const theme    = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isSuperadmin = user?.role === "superadmin";
 
   // --- Lokal snackbar (fallback) ---
   const [snackbar, setSnackbar] = useState({
@@ -938,6 +957,59 @@ export default function ClientDetailsPage({
   const [liveUpdateFields, setLiveUpdateFields] = useState(() =>
     pickUpdateFields(client)
   );
+  // ClientFlow deployment state has one owner at the common parent. Both the
+  // Actions and Software controls consume the same snapshot, so they never
+  // poll the deployment table independently. Inactive state is revalidated on
+  // mount/focus only; an active deployment gets one bounded 2.5-second poll.
+  const [clientflowDeployment, setClientflowDeployment] = useState(null);
+  const deploymentRefreshInFlightRef = useRef(false);
+
+  const refreshClientflowDeployment = useCallback(async () => {
+    if (!client?.id || !isSuperadmin || deploymentRefreshInFlightRef.current) return null;
+    deploymentRefreshInFlightRef.current = true;
+    try {
+      const rows = await getClientflowDeployments(client.id, { limit: 1 });
+      const latest = Array.isArray(rows) && rows.length ? rows[0] : null;
+      setClientflowDeployment(latest);
+      return latest;
+    } catch {
+      // A transient read failure must not fabricate "no active deployment".
+      // Keep the last known snapshot; backend action endpoints still enforce
+      // the durable no-concurrent-deployment invariant.
+      return null;
+    } finally {
+      deploymentRefreshInFlightRef.current = false;
+    }
+  }, [client?.id, isSuperadmin]);
+
+  useEffect(() => {
+    if (!client?.id || !isSuperadmin) {
+      setClientflowDeployment(null);
+      return undefined;
+    }
+    // A client navigation must never carry another client's deployment lock.
+    setClientflowDeployment(null);
+    refreshClientflowDeployment();
+
+    const refreshWhenVisible = () => {
+      if (isPageVisible()) refreshClientflowDeployment();
+    };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [client?.id, isSuperadmin, refreshClientflowDeployment]);
+
+  const clientflowDeploymentState = String(clientflowDeployment?.state || "").trim().toLowerCase();
+  const clientflowDeploymentActive = CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(clientflowDeploymentState);
+
+  useEffect(() => {
+    if (!client?.id || !isSuperadmin || !clientflowDeploymentActive) return undefined;
+    const timer = window.setInterval(refreshClientflowDeployment, CLIENTFLOW_DEPLOYMENT_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [client?.id, isSuperadmin, clientflowDeploymentActive, refreshClientflowDeployment]);
   // Action-confirmation genbruger den allerede eksisterende 1-sekunds hot poll
   // i stedet for at starte en ekstra full-client DB poll hvert 1,5 sekund.
   // receivedAt=0 betyder, at initial-snapshot aldrig må bekræfte en ny handling.
@@ -1525,6 +1597,7 @@ export default function ClientDetailsPage({
               ubuntuUpdateRebootRequired={liveClient?.ubuntu_update_reboot_required}
               livestreamStatus={liveClient?.livestream_status}
               livestreamProcessStatus={liveClient?.livestream_process_status}
+              clientflowDeployment={clientflowDeployment}
               showSnackbar={showSnackbar}
               compact
               controlRoom
@@ -1580,6 +1653,8 @@ export default function ClientDetailsPage({
               onDiagnosticsRefresh={silentRefresh}
               onConfigSaved={refreshAfterConfigSaved}
               handleClientAction={handleClientAction}
+              clientflowDeployment={clientflowDeployment}
+              onClientflowDeploymentChange={setClientflowDeployment}
               />
             </Suspense>
           </Box>

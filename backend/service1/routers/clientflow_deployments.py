@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field as PydanticField
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
@@ -323,15 +323,19 @@ def create_clientflow_deployment(
 @router.get("/clients/{client_id}/clientflow-deployments", response_model=list[ClientFlowDeploymentRead])
 def list_clientflow_deployments(
     client_id: int,
+    limit: int | None = Query(default=None, ge=1, le=100),
     session: Session = Depends(get_session),
     _user=Depends(get_current_superadmin_user),
 ):
     _client_or_404(session, client_id)
-    return session.exec(
+    statement = (
         select(ClientFlowDeployment)
         .where(ClientFlowDeployment.client_id == client_id)
         .order_by(ClientFlowDeployment.requested_at.desc())
-    ).all()
+    )
+    if limit is not None:
+        statement = statement.limit(limit)
+    return session.exec(statement).all()
 
 
 @router.get("/clients/{client_id}/clientflow-deployments/active", response_model=Optional[ClientFlowDeploymentRead])

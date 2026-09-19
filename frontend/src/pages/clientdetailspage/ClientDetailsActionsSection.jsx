@@ -27,9 +27,7 @@ import TerminalIcon from "@mui/icons-material/Terminal";
 import DesktopWindowsIcon from "@mui/icons-material/DesktopWindows";
 import { useTheme } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
-import { getActiveClientflowDeployment } from "../../api";
 import { getBrowserProcessActionDisabledInfo } from "./displayActionPolicy.mjs";
-import { isPageVisible } from "../../utils/pageVisibility";
 
 /*
   DetailsActionsSection.jsx
@@ -410,6 +408,7 @@ export default function ClientDetailsActionsSection({
   ubuntuUpdateRebootRequired = null,
   livestreamStatus = null,
   livestreamProcessStatus = null,
+  clientflowDeployment = null,
   compact = false,
   controlRoom = false,
   hideHeader = false,
@@ -424,35 +423,6 @@ export default function ClientDetailsActionsSection({
   const isSuperadmin = role === "superadmin";
   const isViewer = role === "viewer";
   const canControlClient = ["superadmin", "admin", "bruger"].includes(role);
-
-  const [clientflowDeployment, setClientflowDeployment] = useState(null);
-
-  useEffect(() => {
-    if (!clientId || !isSuperadmin) {
-      setClientflowDeployment(null);
-      return undefined;
-    }
-    let active = true;
-    let inFlight = false;
-    const refreshDeployment = async () => {
-      if (!active || inFlight || !isPageVisible()) return;
-      inFlight = true;
-      try {
-        const current = await getActiveClientflowDeployment(clientId);
-        if (active) setClientflowDeployment(current || null);
-      } catch {
-        if (active) setClientflowDeployment(null);
-      } finally {
-        inFlight = false;
-      }
-    };
-    refreshDeployment();
-    const timer = window.setInterval(refreshDeployment, 2500);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [clientId, isSuperadmin]);
 
   const [actionLoading, setActionLoading] = useState({});
   const [shutdownDialogOpen, setShutdownDialogOpen] = useState(false);
