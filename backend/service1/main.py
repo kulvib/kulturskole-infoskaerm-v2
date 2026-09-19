@@ -46,7 +46,12 @@ from .auth import (
     principal_is_client,
     verify_ws_token,
 )
-from .db import engine
+from .db import (
+    engine,
+    begin_database_request_metrics,
+    reset_database_request_metrics,
+    database_runtime_topology,
+)
 from .models import Client, RefreshToken, User
 from .branding import PRODUCT_NAME
 from .schema_readiness import check_schema_readiness
@@ -260,6 +265,21 @@ async def refresh_token_cleanup_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    db_topology = database_runtime_topology()
+    logger.info(
+        "database_runtime_topology provider=%s server_side_pooling=%s pool_class=%s pool_size=%s max_overflow=%s",
+        db_topology.get("provider"),
+        db_topology.get("server_side_pooling"),
+        db_topology.get("pool_class"),
+        db_topology.get("pool_size"),
+        db_topology.get("max_overflow"),
+    )
+    if db_topology.get("provider") == "neon" and not db_topology.get("server_side_pooling"):
+        # Warn only: deployment must not be bricked by an unverified secret.
+        # /health/db-pool gives superadmin the same safe proof, after which the
+        # Render secret can be changed deliberately to Neon's pooled endpoint.
+        logger.warning("database_neon_direct_endpoint_detected server_side_pooling=false")
+
     await asyncio.to_thread(cleanup_expired_refresh_tokens_once)
     await asyncio.to_thread(maintain_seasons_once)
     cleanup_task = asyncio.create_task(refresh_token_cleanup_loop())
@@ -418,6 +438,7 @@ async def request_observability_middleware(request: Request, call_next):
     """
     started_at = perf_counter()
     request_id, token = bind_request_id(request)
+    db_metrics, db_metrics_token = begin_database_request_metrics()
     try:
         try:
             response = await call_next(request)
@@ -454,9 +475,19 @@ async def request_observability_middleware(request: Request, call_next):
         response = _apply_cors_headers(request, response)
         if request.url.path.startswith("/api/clients"):
             duration_ms = max(0.0, (perf_counter() - started_at) * 1000.0)
-            response.headers.setdefault("Server-Timing", f"app;dur={duration_ms:.2f}")
+            # Dataminimeret request-observability: ingen querytekst, parametre,
+            # databasehost eller credentials. ``db`` er samlet cursor-tid;
+            # beskrivelsen gør SQL-roundtrips/checkouts synlige i DevTools.
+            server_timing = (
+                f"app;dur={duration_ms:.2f}, "
+                f"db;dur={db_metrics.duration_ms:.2f};"
+                f'desc="{db_metrics.statement_count} statements, '
+                f'{db_metrics.checkout_count} checkouts"'
+            )
+            response.headers.setdefault("Server-Timing", server_timing)
         return add_request_id_header(response, request_id)
     finally:
+        reset_database_request_metrics(db_metrics_token)
         reset_request_id(token)
 
 
@@ -673,6 +704,8 @@ def health_db_pool(
         return {
             "status": "ok",
             "pool": engine.pool.status(),
+            # Sikker klassifikation uden hostname, URL, brugernavn eller credentials.
+            "topology": database_runtime_topology(),
         }
     except Exception as exc:
         logger.warning(

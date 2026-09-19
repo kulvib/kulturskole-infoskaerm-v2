@@ -28,7 +28,6 @@ import {
   getChromeStatus,
   clientAction,
   openRemoteDesktop,
-  getClient,
 } from "../../api";
 
 /*
@@ -939,6 +938,16 @@ export default function ClientDetailsPage({
   const [liveUpdateFields, setLiveUpdateFields] = useState(() =>
     pickUpdateFields(client)
   );
+  // Action-confirmation genbruger den allerede eksisterende 1-sekunds hot poll
+  // i stedet for at starte en ekstra full-client DB poll hvert 1,5 sekund.
+  // receivedAt=0 betyder, at initial-snapshot aldrig må bekræfte en ny handling.
+  const hotPollObservationRef = useRef({
+    receivedAt: 0,
+    pendingChromeAction: String(client?.pending_chrome_action ?? "none").toLowerCase(),
+    pendingReboot: client?.pending_reboot === true,
+    pendingShutdown: client?.pending_shutdown === true,
+    state: client?.state ?? null,
+  });
 
   // v7.1.34: Livestream-status skal følge den hurtige /chrome-status polling.
   // Ellers kan Start kiosk være låst af et stale initialt client-snapshot,
@@ -1005,6 +1014,13 @@ export default function ClientDetailsPage({
     setLiveDisplayResolution(pickDisplayResolutionFields(client));
     setLiveNetworkStatus(pickNetworkFields(client));
     setLiveUpdateFields(pickUpdateFields(client));
+    hotPollObservationRef.current = {
+      receivedAt: 0,
+      pendingChromeAction: String(client?.pending_chrome_action ?? "none").toLowerCase(),
+      pendingReboot: client?.pending_reboot === true,
+      pendingShutdown: client?.pending_shutdown === true,
+      state: client?.state ?? null,
+    };
     if (client?.livestream_status !== undefined) setLiveLivestreamStatus(client.livestream_status ?? null);
     if (client?.livestream_process_status !== undefined) setLiveLivestreamProcessStatus(client.livestream_process_status ?? null);
     if (client?.livestream_desired_state !== undefined) setLiveLivestreamDesiredState(client.livestream_desired_state ?? "stopped");
@@ -1042,8 +1058,17 @@ export default function ClientDetailsPage({
           continue;
         }
         try {
-          const data = await getChromeStatus(client.id, { fallbackToClient: true });
+          const data = await getChromeStatus(client.id);
           if (cancelled || !mountedRef.current) break;
+
+          const pendingChromeAction = String(data?.pending_chrome_action ?? "none").toLowerCase();
+          hotPollObservationRef.current = {
+            receivedAt: Date.now(),
+            pendingChromeAction: pendingChromeAction || "none",
+            pendingReboot: data?.pending_reboot === true,
+            pendingShutdown: data?.pending_shutdown === true,
+            state: data?.state ?? null,
+          };
 
           if (data?.presence) setLivePresence(data.presence);
           if (data?.chrome_status != null) setLiveChromeStatus(data.chrome_status);
@@ -1058,8 +1083,7 @@ export default function ClientDetailsPage({
             polledChromeRunningHasValue = true;
           }
           if (data?.pending_chrome_action != null) {
-            const pca = String(data.pending_chrome_action || "none").toLowerCase();
-            setLocalPendingAction(pca || "none");
+            setLocalPendingAction(pendingChromeAction || "none");
           }
           if (data?.state) setLocalClientState(data.state);
           const nextDisplayResolution = pickDisplayResolutionFields(data);
@@ -1179,27 +1203,24 @@ export default function ClientDetailsPage({
         await new Promise((res) => setTimeout(res, ACTION_POLL_MS));
         if (actionPollStopRef.current || !mountedRef.current) break;
 
+        const observation = hotPollObservationRef.current;
+        // En observation fra før action-requesten må aldrig frigive låsen.
+        // Hot poll'en er den eneste DB-backed observation under actionen.
+        if (!observation || observation.receivedAt < startTime) continue;
+
+        if (observation.state) setLocalClientState(observation.state);
+
         let actionClear = false;
-        try {
-          const data = await getClient(client.id);
-          if (!mountedRef.current) break;
-
-          if (data?.state) setLocalClientState(data.state);
-
-          if (systemPowerAction) {
-            const pending = normalizedAction === "shutdown"
-              ? data?.pending_shutdown === true
-              : data?.pending_reboot === true;
-            setLocalPendingAction("none");
-            actionClear = !pending;
-          } else {
-            const pca = String(data?.pending_chrome_action ?? "").toLowerCase();
-            setLocalPendingAction(pca || "none");
-            actionClear = !pca || pca === "none";
-          }
-        } catch {
-          // Fortsæt polling ved fejl. Reboot kan kort afbryde HTTP mens
-          // maskinen går ned og Status-domain endnu ikke har meldt ny boot.
+        if (systemPowerAction) {
+          const pending = normalizedAction === "shutdown"
+            ? observation.pendingShutdown === true
+            : observation.pendingReboot === true;
+          setLocalPendingAction("none");
+          actionClear = !pending;
+        } else {
+          const pca = String(observation.pendingChromeAction ?? "none").toLowerCase();
+          setLocalPendingAction(pca || "none");
+          actionClear = !pca || pca === "none";
         }
 
         if (!actionClear) continue;

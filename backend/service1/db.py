@@ -1,9 +1,18 @@
-from sqlmodel import create_engine, Session
-from sqlalchemy.pool import StaticPool
+from __future__ import annotations
+
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
 import os
+from time import perf_counter
 import sys
 import warnings
+import weakref
+
 from dotenv import load_dotenv
+from sqlalchemy import event
+from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, create_engine
 
 load_dotenv()
 
@@ -98,6 +107,11 @@ _echo = os.getenv("ENVIRONMENT", "production") != "production"
 # Det betyder højst 7 samtidige DB-forbindelser fra denne backend-instans.
 # Det begrænser ikke antallet af klienter; det begrænser kun samtidige DB-kald.
 # ---------------------------------------------------------------------------
+DB_POOL_SIZE = _env_int("DB_POOL_SIZE", 5, min_value=1)
+DB_MAX_OVERFLOW = _env_int("DB_MAX_OVERFLOW", 2, min_value=0)
+DB_POOL_TIMEOUT = _env_int("DB_POOL_TIMEOUT", 20, min_value=1)
+DB_POOL_RECYCLE = _env_int("DB_POOL_RECYCLE", 300, min_value=30)
+
 engine_kwargs: dict = {
     "echo": _echo,
 }
@@ -109,10 +123,10 @@ if IS_SQLITE:
         engine_kwargs["poolclass"] = StaticPool
 else:
     engine_kwargs.update({
-        "pool_size": _env_int("DB_POOL_SIZE", 5, min_value=1),
-        "max_overflow": _env_int("DB_MAX_OVERFLOW", 2, min_value=0),
-        "pool_timeout": _env_int("DB_POOL_TIMEOUT", 20, min_value=1),
-        "pool_recycle": _env_int("DB_POOL_RECYCLE", 300, min_value=30),
+        "pool_size": DB_POOL_SIZE,
+        "max_overflow": DB_MAX_OVERFLOW,
+        "pool_timeout": DB_POOL_TIMEOUT,
+        "pool_recycle": DB_POOL_RECYCLE,
         # Tjekker forbindelsen før genbrug, så døde Neon/Render connections ikke giver fejl.
         "pool_pre_ping": True,
         # LIFO genbruger varme forbindelser og lader ældre forbindelser lukke/recycles.
@@ -121,6 +135,106 @@ else:
 
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 
+
+@dataclass
+class DatabaseRequestMetrics:
+    """Dataminimerede DB-målinger for én HTTP-request.
+
+    Ingen SQL-tekst, parametre, credentials eller databasehost gemmes. Objektet er
+    mutabelt med vilje: AnyIO kopierer ContextVar-konteksten til sync endpoint-
+    workers, og begge contexts kan dermed opdatere/læse det samme metrics-objekt.
+    """
+
+    statement_count: int = 0
+    select_count: int = 0
+    checkout_count: int = 0
+    duration_ms: float = 0.0
+
+
+_REQUEST_DB_METRICS: ContextVar[DatabaseRequestMetrics | None] = ContextVar(
+    "clientflow_request_db_metrics",
+    default=None,
+)
+_INSTRUMENTED_ENGINES: weakref.WeakSet[Engine] = weakref.WeakSet()
+
+
+def begin_database_request_metrics() -> tuple[DatabaseRequestMetrics, Token]:
+    metrics = DatabaseRequestMetrics()
+    return metrics, _REQUEST_DB_METRICS.set(metrics)
+
+
+def reset_database_request_metrics(token: Token) -> None:
+    _REQUEST_DB_METRICS.reset(token)
+
+
+def _metrics_before_cursor_execute(_conn, _cursor, statement, _parameters, context, _executemany) -> None:
+    metrics = _REQUEST_DB_METRICS.get()
+    if metrics is None:
+        return
+    metrics.statement_count += 1
+    if str(statement).lstrip().upper().startswith("SELECT"):
+        metrics.select_count += 1
+    # ExecutionContext er statement-lokalt og undgår global/thread-local timing-state.
+    context._clientflow_db_started_at = perf_counter()
+
+
+def _metrics_after_cursor_execute(_conn, _cursor, _statement, _parameters, context, _executemany) -> None:
+    metrics = _REQUEST_DB_METRICS.get()
+    if metrics is None:
+        return
+    started_at = getattr(context, "_clientflow_db_started_at", None)
+    if started_at is not None:
+        metrics.duration_ms += max(0.0, (perf_counter() - started_at) * 1000.0)
+
+
+def _metrics_checkout(_dbapi_connection, _connection_record, _connection_proxy) -> None:
+    metrics = _REQUEST_DB_METRICS.get()
+    if metrics is not None:
+        metrics.checkout_count += 1
+
+
+def install_database_request_metrics(target_engine: Engine) -> None:
+    """Installér letvægts-måling én gang pr. SQLAlchemy Engine."""
+    if target_engine in _INSTRUMENTED_ENGINES:
+        return
+    event.listen(target_engine, "before_cursor_execute", _metrics_before_cursor_execute)
+    event.listen(target_engine, "after_cursor_execute", _metrics_after_cursor_execute)
+    event.listen(target_engine, "checkout", _metrics_checkout)
+    _INSTRUMENTED_ENGINES.add(target_engine)
+
+
+def classify_database_url(url: str) -> dict[str, object]:
+    """Returnér kun ikke-hemmelige topologi-egenskaber for en DB-URL."""
+    parsed = make_url(_normalize_database_url(url))
+    host = str(parsed.host or "").strip().lower()
+    neon = host.endswith(".neon.tech")
+    # Neon markerer PgBouncer endpointet med ``-pooler`` umiddelbart før regionen.
+    neon_pooler = neon and "-pooler." in host
+    return {
+        "backend": parsed.get_backend_name(),
+        "driver": parsed.get_driver_name(),
+        "provider": "neon" if neon else "other",
+        "server_side_pooling": bool(neon_pooler),
+    }
+
+
+def database_runtime_topology() -> dict[str, object]:
+    """Sikker runtime-topologi til superadmin-diagnostik; ingen host/URL/secrets."""
+    topology = classify_database_url(DATABASE_URL)
+    topology.update({
+        "pool_class": type(engine.pool).__name__,
+        "application_pooling": not IS_SQLITE,
+        "pool_size": None if IS_SQLITE else DB_POOL_SIZE,
+        "max_overflow": None if IS_SQLITE else DB_MAX_OVERFLOW,
+        "pool_timeout_seconds": None if IS_SQLITE else DB_POOL_TIMEOUT,
+        "pool_recycle_seconds": None if IS_SQLITE else DB_POOL_RECYCLE,
+        "pool_pre_ping": False if IS_SQLITE else True,
+        "pool_use_lifo": False if IS_SQLITE else True,
+    })
+    return topology
+
+
+install_database_request_metrics(engine)
 
 
 def get_session():
