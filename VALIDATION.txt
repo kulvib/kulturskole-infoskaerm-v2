@@ -1,79 +1,61 @@
-ClientFlow 1.3.22 / sequence 1223 runtime-catalog promotion candidate validation
-Date: 2026-09-18
+ClientFlow 1.3.23 / sequence 1224 source-freeze validation
+Date: 2026-09-19
 
-Exact source authority:
-- source-freeze commit: 957f5d7ab7a3c7fc835565c041533df30834dd78
-- canonical source-freeze push CI: #709 / run 35340069332 / completed success
-- source identity: 1.3.22 / 1223
-- pre-promotion runtime catalog: 1.3.21 / 1222
+Canonical pre-freeze baseline:
+- main commit: a969a7f046f748243e539f208d3c5e69c5585e72
+- canonical push CI: #722 / run 35429313779 / completed success
+- baseline source identity: 1.3.22 / 1223
+- published runtime catalog: 1.3.22 / 1223
+- immutable 1.3.22/1223 bundle remains unchanged and must not be republished in place
 
-Exact release-build authority:
-- canonical release-build run: 35340730441 / completed success
-- candidate SHA256: bd9613043d5e770c8b18c53d7550fa577d351dbb5fb47ea50bf7850350c06261
-- installer SHA256: 5e9cf308dd54f79eeb2c1feec4c37935f1b8f4d8f8ee0d74ea7af16905c732e4
-- payload SHA256: b71b054d5a8d4b1a13f7cd41c6291288589a75653579e07687331e352f22d09f
-PASS: independent A/B candidates were byte-identical.
-PASS: Ubuntu Desktop 26.04 executable-candidate gate passed.
+Merged lifecycle closures now frozen into 1.3.23/1224:
+PASS: 01 establishes clientflow-kiosk/cfadmin and office-side cfadmin password.
+PASS: post-01 shipping state autologins as clientflow-kiosk and exposes kiosk-owned 02.
+PASS: 02 uses temporary exact SHA-256-bound sudo -n activation with no arguments and no customer sudo prompt.
+PASS: all saved WiFi/Ethernet/GSM/CDMA/VPN/WireGuard profiles are scrubbed and rechecked before shipping reboot.
+PASS: canonical fresh install accepts pre-provisioned accounts only through validated schema-2 handoff state.
+PASS: operator terminal UX restores cable-first diagnostics and visible installation/download progress without exposing secrets.
+PASS: pending_manual_activation reboot exposes the existing legacy-layout GTK4 GUI in status-only pre-activation mode.
+PASS: Start/Stop kiosk remain disabled before approval; no administrator-switch action is exposed.
+PASS: clientflow.target and operational runtime domains remain inactive until backend approval.
+PASS: Livestream, Terminal and Remote Desktop implementation domains remain untouched by this freeze package.
 
-Exact approval authority:
-- manual approval run: 35341401418 / completed success
-- approval reference: clientflow-1.3.22-seq-1223-manual-approval-bd9613043d5e770c
-- approved bundle size: 223098880
-- approved bundle SHA256: ca8e3b0713ae3af8fec018083235409d662aac70e71eb5062cbbe60bc4aaa6d4
-PASS: approved manifest is deployable and binds exact source/candidate/installer authority.
+Staged source/build identity:
+- client/VERSION: 1.3.23
+- release_sequence: 1224
+- candidate release id: clientflow-1.3.23-seq-1224
+- minimum Ubuntu LTS: 26.04
+- architecture: amd64
+- runtime Python: 3.13.14
 
-Transport/publication:
-PASS: GitHub prerelease clientflow-1.3.22-1223-approved-transport used only as transport.
-PASS: exact approved asset size/SHA matched the approved trust anchor.
-PASS: immutable Render publication completed at:
-      /var/data/clientflow-release-artifacts/store/clientflow-1.3.22-seq-1223.tar
-PASS: independent store reread matched size 223098880 and SHA256
-      ca8e3b0713ae3af8fec018083235409d662aac70e71eb5062cbbe60bc4aaa6d4.
-PASS: stored manifest re-read proved release_id clientflow-1.3.22-seq-1223,
-      deployable=true, source commit 957f5d7ab7a3c7fc835565c041533df30834dd78,
-      candidate SHA256 bd9613043d5e770c8b18c53d7550fa577d351dbb5fb47ea50bf7850350c06261,
-      installer SHA256 5e9cf308dd54f79eeb2c1feec4c37935f1b8f4d8f8ee0d74ea7af16905c732e4,
-      and the exact approval reference above.
-PASS: catalog remained 1.3.21/1222 through the post-publication authority gate.
-
-Artifact-store retention:
-PASS: before cleanup, active catalog release 1.3.21/1222 was reverified exactly.
-PASS: zero active unexpired enrollment bindings referenced 1.3.18-1.3.20.
-PASS: zero non-terminal deployments referenced 1.3.18-1.3.20.
-PASS: unused immutable bundles 1.3.18/1219, 1.3.19/1220 and 1.3.20/1221 were removed.
-PASS: active 1.3.21/1222 remained exact after cleanup.
-PASS: 1.3.22/1223 was then published successfully; artifact filesystem remained healthy.
-
-Catalog promotion candidate:
+Catalog boundary retained:
 - catalog_sequence: 1223
 - latest_stable: 1.3.22
 - default_install_version: 1.3.22
 - selected release: clientflow-1.3.22-seq-1223
-- install modes: fresh_install, in_place_update
-- min_current_version: 1.3.11
-- requires_reboot: true
-- rollback_allowed: false
-PASS: source sequence and promoted catalog sequence are both 1223.
-PASS: catalog contains exactly one selectable release.
-PASS: artifact trust hashes are not duplicated as selector fields.
-PASS: promotion changes no ClientFlow runtime implementation bytes.
-PASS: Livestream, Terminal and Remote Desktop implementation domains are untouched.
+PASS: source sequence leads catalog sequence by exactly one.
+PASS: catalog is not promoted by this source-freeze change.
+PASS: canonical pre-freeze main CI #722 / run 35429313779 completed successfully.
 
-Promotion package validation:
-PASS: changed Python files compile successfully.
-PASS: promotion catalog JSON parses and exact selector assertions pass.
-PASS: changed-file manifest contains exactly the intended nine paths.
-PASS: SHA256SUMS.txt is refreshed for every changed canonical file and the two
-      new promotion records.
-NOTE: full canonical CI remains the final gate after this package is committed.
+Source hygiene retained:
+PASS: repo-overlay remains absent.
+PASS: nanoid remains patched at exactly 3.3.18 without GHSA-2v37-7h3g-55p8 waiver.
+PASS: SHA256SUMS.txt is refreshed against all listed canonical files.
 
-Next gates:
-PENDING: commit this promotion on its dedicated branch.
-PENDING: canonical GitHub CI must complete successfully for the promotion commit.
-PENDING: merge promotion to main and verify the exact deployed main commit.
-PENDING: verify running backend selects only 1.3.22/1223 and immutable store
-         still rereads SHA256 ca8e3b0713ae3af8fec018083235409d662aac70e71eb5062cbbe60bc4aaa6d4.
-PENDING: build and verify a new canonical USB from promoted main.
-PENDING: generate a new CF code after promotion.
-PENDING: restart clean Ubuntu Desktop 26.04 physical fresh-install acceptance
-         from the beginning and re-prove CF-1222-LAUNCHER-01 closure.
+Local validation:
+PASS: focused source/release/catalog identity regression set: 32 passed.
+PASS: complete scripts/tests suite: 243 passed.
+PASS: compileall for client/scripts and changed backend identity tests.
+PASS: deterministic USB builder is byte-identical across two builds; size 208021; SHA256 de9f6b1ab704b53933c5c266c494662fe3d0fbfeaa627300af53e82abeaeb937.
+NOTE: full backend/tests cannot be reproduced in this offline execution environment because locked runtime dependencies such as sqlmodel/passlib are not installed; canonical GitHub CI is the final backend gate.
+
+Post-merge release gates:
+PENDING: record exact 40-character source-freeze commit SHA after canonical push CI success.
+PENDING: build/verify deterministic sequence-1224 runtime-input transport.
+PENDING: dispatch canonical reproducible release build for exact source/runtime inputs.
+PENDING: require byte-identical candidate outputs and Ubuntu 26.04 executable-candidate PASS.
+PENDING: manually approve exact candidate.
+PENDING: immutably publish exact approved bytes and independently re-read size/SHA-256.
+PENDING: separate catalog promotion to 1.3.23/1224.
+PENDING: regenerate canonical USB from promoted main.
+PENDING: restart canonical clean Ubuntu 26.04 physical fresh-install acceptance from the beginning.

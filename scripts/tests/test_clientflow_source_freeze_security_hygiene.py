@@ -32,12 +32,12 @@ def test_nanoid_high_severity_advisory_is_fixed_without_waiver() -> None:
         assert "GHSA-2v37-7h3g-55p8" not in exception.get("advisories", [])
 
 
-def test_1322_1223_source_and_published_catalog_are_promoted_together() -> None:
-    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.22"
+def test_1323_1224_source_freeze_leads_published_catalog_by_one() -> None:
+    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.23"
     release_input = json.loads(
         (ROOT / "client" / "release" / "release-input.json").read_text(encoding="utf-8")
     )
-    assert release_input["release_sequence"] == 1223
+    assert release_input["release_sequence"] == 1224
 
     catalog = json.loads(
         (ROOT / "backend" / "service1" / "clientflow_release_catalog.json").read_text(
@@ -45,7 +45,7 @@ def test_1322_1223_source_and_published_catalog_are_promoted_together() -> None:
         )
     )
     assert catalog["catalog_sequence"] == 1223
-    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
     assert catalog["latest_stable"] == "1.3.22"
     assert catalog["default_install_version"] == "1.3.22"
     assert catalog["releases"][0]["release_id"] == "clientflow-1.3.22-seq-1223"
@@ -72,3 +72,6 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CLIENTFLOW_1.3.22_1223_SOURCE_FREEZE_CLOSURE.md" in seen
     assert "CLIENTFLOW_1.3.22_1223_CATALOG_PROMOTION.md" in seen
     assert "CHANGED_FILES_1322_1223_CATALOG_PROMOTION.txt" in seen
+    assert "CLIENTFLOW_1.3.23_1224_SOURCE_IDENTITY.md" in seen
+    assert "CLIENTFLOW_1.3.23_1224_SOURCE_FREEZE_CLOSURE.md" in seen
+    assert "CHANGED_FILES_1323_1224_SOURCE_FREEZE.txt" in seen

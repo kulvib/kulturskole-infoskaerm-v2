@@ -36,20 +36,21 @@ def _class_tuple(source: str, class_name: str, name: str):
     raise AssertionError(f"{class_name}.{name} not found")
 
 
-def test_source_1322_1223_matches_promoted_catalog_after_immutable_publication():
-    # CF-1222-LAUNCHER-01 is repaired in 1.3.22/1223. Promotion is permitted
-    # only after the exact approved bytes have been immutably published and
-    # independently re-read from the canonical backend artifact store.
-    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.22"
+def test_source_1323_1224_freeze_keeps_promoted_1322_1223_catalog_authority():
+    # The merged factory/customer handoff and pre-activation GUI closures are
+    # frozen into source identity 1.3.23/1224. Runtime selection must remain
+    # on the already approved, immutably published 1.3.22/1223 release until
+    # the exact 1.3.23/1224 bundle passes the separate release gates.
+    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.23"
     release_input = json.loads(_source(RELEASE_INPUT))
-    assert release_input["release_sequence"] == 1223
+    assert release_input["release_sequence"] == 1224
     assert release_input["minimum_ubuntu_lts"] == "26.04"
     assert release_input["architecture"] == "amd64"
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
     assert catalog["catalog_sequence"] == 1223
-    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
     assert catalog["latest_stable"] == "1.3.22"
     assert catalog["default_install_version"] == "1.3.22"
     selected = catalog["releases"][0]

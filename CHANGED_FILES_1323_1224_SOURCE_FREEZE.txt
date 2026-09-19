@@ -1,0 +1,10 @@
+CHANGED_FILES_1323_1224_SOURCE_FREEZE.txt
+CLIENTFLOW_1.3.23_1224_SOURCE_FREEZE_CLOSURE.md
+CLIENTFLOW_1.3.23_1224_SOURCE_IDENTITY.md
+SHA256SUMS.txt
+VALIDATION.txt
+backend/tests/test_clientflow_release_catalog_1212.py
+client/VERSION
+client/release/release-input.json
+scripts/tests/test_clientflow_physical_failure_fixes_1221.py
+scripts/tests/test_clientflow_source_freeze_security_hygiene.py
