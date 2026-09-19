@@ -15,7 +15,7 @@ test("detail hot poll transports canonical presence without a second presence in
 });
 
 test("ClientFlow deployment polling cannot overlap requests", () => {
-  assert.match(actions, /let inFlight = false;[\s\S]*if \(!active \|\| inFlight\) return;[\s\S]*finally \{[\s\S]*inFlight = false;/);
+  assert.match(actions, /let inFlight = false;[\s\S]*if \(!active \|\| inFlight \|\| !isPageVisible\(\)\) return;[\s\S]*finally \{[\s\S]*inFlight = false;/);
   assert.match(info, /const pollDeployment = async \(\) => \{[\s\S]*if \(!alive \|\| inFlight\) return;[\s\S]*finally \{[\s\S]*inFlight = false;/);
 });
 

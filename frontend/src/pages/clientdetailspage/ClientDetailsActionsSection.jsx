@@ -29,6 +29,7 @@ import { useTheme } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
 import { getActiveClientflowDeployment } from "../../api";
 import { getBrowserProcessActionDisabledInfo } from "./displayActionPolicy.mjs";
+import { isPageVisible } from "../../utils/pageVisibility";
 
 /*
   DetailsActionsSection.jsx
@@ -434,7 +435,7 @@ export default function ClientDetailsActionsSection({
     let active = true;
     let inFlight = false;
     const refreshDeployment = async () => {
-      if (!active || inFlight) return;
+      if (!active || inFlight || !isPageVisible()) return;
       inFlight = true;
       try {
         const current = await getActiveClientflowDeployment(clientId);

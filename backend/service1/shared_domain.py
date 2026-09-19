@@ -14,6 +14,7 @@ from typing import Any
 
 import jwt
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from .auth import SECRET_KEY, verify_password
@@ -61,16 +62,19 @@ def authenticate_shared_credential(
 ) -> ClientDomainCredential:
     _validate_domain(domain)
     credential_id = _validate_credential_id(credential_id)
-    credential = session.get(ClientDomainCredential, credential_id)
-    client = session.get(Client, client_id)
-    if (
-        credential is None
-        or client is None
-        or str(getattr(client, "status", "") or "").lower() != "approved"
-        or credential.client_id != client_id
-        or credential.domain != domain
-        or credential.revoked_at is not None
-    ):
+    credential = session.exec(
+        select(ClientDomainCredential)
+        .join(Client, Client.id == ClientDomainCredential.client_id)
+        .where(
+            ClientDomainCredential.id == credential_id,
+            ClientDomainCredential.client_id == client_id,
+            ClientDomainCredential.domain == domain,
+            ClientDomainCredential.revoked_at.is_(None),
+            Client.id == client_id,
+            func.lower(Client.status) == "approved",
+        )
+    ).first()
+    if credential is None:
         raise HTTPException(status_code=401, detail="Ugyldigt credential")
     try:
         verified = verify_password(client_secret, credential.secret_hash)
@@ -177,18 +181,21 @@ def require_shared_agent_token(
     ):
         raise HTTPException(status_code=403, detail="Token tilhører et andet domæne eller klient")
 
-    credential = session.get(ClientDomainCredential, credential_id)
-    client = session.get(Client, client_id)
-    if (
-        credential is None
-        or client is None
-        or str(getattr(client, "status", "") or "").lower() != "approved"
-        or getattr(client, "deleted_at", None) is not None
-        or credential.client_id != client_id
-        or credential.domain != domain
-        or credential.revoked_at is not None
-        or credential.token_version != int(claims["token_version"])
-    ):
+    credential = session.exec(
+        select(ClientDomainCredential)
+        .join(Client, Client.id == ClientDomainCredential.client_id)
+        .where(
+            ClientDomainCredential.id == credential_id,
+            ClientDomainCredential.client_id == client_id,
+            ClientDomainCredential.domain == domain,
+            ClientDomainCredential.revoked_at.is_(None),
+            ClientDomainCredential.token_version == int(claims["token_version"]),
+            Client.id == client_id,
+            func.lower(Client.status) == "approved",
+            Client.deleted_at.is_(None),
+        )
+    ).first()
+    if credential is None:
         raise HTTPException(status_code=401, detail="Credential er tilbagekaldt, forældet eller klienten er deaktiveret")
     return credential
 
@@ -241,28 +248,56 @@ def _clear_claim(row: ClientCommand) -> None:
     row.lease_expires_at = None
 
 
+def _load_active_command_rows(
+    session: Session,
+    *,
+    client_id: int,
+    domain: str,
+) -> list[ClientCommand]:
+    """Lock the active queue once so an idle claim needs one queue SELECT.
+
+    The previous claim path selected active rows for reconciliation and then
+    selected the candidate again.  A single ordered FOR UPDATE read preserves
+    the same serialized per-client/domain queue semantics while avoiding the
+    duplicate database round-trip on every agent poll.
+    """
+    return list(
+        session.exec(
+            select(ClientCommand)
+            .where(
+                ClientCommand.client_id == client_id,
+                ClientCommand.domain == domain,
+                ClientCommand.status.in_(["queued", "claimed"]),
+            )
+            .order_by(ClientCommand.available_at, ClientCommand.requested_at, ClientCommand.id)
+            .with_for_update()
+        ).all()
+    )
+
+
 def _reconcile_command_state(
     session: Session,
     *,
     client_id: int,
     domain: str,
     now: datetime,
-) -> None:
+    rows: list[ClientCommand] | None = None,
+) -> list[ClientCommand]:
     # Scope reconciliation to exactly one shared command domain/client.
-    rows = session.exec(
-        select(ClientCommand)
-        .where(
-            ClientCommand.client_id == client_id,
-            ClientCommand.domain == domain,
-            ClientCommand.status.in_(["queued", "claimed"]),
-        )
-        .with_for_update()
-    ).all()
+    active_rows = rows if rows is not None else _load_active_command_rows(
+        session,
+        client_id=client_id,
+        domain=domain,
+    )
     current_boot_id = None
-    if domain == "system":
+    needs_boot_id = domain == "system" and any(
+        row.status == "claimed" and row.command_type == "update_os"
+        for row in active_rows
+    )
+    if needs_boot_id:
         client = session.get(Client, client_id)
         current_boot_id = str(getattr(client, "last_boot_id", "") or "") if client is not None else None
-    for row in rows:
+    for row in active_rows:
         if row.expires_at <= now:
             row.status = "expired"
             row.completed_at = now
@@ -308,6 +343,7 @@ def _reconcile_command_state(
                 apply_display_command_failure(
                     session, client_id=client_id, command_id=row.id, error_message=row.error_message
                 )
+    return active_rows
 
 
 def claim_shared_command(
@@ -318,6 +354,17 @@ def claim_shared_command(
 ) -> dict[str, Any]:
     domain = _validate_domain(credential.domain, commands=True)
     lease_seconds = min(max(int(lease_seconds), 10), 300)
+    now = utcnow()
+    active_rows = _load_active_command_rows(
+        session,
+        client_id=credential.client_id,
+        domain=domain,
+    )
+    if not active_rows:
+        return {"claimed": None}
+
+    # Preserve the previous fail-closed Display capability gate, but do not
+    # read the status row on the overwhelmingly common empty-queue poll.
     if domain == "display":
         status = session.exec(
             select(ClientDomainStatus).where(
@@ -327,23 +374,25 @@ def claim_shared_command(
         ).first()
         if status is None or not display_agent_supports_commands(status.agent_version):
             return {"claimed": None}
-    now = utcnow()
-    _reconcile_command_state(session, client_id=credential.client_id, domain=domain, now=now)
 
-    row = session.exec(
-        select(ClientCommand)
-        .where(
-            ClientCommand.client_id == credential.client_id,
-            ClientCommand.domain == domain,
-            ClientCommand.status == "queued",
-            ClientCommand.available_at <= now,
-            ClientCommand.expires_at > now,
-            ClientCommand.attempt_count < ClientCommand.max_attempts,
-        )
-        .order_by(ClientCommand.available_at, ClientCommand.requested_at, ClientCommand.id)
-        .with_for_update(skip_locked=True)
-        .limit(1)
-    ).first()
+    _reconcile_command_state(
+        session,
+        client_id=credential.client_id,
+        domain=domain,
+        now=now,
+        rows=active_rows,
+    )
+    row = next(
+        (
+            candidate
+            for candidate in active_rows
+            if candidate.status == "queued"
+            and candidate.available_at <= now
+            and candidate.expires_at > now
+            and candidate.attempt_count < candidate.max_attempts
+        ),
+        None,
+    )
     if row is None:
         return {"claimed": None}
 
