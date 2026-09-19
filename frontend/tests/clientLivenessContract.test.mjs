@@ -15,6 +15,9 @@ test("frontend consumes only canonical presence for global liveness", () => {
   assert.doesNotMatch(api, /last_seen|\bisOnline\b|\bis_online\b/);
   assert.match(list, /client\?\.presence\?\.is_online === true/);
   assert.match(details, /livePresence\?\.is_online === true/);
+  assert.match(details, /data\?\.presence/);
+  assert.doesNotMatch(details, /getClientPresence\(/);
+  assert.doesNotMatch(details, /setInterval\(refreshPresence/);
   assert.doesNotMatch(details, /client\?\.last_seen|client\?\.isOnline|client\?\.is_online|data\?\.isOnline|data\?\.is_online/);
 });
 

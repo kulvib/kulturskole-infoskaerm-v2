@@ -188,28 +188,32 @@ def _load_client_presence_batch(
         return {}, {}
 
     rows = session.exec(
-        select(ClientDomainStatus).where(
+        select(ClientDomainStatus, ClientDomainCredential)
+        .join(
+            ClientDomainCredential,
+            ClientDomainCredential.id == ClientDomainStatus.credential_id,
+            isouter=True,
+        )
+        .where(
             ClientDomainStatus.client_id.in_(client_ids),
             ClientDomainStatus.domain.in_(PRESENCE_DOMAINS),
         )
     ).all()
-    row_by_key = {(int(row.client_id), row.domain): row for row in rows}
-
-    credential_ids = {row.credential_id for row in rows if row.credential_id}
-    credential_by_id: dict[str, ClientDomainCredential] = {}
-    if credential_ids:
-        credentials = session.exec(
-            select(ClientDomainCredential).where(ClientDomainCredential.id.in_(credential_ids))
-        ).all()
-        credential_by_id = {credential.id: credential for credential in credentials}
+    row_by_key: dict[tuple[int, str], ClientDomainStatus] = {}
+    credential_by_key: dict[tuple[int, str], ClientDomainCredential | None] = {}
+    for status_row, credential in rows:
+        key = (int(status_row.client_id), status_row.domain)
+        row_by_key[key] = status_row
+        credential_by_key[key] = credential
 
     current = _as_naive_utc(now) if now is not None else utcnow()
     result: dict[int, ClientPresence] = {}
     for client in client_list:
         evaluated: dict[str, DomainPresence] = {}
         for domain in PRESENCE_DOMAINS:
-            row = row_by_key.get((int(client.id), domain))
-            credential = credential_by_id.get(row.credential_id) if row is not None else None
+            key = (int(client.id), domain)
+            row = row_by_key.get(key)
+            credential = credential_by_key.get(key)
             evaluated[domain] = evaluate_domain_presence(
                 client,
                 domain=domain,

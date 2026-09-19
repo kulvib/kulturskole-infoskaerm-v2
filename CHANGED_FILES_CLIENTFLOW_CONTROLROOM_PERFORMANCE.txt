@@ -1,0 +1,14 @@
+CHANGED_FILES_CLIENTFLOW_CONTROLROOM_PERFORMANCE.txt
+CLIENTFLOW_PERFORMANCE_REPO_AUDIT_2026-09-19.md
+backend/service1/client_presence.py
+backend/service1/main.py
+backend/service1/routers/clients.py
+backend/tests/test_client_list_projection_performance.py
+backend/tests/test_client_liveness_52a_source.py
+backend/tests/test_clientflow_performance_observability_source.py
+frontend/src/api/api.js
+frontend/src/pages/clientdetailspage/ClientDetailsActionsSection.jsx
+frontend/src/pages/clientdetailspage/ClientDetailsInfoSection.jsx
+frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx
+frontend/tests/clientLivenessContract.test.mjs
+frontend/tests/clientPollingPerformanceContract.test.mjs

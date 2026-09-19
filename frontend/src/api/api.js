@@ -479,8 +479,10 @@ export async function getClientPresence(id) {
 }
 
 /**
- * Hent browser/runtime-status. Global client-liveness hentes separat fra
- * /presence og må aldrig rekonstrueres fra chrome-status eller Client-felter.
+ * Hent browser/runtime-status. Backendens canonical Status/Display/System
+ * presence transporteres med samme hot response; frontend må aldrig
+ * rekonstruere liveness fra chrome-/network-felter. /presence bevares som et
+ * selvstændigt API for andre callers, men detaljesiden behøver ikke dobbeltpoll.
  */
 export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
   const res = await apiFetch(`${apiUrl}/api/clients/${id}/chrome-status`, {
@@ -494,6 +496,7 @@ export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
     if (fallbackToClient) {
       const full = await getClient(id);
       return normalizeChromeStatusPayload({
+        presence: full.presence ?? null,
         chrome_status: full.chrome_status ?? null,
         chrome_color: full.chrome_color ?? null,
         chrome_last_updated: full.chrome_last_updated ?? null,
@@ -540,6 +543,7 @@ export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
       const full = await getClient(id);
       return normalizeChromeStatusPayload({
         ...json,
+        presence: json.presence ?? full.presence ?? null,
         uptime: json.uptime ?? full.uptime ?? null,
         pending_os_update: json.pending_os_update ?? full.pending_os_update ?? false,
         ubuntu_updates_available: json.ubuntu_updates_available ?? full.ubuntu_updates_available ?? 0,

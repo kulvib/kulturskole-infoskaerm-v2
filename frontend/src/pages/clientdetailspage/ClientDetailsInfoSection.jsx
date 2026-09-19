@@ -255,16 +255,28 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
 
   React.useEffect(() => {
     if (!polling || !clientId) return undefined;
-    const timer = window.setInterval(async () => {
-      const latest = await refreshStatus();
-      const latestState = normalizeClientflowDeploymentState(latest?.state);
-      if (!CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(latestState)) {
-        setFeedbackVisible(true);
-        setPolling(false);
-        onFinished?.();
+    let alive = true;
+    let inFlight = false;
+    const pollDeployment = async () => {
+      if (!alive || inFlight) return;
+      inFlight = true;
+      try {
+        const latest = await refreshStatus();
+        const latestState = normalizeClientflowDeploymentState(latest?.state);
+        if (alive && !CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(latestState)) {
+          setFeedbackVisible(true);
+          setPolling(false);
+          onFinished?.();
+        }
+      } finally {
+        inFlight = false;
       }
-    }, 2500);
-    return () => window.clearInterval(timer);
+    };
+    const timer = window.setInterval(pollDeployment, 2500);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
   }, [polling, clientId, refreshStatus, onFinished]);
 
   React.useEffect(() => {
@@ -780,42 +792,55 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) 
   React.useEffect(() => {
     if (!polling || typeof onStarted !== "function") return undefined;
 
-    const timer = window.setInterval(async () => {
+    let alive = true;
+    let inFlight = false;
+    const pollUbuntuUpdate = async () => {
+      if (!alive || inFlight) return;
+      inFlight = true;
       try {
-        await onStarted({ optimistic: false });
-      } catch {
-        // Ignorer refresh-fejl mens vi venter på klientstatus.
+        try {
+          await onStarted({ optimistic: false });
+        } catch {
+          // Ignorer refresh-fejl mens vi venter på klientstatus.
+        }
+
+        if (!alive) return;
+        const startedAtMs = requestStartedAtRef.current ? new Date(requestStartedAtRef.current).getTime() : Date.now();
+        const waitedMs = Date.now() - startedAtMs;
+
+        if (!inProgress && sawBusyState) {
+          const terminalPhase = ["success", "up_to_date", "error"].includes(phase) ? phase : "success";
+          setLocalStatus((prev) => ({
+            ...prev,
+            phase: terminalPhase,
+            finishedAt: prev.finishedAt || new Date().toISOString(),
+          }));
+          setFeedbackVisible(true);
+          setPolling(false);
+          setSawBusyState(false);
+          return;
+        }
+
+        if (!inProgress && !sawBusyState && waitedMs > UBUNTU_REQUEST_WAIT_TIMEOUT_MS) {
+          setLocalStatus((prev) => ({
+            ...prev,
+            phase: "error",
+            error: "Ubuntu-opdateringen svarede ikke inden for timeout. Brug remote terminal eller reset Ubuntu-update-status.",
+            finishedAt: new Date().toISOString(),
+          }));
+          setFeedbackVisible(true);
+          setPolling(false);
+        }
+      } finally {
+        inFlight = false;
       }
+    };
 
-      const startedAtMs = requestStartedAtRef.current ? new Date(requestStartedAtRef.current).getTime() : Date.now();
-      const waitedMs = Date.now() - startedAtMs;
-
-      if (!inProgress && sawBusyState) {
-        const terminalPhase = ["success", "up_to_date", "error"].includes(phase) ? phase : "success";
-        setLocalStatus((prev) => ({
-          ...prev,
-          phase: terminalPhase,
-          finishedAt: prev.finishedAt || new Date().toISOString(),
-        }));
-        setFeedbackVisible(true);
-        setPolling(false);
-        setSawBusyState(false);
-        return;
-      }
-
-      if (!inProgress && !sawBusyState && waitedMs > UBUNTU_REQUEST_WAIT_TIMEOUT_MS) {
-        setLocalStatus((prev) => ({
-          ...prev,
-          phase: "error",
-          error: "Ubuntu-opdateringen svarede ikke inden for timeout. Brug remote terminal eller reset Ubuntu-update-status.",
-          finishedAt: new Date().toISOString(),
-        }));
-        setFeedbackVisible(true);
-        setPolling(false);
-      }
-    }, UBUNTU_POLL_MS);
-
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(pollUbuntuUpdate, UBUNTU_POLL_MS);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
   }, [polling, inProgress, sawBusyState, phase, onStarted]);
 
   React.useEffect(() => {
@@ -1847,14 +1872,20 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     const status = normalizeLocalManagementStatus(localManagementSnapshot.status);
     if (!client?.id || (status !== "pending" && status !== "running")) return undefined;
     let cancelled = false;
-    const timer = window.setInterval(async () => {
+    let inFlight = false;
+    const pollLocalManagement = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
       try {
         const next = await apiGetClientLocalManagement(client.id);
         if (!cancelled) setLocalManagementSnapshot(pickLocalManagementFields(next));
       } catch {
         // Silent polling-fejl må ikke støje i UI. Manuel Opdater kan stadig bruges.
+      } finally {
+        inFlight = false;
       }
-    }, 2000);
+    };
+    const timer = window.setInterval(pollLocalManagement, 2000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);

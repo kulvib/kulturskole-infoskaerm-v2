@@ -1522,6 +1522,10 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
 
     return {
         "client_id": client.id,
+        # Canonical shared-domain presence is already evaluated for this hot
+        # projection. Transport the exact same authority in the fast poll so
+        # the browser does not need a second presence request every 5 seconds.
+        "presence": presence.public_dict(),
         "chrome_status": chrome_status_value,
         "chrome_last_updated": client.chrome_last_updated,
         "chrome_color": chrome_color_value,
