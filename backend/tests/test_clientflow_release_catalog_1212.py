@@ -18,12 +18,12 @@ ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = ROOT / "backend/service1/clientflow_release_catalog.json"
 
 
-def test_catalog_1223_promotes_exact_1322_release_identity() -> None:
+def test_catalog_1224_promotes_exact_1323_release_identity() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    assert data["catalog_sequence"] == 1223
-    assert data["latest_stable"] == "1.3.22"
-    assert data["default_install_version"] == "1.3.22"
+    assert data["catalog_sequence"] == 1224
+    assert data["latest_stable"] == "1.3.23"
+    assert data["default_install_version"] == "1.3.23"
     assert data["retention_policy"] == {
         "max_installable_versions": 1,
         "keep_blocked_metadata": False,
@@ -31,11 +31,11 @@ def test_catalog_1223_promotes_exact_1322_release_identity() -> None:
 
     assert len(data["releases"]) == 1
     release = data["releases"][0]
-    assert release["version"] == "1.3.22"
-    assert release["client_version"] == "1.3.22"
-    assert release["release_sequence"] == 1223
-    assert release["release_id"] == "clientflow-1.3.22-seq-1223"
-    assert release["revision"] == "clientflow-1.3.22-seq-1223"
+    assert release["version"] == "1.3.23"
+    assert release["client_version"] == "1.3.23"
+    assert release["release_sequence"] == 1224
+    assert release["release_id"] == "clientflow-1.3.23-seq-1224"
+    assert release["revision"] == "clientflow-1.3.23-seq-1224"
     assert release["status"] == "stable"
     assert release["installable"] is True
     assert release["update_allowed"] is True
@@ -45,9 +45,9 @@ def test_catalog_1223_promotes_exact_1322_release_identity() -> None:
     assert release["min_current_version"] == "1.3.11"
 
 
-def test_catalog_1223_rejects_1310_and_accepts_safe_1311_in_place_source() -> None:
+def test_catalog_1224_rejects_1310_and_accepts_safe_1311_in_place_source() -> None:
     load_catalog.cache_clear()
-    release = resolve_release("1.3.22")
+    release = resolve_release("1.3.23")
 
     with pytest.raises(ClientFlowCatalogError, match="kræver mindst ClientFlow 1.3.11"):
         validate_release_compatibility(
@@ -63,7 +63,7 @@ def test_catalog_1223_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1223_stays_selected_while_source_is_frozen_at_1323_1224() -> None:
+def test_catalog_1224_matches_published_1323_1224_source_identity() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -73,19 +73,19 @@ def test_catalog_1223_stays_selected_while_source_is_frozen_at_1323_1224() -> No
     )
     source_sequence = int(release_input["release_sequence"])
 
-    # Source/build identity may lead the selector only by one sequence. The
-    # catalog remains on the last physically published approved release until
-    # the new exact bundle has been approved, published and independently read.
+    # After immutable publication and independent re-read, the selector may
+    # advance to the exact source/build identity. Source and catalog are now
+    # intentionally aligned on the approved 1.3.23/1224 release.
     assert source_version == "1.3.23"
     assert source_sequence == 1224
-    assert data["catalog_sequence"] == 1223
-    assert source_sequence == data["catalog_sequence"] + 1
+    assert data["catalog_sequence"] == 1224
+    assert source_sequence == data["catalog_sequence"]
 
-    assert data["latest_stable"] == "1.3.22"
-    assert data["default_install_version"] == "1.3.22"
-    assert release["version"] == "1.3.22"
-    assert release["release_sequence"] == 1223
-    assert release["release_id"] == "clientflow-1.3.22-seq-1223"
+    assert data["latest_stable"] == "1.3.23"
+    assert data["default_install_version"] == "1.3.23"
+    assert release["version"] == "1.3.23"
+    assert release["release_sequence"] == 1224
+    assert release["release_id"] == "clientflow-1.3.23-seq-1224"
     assert release["requires_reboot"] is True
 
     # Artifact integrity/approval authority remains the immutable store, not
@@ -100,15 +100,16 @@ def test_catalog_1223_stays_selected_while_source_is_frozen_at_1323_1224() -> No
     ):
         assert field not in release
 
-def test_catalog_1223_resolvers_select_1322_for_update_and_fresh_install() -> None:
+
+def test_catalog_1224_resolvers_select_1323_for_update_and_fresh_install() -> None:
     load_catalog.cache_clear()
-    update = resolve_release("1.3.22")
+    update = resolve_release("1.3.23")
     fresh = resolve_fresh_install_release()
 
     for release in (update, fresh):
-        assert release["version"] == "1.3.22"
-        assert release["release_id"] == "clientflow-1.3.22-seq-1223"
-        assert release["release_sequence"] == 1223
+        assert release["version"] == "1.3.23"
+        assert release["release_id"] == "clientflow-1.3.23-seq-1224"
+        assert release["release_sequence"] == 1224
         assert release["status"] == "stable"
         assert release["requires_reboot"] is True
 
