@@ -323,7 +323,9 @@ app.add_middleware(
         "X-CSRF-Token",
         REQUEST_ID_HEADER,
     ],
-    expose_headers=[REQUEST_ID_HEADER],
+    # Direct browser→API transport gør disse data cross-origin. Eksponér kun
+    # dataminimeret request-id og Server-Timing; aldrig SQL/host/credentials.
+    expose_headers=[REQUEST_ID_HEADER, "Server-Timing"],
 )
 
 

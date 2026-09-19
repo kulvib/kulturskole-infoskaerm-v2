@@ -1,4 +1,4 @@
-import { API_ORIGIN, WS_API_ORIGIN, buildApiUrl } from "../config/apiConfig";
+import { API_ORIGIN, AUTH_API_URL, WS_API_ORIGIN, buildApiUrl } from "../config/apiConfig";
 import { buildBrowserWsProtocols, buildBrowserWsUrl } from "./browserWebSocket";
 import { createApiError, formatApiError, normalizeApiError } from "./apiError";
 
@@ -17,12 +17,13 @@ import { createApiError, formatApiError, normalizeApiError } from "./apiError";
     — start/stop/reset/sleep/wakeup → dedicated Display command endpoint
 */
 
-// Worklog/Flow-princip: tom VITE_API_URL betyder same-origin.
-// Frontend kalder /api/* på display.planiq.dk, og Render rewrites proxyer
-// requesten til backend. Det gør refresh-cookie first-party/same-origin i browseren.
+// Produktionsprincip: almindelige API-kald bruger den konfigurerede direkte
+// backend-origin. Auth-sessionen er bevidst undtaget: login/refresh/logout bliver
+// på frontendens same-origin /api/auth rewrite, så den eksisterende HttpOnly
+// refresh-cookie fortsat er first-party og ikke kræver cookie-host migration.
 export const apiUrl = API_ORIGIN;
 
-const authApiBase = buildApiUrl("/auth");
+const authApiBase = AUTH_API_URL;
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -253,7 +253,10 @@ services:
         source: /version
         destination: https://api.display.planiq.dk/version
 
-      # Same-origin browser API remains canonical for HttpOnly refresh cookies.
+      # Behold same-origin /api/* som auth/compatibility fallback.
+      # Produktionsfrontendens almindelige API-trafik går direkte til backend via
+      # VITE_API_URL; /api/auth/* bruger fortsat denne rewrite for host-only
+      # HttpOnly refresh-cookie og sessionskontinuitet.
       - type: rewrite
         source: /api/*
         destination: https://api.display.planiq.dk/api/*
@@ -278,6 +281,6 @@ services:
       - key: NODE_VERSION
         value: "22.22.0"
       - key: VITE_API_URL
-        value: ""
+        value: "https://api.display.planiq.dk"
       - key: VITE_WS_API_URL
         value: "https://api.display.planiq.dk"

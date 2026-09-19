@@ -1,0 +1,9 @@
+CHANGED_FILES_CLIENTFLOW_DIRECT_BROWSER_API_TRANSPORT.txt
+CLIENTFLOW_DIRECT_BROWSER_API_TRANSPORT_CLOSURE.md
+backend/service1/main.py
+backend/tests/test_direct_browser_api_transport_source.py
+frontend/src/api/api.js
+frontend/src/config/apiConfig.js
+frontend/tests/directApiTransportContract.test.mjs
+frontend/tests/directApiTransportExecutable.test.mjs
+render.yaml
