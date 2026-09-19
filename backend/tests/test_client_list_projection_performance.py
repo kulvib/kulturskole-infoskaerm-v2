@@ -308,8 +308,13 @@ def test_chrome_status_projection_query_count_is_constant(seed_count: int) -> No
             assert payload["browser_requested"] is True
             assert payload["pending_reboot"] is True
             assert payload["pending_os_update"] is False
-            assert payload["local_management_status"] == "ready"
-            assert payload["local_management_message"] == "Ingen lokal klienthandling i gang"
+            # The seed intentionally leaves the newest local-management
+            # command queued. The hot read must surface that canonical System
+            # projection rather than the persisted legacy-ready defaults.
+            assert payload["local_management_action"] == "hostname"
+            assert payload["local_management_desired_hostname"] == "host-0"
+            assert payload["local_management_status"] == "pending"
+            assert payload["local_management_message"] == "Afventer System-agent: Lokalt hostname ændres"
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
 

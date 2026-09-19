@@ -49,3 +49,8 @@ Local gates available in the working environment:
 - `git diff --check`: green.
 
 The full frontend dependency-backed suite/lint and SQLModel backend tests remain GitHub CI gates because the local worktree has no installed frontend dependencies and does not provide the full locked backend test environment.
+
+
+## CI contract correction
+
+The projection-performance fixture intentionally seeds the newest local-management command as queued `change_hostname`. The canonical System projection therefore returns `pending`, not the persisted legacy default `ready`. The executable test now asserts the queued hostname projection (action, desired hostname, pending status and message) rather than contradicting its own fixture. Product projection code is unchanged by this correction.
