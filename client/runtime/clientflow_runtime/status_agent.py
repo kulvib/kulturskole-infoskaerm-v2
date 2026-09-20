@@ -12,6 +12,7 @@ import subprocess
 import time
 from typing import Any
 
+from .atomic import atomic_write_json
 from .config import DomainCredential
 from .constants import Domain, SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS
 from .logging_utils import configure_logging
@@ -21,6 +22,7 @@ from .status import report_status
 
 ACTIVE_SYSTEMD_ROOT = Path("/opt/clientflow/active/client-runtime/systemd")
 SYS_CLASS_NET = Path("/sys/class/net")
+PUBLIC_IDENTITY_PATH = Path(os.getenv("CLIENTFLOW_STATUS_PUBLIC_IDENTITY_PATH", "/var/lib/clientflow/status/client-public.json"))
 
 
 def _meminfo() -> dict[str, int]:
@@ -232,6 +234,41 @@ def collect_host_status() -> dict[str, Any]:
     return payload
 
 
+def sync_public_identity(
+    response: dict[str, Any],
+    *,
+    client_id: int,
+    path: Path = PUBLIC_IDENTITY_PATH,
+) -> bool:
+    identity = response.get("client_identity") if isinstance(response, dict) else None
+    if not isinstance(identity, dict):
+        return False
+    try:
+        schema_version = int(identity.get("schema_version"))
+        observed_client_id = int(identity.get("client_id"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Backend client_identity har ugyldig schema/client_id") from exc
+    if schema_version != 1 or observed_client_id != int(client_id):
+        raise RuntimeError("Backend client_identity matcher ikke status credential")
+    name = str(identity.get("name") or "").strip()
+    locality_raw = identity.get("locality")
+    locality = str(locality_raw).strip() if locality_raw is not None else None
+    locality = locality or None
+    if not name or len(name) > 200 or (locality is not None and len(locality) > 200):
+        raise RuntimeError("Backend client_identity har ugyldig navn/lokation")
+    atomic_write_json(
+        path,
+        {
+            "schema_version": 1,
+            "client_id": observed_client_id,
+            "name": name,
+            "locality": locality,
+        },
+        mode=0o644,
+    )
+    return True
+
+
 def main() -> int:
     logger = configure_logging("clientflow.status")
     credential = DomainCredential.load(Domain.STATUS)
@@ -239,7 +276,8 @@ def main() -> int:
     attempt = 0
     while True:
         try:
-            report_status(transport, observed_state="online", payload=collect_host_status())
+            response = report_status(transport, observed_state="online", payload=collect_host_status())
+            sync_public_identity(response, client_id=credential.client_id)
             attempt = 0
             time.sleep(SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS)
         except KeyboardInterrupt:

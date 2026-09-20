@@ -119,11 +119,16 @@ def test_pre_activation_graphical_login_baseline_only_materializes_gdm_and_accou
     monkeypatch.setattr(module.pwd, "getpwnam", lambda _user: Record())
     monkeypatch.setattr(module, "_prepare_gdm", lambda user: calls.append(("gdm", user)) or True)
     monkeypatch.setattr(module, "_prepare_accounts_service", lambda user: calls.append(("accounts", user)))
+    monkeypatch.setattr(module, "_prepare_gnome_initial_setup_markers", lambda user, home: calls.append(("gnome-initial-setup", user)))
     monkeypatch.setattr(module, "_prepare_gnome_settings", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("GNOME settings are activation-time, not pre-reboot login materialization")))
     monkeypatch.setattr(module, "_prepare_human_popup_baseline", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("popup baseline is activation-time, not pre-reboot login materialization")))
 
     assert module.prepare_graphical_login_baseline("clientflow-kiosk") is True
-    assert calls == [("gdm", "clientflow-kiosk"), ("accounts", "clientflow-kiosk")]
+    assert calls == [
+        ("gdm", "clientflow-kiosk"),
+        ("accounts", "clientflow-kiosk"),
+        ("gnome-initial-setup", "clientflow-kiosk"),
+    ]
 
 
 def test_53a_source_uses_release_owned_chrome_and_display_only_prerequisite():

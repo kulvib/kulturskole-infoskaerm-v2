@@ -33,6 +33,10 @@ SOCKET_PATH = RUNTIME_DIR / "runtime.sock"
 STATUS_PATH = STATE_DIR / "runtime-status.json"
 PID_PATH = RUNTIME_DIR / "browser.pid"
 PROFILE_DIR = STATE_DIR / "browser-profile"
+CHROME_XDG_ROOT = STATE_DIR / "chrome-xdg"
+CHROME_XDG_CONFIG = CHROME_XDG_ROOT / "config"
+CHROME_XDG_CACHE = CHROME_XDG_ROOT / "cache"
+CHROME_XDG_DATA = CHROME_XDG_ROOT / "data"
 CHROME_BINARY = Path("/usr/bin/google-chrome-stable")
 CHROME_DEBUG_URL = os.getenv("CLIENTFLOW_CHROME_DEBUG_URL", "http://127.0.0.1:9222/json")
 CHROME_CDP_STARTUP_TIMEOUT_SECONDS = float(os.getenv("CLIENTFLOW_CHROME_CDP_STARTUP_TIMEOUT_SECONDS", "12"))
@@ -422,6 +426,18 @@ class DisplayRuntime:
         if not CHROME_BINARY.exists() or not os.access(CHROME_BINARY, os.X_OK):
             raise RuntimeError("Canonical Google Chrome Stable executable mangler")
         environment = self._graphical_environment()
+        # Chrome 152 performs Linux first-run initialization outside
+        # --user-data-dir (Crashpad, NSS and caches).  The kiosk HOME remains
+        # read-only; give Chrome explicit writable XDG roots inside the
+        # service-owned StateDirectory instead.
+        for directory in (CHROME_XDG_CONFIG, CHROME_XDG_CACHE, CHROME_XDG_DATA):
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(directory, 0o700)
+        environment.update({
+            "XDG_CONFIG_HOME": str(CHROME_XDG_CONFIG),
+            "XDG_CACHE_HOME": str(CHROME_XDG_CACHE),
+            "XDG_DATA_HOME": str(CHROME_XDG_DATA),
+        })
         self._prepare_profile(str(kiosk_url))
         command = [
             str(CHROME_BINARY),

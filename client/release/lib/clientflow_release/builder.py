@@ -65,6 +65,7 @@ DIRECT_EXEC_PAYLOAD_SUFFIXES = frozenset({
     "client-runtime/libexec/update-os",
     "client-runtime/libexec/clientflow-recovery",
     "client-runtime/libexec/clientflow-switch-user-admin",
+    "client-runtime/libexec/local-gui",
 })
 
 
