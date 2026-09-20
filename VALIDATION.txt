@@ -96,3 +96,46 @@ Release follow-up:
 PENDING: after merge + canonical green CI, allocate a NEW release/source sequence through CLIENTFLOW_RELEASE_PROCEDURE.md.
 PENDING: build/reproducibility/manual approval/immutable publication/catalog promotion for that new release.
 PENDING: regenerate canonical USB from promoted main and restart clean Ubuntu 26.04 physical acceptance from phase 0.
+
+ClientFlow 1.3.24 / sequence 1225 source-freeze validation
+Date: 2026-09-20
+
+Canonical pre-freeze authority:
+PASS: main commit = 91b82d6517ee9eafc0d5097fc872065793b687e4.
+PASS: canonical push CI = #775 / run 35510501782 / completed success.
+PASS: immutable/promoted selector before transition = clientflow-1.3.23-seq-1224.
+PASS: physical status of immutable 1.3.23/1224 remains FAIL; its bytes are not mutated or reissued.
+
+Staged source/build identity:
+PASS: client/VERSION = 1.3.24.
+PASS: release_sequence = 1225.
+PASS: candidate release id = clientflow-1.3.24-seq-1225.
+PASS: minimum Ubuntu LTS remains 26.04, architecture amd64, runtime Python 3.13.14.
+PASS: runtime catalog remains byte-for-byte at sequence 1224 / latest/default 1.3.23.
+PASS: staged source sequence leads catalog by exactly one.
+
+Included defect closures:
+PASS: CF-1224-SUDO-RS-01 canonical repair is included.
+PASS: CF-1224-NETPLAN-CLEANUP-02 canonical repair is included.
+PASS: CF-1224-SYSTEMD-INHIBITOR-HARDENING-03 canonical hardening is included.
+PASS: Livestream, Terminal and Remote Desktop implementation domains remain frozen.
+
+Local source-freeze gates:
+PASS: focused identity/catalog contracts before manifest freeze: 32 passed, 1 deselected checksum gate.
+PASS: final scripts/tests suite with repo runtime import path: 257 passed.
+PASS: focused backend release identity/catalog suite: 19 passed.
+PASS: dependency contract validation.
+PASS: Python compileall for backend/service1, client and scripts.
+PASS: backend/service1/clientflow_release_catalog.json remains byte-identical to pre-freeze main (SHA-256 07b12fcb43c3454a363183e63fddaf4d4668ae5db66985332191cdc58c519271).
+PENDING: Ruff and display-baseline local execution; tool container lacks ruff and sqlmodel, so canonical GitHub CI remains authority for those gates.
+
+Release boundary:
+PASS: no catalog promotion is included in this source-freeze package.
+PASS: no immutable release bytes are modified by this package.
+PENDING: merge source-freeze package and require canonical GitHub push CI green.
+PENDING: record exact resulting 40-character source-freeze commit SHA.
+PENDING: prepare/verify runtime-input transport sequence 1225.
+PENDING: reproducible build + Ubuntu 26.04 executable-candidate gate + manual approval.
+PENDING: immutable publication and independent store re-read.
+PENDING: only then catalog promotion to 1.3.24/1225 and canonical USB regeneration.
+PENDING: restart clean Ubuntu 26.04 physical acceptance from phase 0.
