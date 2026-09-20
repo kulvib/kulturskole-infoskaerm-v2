@@ -63,7 +63,7 @@ def test_catalog_1224_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1224_matches_published_1323_1224_source_identity() -> None:
+def test_catalog_1224_remains_selected_while_source_stages_1324_1225() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -73,13 +73,14 @@ def test_catalog_1224_matches_published_1323_1224_source_identity() -> None:
     )
     source_sequence = int(release_input["release_sequence"])
 
-    # After immutable publication and independent re-read, the selector may
-    # advance to the exact source/build identity. Source and catalog are now
-    # intentionally aligned on the approved 1.3.23/1224 release.
-    assert source_version == "1.3.23"
-    assert source_sequence == 1224
+    # Physical acceptance of immutable 1.3.23/1224 failed after publication.
+    # The repaired candidate therefore stages as 1.3.24/1225 while the runtime
+    # selector remains on the last published catalog until the new exact bytes
+    # pass reproducibility, executable-candidate, approval and publication.
+    assert source_version == "1.3.24"
+    assert source_sequence == 1225
     assert data["catalog_sequence"] == 1224
-    assert source_sequence == data["catalog_sequence"]
+    assert source_sequence == data["catalog_sequence"] + 1
 
     assert data["latest_stable"] == "1.3.23"
     assert data["default_install_version"] == "1.3.23"
