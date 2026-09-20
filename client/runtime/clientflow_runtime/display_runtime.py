@@ -160,9 +160,15 @@ class DisplayRuntime:
         if self.boot_start_pending:
             self._clear_browser_profile(reason="system_start")
             self._countdown("countdown", BOOT_START_COUNTDOWN_SECONDS, reason="system_start")
-            self._mark_browser_start_this_boot()
+            # The expensive boot policy is per runtime instance, but the persistent
+            # boot marker is a success marker.  If Chrome fails here, retries in this
+            # process must not repeat the countdown; a later successful retry marks
+            # the boot, while a service restart still sees the boot as unhandled.
             self.boot_start_pending = False
-        return self.start_browser()
+        result = self.start_browser()
+        if self._boot_start_required():
+            self._mark_browser_start_this_boot()
+        return result
 
     def _countdown(self, step: str, seconds: int, *, reason: str) -> None:
         for remaining in range(max(0, int(seconds)), 0, -1):
@@ -554,7 +560,10 @@ class DisplayRuntime:
                 command,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.STDOUT,
+                # Keep Chrome stdout quiet, but inherit stderr from the systemd
+                # service so first-start failures (Crashpad/NSS/Wayland) remain
+                # observable in the service journal.
+                stderr=None,
                 env=environment,
                 start_new_session=True,
                 close_fds=True,

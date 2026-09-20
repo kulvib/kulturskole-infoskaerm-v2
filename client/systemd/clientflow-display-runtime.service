@@ -11,6 +11,7 @@ Environment=CLIENTFLOW_CLIENT_ID=@CLIENTFLOW_CLIENT_ID@
 SupplementaryGroups=clientflow-display-control video render audio
 ExecStart=/opt/clientflow/active/runtime/bin/clientflow-display-runtime
 ExecStartPost=/opt/clientflow/active/runtime/bin/clientflow-display-readiness
+StandardError=journal
 Restart=on-failure
 RestartSec=5s
 StateDirectory=clientflow/display-runtime
