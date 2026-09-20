@@ -373,7 +373,7 @@ def _cross_update_reboot_boundary() -> None:
     boot boundary was not proven and the command must remain fail-closed.
     """
     _run(
-        [_fixed_binary("systemctl"), "--ignore-inhibitors", "reboot"],
+        [_fixed_binary("systemctl"), "--check-inhibitors=no", "reboot"],
         timeout=7200,
     )
     raise SystemCommandInDoubt("system_reboot_returned_without_boot_boundary")
@@ -381,7 +381,7 @@ def _cross_update_reboot_boundary() -> None:
 
 def _prepare(action: str, payload: dict[str, Any], *, client_id: int, command_id: str) -> dict[str, Any]:
     if action == "reboot":
-        return {"command": [_fixed_binary("systemctl"), "--no-block", "--ignore-inhibitors", "reboot"], "timeout": 10}
+        return {"command": [_fixed_binary("systemctl"), "--no-block", "--check-inhibitors=no", "reboot"], "timeout": 10}
     if action == "shutdown":
         return {"command": [_fixed_binary("systemctl"), "--no-block", "poweroff"], "timeout": 10}
     if action == "change_hostname":

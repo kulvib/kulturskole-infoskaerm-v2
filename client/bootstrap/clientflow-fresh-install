@@ -732,7 +732,7 @@ def _queue_controlled_pre_activation_reboot() -> None:
     binding = state.get("fresh_install_binding")
     if not isinstance(binding, dict) or not RELEASE_ID_RE.fullmatch(str(binding.get("release_id") or "")):
         raise RuntimeError("Kontrolleret reboot afvist: pending exact release-binding mangler")
-    result = subprocess.run([str(SYSTEMCTL), "--no-block", "--ignore-inhibitors", "reboot"], check=False, timeout=10)
+    result = subprocess.run([str(SYSTEMCTL), "--no-block", "--check-inhibitors=no", "reboot"], check=False, timeout=10)
     if result.returncode != 0:
         raise RuntimeError("Kunne ikke køe den kontrollerede pre-activation reboot")
     print("ClientFlow installation er staged. Klienten genstarter for at etablere kiosk-sessionen før manuel activation.")

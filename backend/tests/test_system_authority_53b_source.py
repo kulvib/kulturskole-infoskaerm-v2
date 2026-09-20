@@ -168,10 +168,10 @@ def test_53b_os_update_preserves_fixed_function_reboot_boundary_and_no_fake_prog
     assert 'systemctl' not in helper
     assert '_journal_mark_reboot_requested' in broker
     assert '_cross_update_reboot_boundary()' in broker
-    assert '"--ignore-inhibitors", "reboot"' in broker
+    assert '"--check-inhibitors=no", "reboot"' in broker
     assert '_display_transition("reboot")' in broker
     assert '[ _fixed_binary("systemctl")' not in broker  # formatting-independent guard below
-    assert '"--no-block", "--ignore-inhibitors", "reboot"' in broker
+    assert '"--no-block", "--check-inhibitors=no", "reboot"' in broker
     assert '"claimed": ("installing", "os_update_installing", "Ubuntu-opdatering kører", None)' in control
     assert 'if "CLIENTFLOW_REBOOT_REQUIRED=1" in output:' in control
     assert '"ubuntu_update_reboot_required": reboot_required' in control

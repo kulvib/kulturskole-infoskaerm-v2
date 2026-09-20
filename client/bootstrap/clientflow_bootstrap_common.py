@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import getpass
 import grp
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -28,6 +27,7 @@ PERSISTENT_ROOT = Path("/usr/local/lib/clientflow-bootstrap")
 PLANIQ_DISPLAY_DESKTOP_ICON = PERSISTENT_ROOT / "planiq-display-mark.png"
 SYSTEMCTL = Path("/usr/bin/systemctl")
 NMCLI = Path("/usr/bin/nmcli")
+NETPLAN = Path("/usr/sbin/netplan")
 IP = Path("/usr/sbin/ip")
 RUNUSER = Path("/usr/sbin/runuser")
 XDG_USER_DIR = Path("/usr/bin/xdg-user-dir")
@@ -43,6 +43,9 @@ ADMIN_DISPLAY_NAME = "ClientFlow local admin"
 _PRIVILEGED_KIOSK_GROUPS = ("sudo", "adm", "admin", "wheel", "lpadmin", "lxd")
 MAX_JSON_BYTES = 128 * 1024
 _ALLOWED_NETWORK_TYPES = {"wifi", "802-11-wireless", "ethernet", "802-3-ethernet"}
+_FORGET_NETWORK_TYPES = {"wifi", "802-11-wireless", "ethernet", "802-3-ethernet", "gsm", "cdma", "vpn", "wireguard"}
+_NETPLAN_FORGET_KEYS = ("network.ethernets", "network.wifis", "network.modems", "network.tunnels", "network.nm-devices")
+_NETWORKMANAGER_GENERATED_ROOT = Path("/run/NetworkManager/system-connections")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _CF_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
@@ -415,15 +418,22 @@ def prepare_factory_graphical_login() -> None:
 
 def install_customer_activation_sudoers() -> None:
     require_root()
+    parent_meta = PERSISTENT_ROOT.lstat()
+    if (
+        stat.S_ISLNK(parent_meta.st_mode)
+        or not stat.S_ISDIR(parent_meta.st_mode)
+        or parent_meta.st_uid != 0
+        or (parent_meta.st_mode & 0o022)
+    ):
+        raise BootstrapError("Kundeaktiveringshelperens katalog har ugyldig ownership/permissions")
     helper = PERSISTENT_ROOT / "clientflow-fresh-install"
     meta = helper.lstat()
     if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0 or (meta.st_mode & 0o022):
         raise BootstrapError("Kundeaktiveringshelper har ugyldig ownership/permissions")
-    digest = hashlib.sha256(helper.read_bytes()).hexdigest()
     FACTORY_ACTIVATION_SUDOERS.parent.mkdir(parents=True, exist_ok=True)
     content = (
         "# Temporary ClientFlow factory-to-customer activation capability.\n"
-        f"{KIOSK_USER} ALL=(root) NOPASSWD: sha256:{digest} {helper} \"\"\n"
+        f"{KIOSK_USER} ALL=(root) NOPASSWD: {helper} \"\"\n"
     )
     _atomic_root_file(FACTORY_ACTIVATION_SUDOERS, content, mode=0o440)
     if not VISUDO.is_file():
@@ -491,28 +501,91 @@ def cleanup_customer_launcher_trust_helper(user: str) -> None:
     Path("/usr/local/bin/clientflow-trust-customer-activation").unlink(missing_ok=True)
 
 
+def _generated_networkmanager_profiles() -> list[tuple[str, str]]:
+    profiles: list[tuple[str, str]] = []
+    if not _NETWORKMANAGER_GENERATED_ROOT.is_dir():
+        return profiles
+    for path in sorted(_NETWORKMANAGER_GENERATED_ROOT.glob("*.nmconnection")):
+        try:
+            meta = path.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode):
+            raise BootstrapError(f"NetworkManager generated profile er ugyldig: {path.name}")
+        section = ""
+        connection_type = ""
+        for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line_text = raw_line.strip()
+            if line_text.startswith("[") and line_text.endswith("]"):
+                section = line_text[1:-1]
+                continue
+            if section == "connection" and line_text.startswith("type="):
+                connection_type = line_text.split("=", 1)[1].strip()
+                break
+        if connection_type:
+            profiles.append((path.name, connection_type))
+    return profiles
+
+
+def _validate_persistent_network_cleanup() -> None:
+    if not NETPLAN.is_file():
+        raise BootstrapError("netplan mangler; persistent factory-netværk kan ikke valideres")
+    result = _run([str(NETPLAN), "generate"], timeout=60)
+    if result.returncode != 0:
+        raise BootstrapError(
+            f"Netplan kunne ikke validere factory-netværkscleanup: {(result.stdout or '')[-1000:]}"
+        )
+    leftovers = [
+        name
+        for name, connection_type in _generated_networkmanager_profiles()
+        if connection_type in _FORGET_NETWORK_TYPES
+    ]
+    if leftovers:
+        raise BootstrapError(
+            "Persistent Netplan factory-profiler kan regenereres efter cleanup: "
+            + ", ".join(leftovers)
+        )
+
+
+def _forget_persistent_netplan_networks() -> None:
+    if not NETPLAN.is_file():
+        raise BootstrapError("netplan mangler; persistent factory-netværk kan ikke fjernes")
+    for key in _NETPLAN_FORGET_KEYS:
+        result = _run([str(NETPLAN), "set", f"{key}=null"], timeout=30)
+        if result.returncode != 0:
+            raise BootstrapError(
+                f"Kunne ikke fjerne persistent Netplan factory-konfiguration ({key}): "
+                f"{(result.stdout or '')[-1000:]}"
+            )
+    _validate_persistent_network_cleanup()
+
+
 def forget_saved_networks() -> int:
     _networkmanager_ready()
-    allowed = {"wifi", "802-11-wireless", "ethernet", "802-3-ethernet", "gsm", "cdma", "vpn", "wireguard"}
     rows = _all_connections()
     deleted = 0
     for connection_uuid, row in rows.items():
-        if row.get("type") not in allowed:
+        if row.get("type") not in _FORGET_NETWORK_TYPES:
             continue
         print(f"Sletter gemt forbindelse: {row.get('name') or 'ukendt'} ({row.get('type')})")
         result = _run([str(NMCLI), "connection", "delete", "uuid", connection_uuid], timeout=30)
         if result.returncode == 0:
             deleted += 1
         else:
-            raise BootstrapError(f"Kunne ikke slette gemt NetworkManager-profil: {row.get('name') or connection_uuid}")
-    remaining = [row for row in _all_connections().values() if row.get("type") in allowed]
+            raise BootstrapError(
+                f"Kunne ikke slette gemt NetworkManager-profil: {row.get('name') or connection_uuid}"
+            )
+    _forget_persistent_netplan_networks()
+    remaining = [
+        row for row in _all_connections().values() if row.get("type") in _FORGET_NETWORK_TYPES
+    ]
     if remaining:
         names = ", ".join(str(row.get("name") or row.get("uuid")) for row in remaining)
         raise BootstrapError(f"Gemte netværksprofiler findes stadig efter factory-cleanup: {names}")
     if deleted:
-        ok(f"Slettede {deleted} gemte netværksforbindelse(r).")
+        ok(f"Slettede {deleted} gemte netværksforbindelse(r) og persistent Netplan-state.")
     else:
-        ok("Ingen gemte NetworkManager-forbindelser fundet.")
+        ok("Ingen gemte NetworkManager-forbindelser fundet; persistent Netplan-state er ryddet.")
     return deleted
 
 
@@ -536,9 +609,10 @@ def validate_factory_handoff(*, client_name: str, operator_user: str) -> None:
     result = subprocess.run([str(VISUDO), "-cf", str(FACTORY_ACTIVATION_SUDOERS)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
     if result.returncode != 0:
         raise BootstrapError("Midlertidig kundeaktiveringsret kan ikke valideres med visudo")
-    leftovers = [row for row in _all_connections().values() if row.get("type") in {"wifi", "802-11-wireless", "ethernet", "802-3-ethernet", "gsm", "cdma", "vpn", "wireguard"}]
+    leftovers = [row for row in _all_connections().values() if row.get("type") in _FORGET_NETWORK_TYPES]
     if leftovers:
         raise BootstrapError("Factory-handoff har stadig gemte NetworkManager-profiler")
+    _validate_persistent_network_cleanup()
     write_factory_state(client_name=client_name, operator_user=operator_user, handoff_ready=True)
     ok("Factory → kunde handoff er valideret fail-closed før reboot.")
 
@@ -1112,13 +1186,13 @@ def confirmed_reboot(reason: str, *, seconds: int = 5) -> bool:
     answer = input("Vil du genstarte nu? [j/N]: ").strip().lower() or "n"
     if answer not in {"j", "ja", "y", "yes"}:
         warn("Genstart er ikke udført. Genstart manuelt senere for at fuldføre flowet.")
-        print("Du kan genstarte manuelt med: sudo systemctl --no-block --ignore-inhibitors reboot")
+        print("Du kan genstarte manuelt med: sudo systemctl --no-block --check-inhibitors=no reboot")
         return False
     for remaining in range(seconds, 0, -1):
         print(f"Genstarter om {remaining} sekunder...")
         time.sleep(1)
     result = subprocess.run(
-        [str(SYSTEMCTL), "--no-block", "--ignore-inhibitors", "reboot"],
+        [str(SYSTEMCTL), "--no-block", "--check-inhibitors=no", "reboot"],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

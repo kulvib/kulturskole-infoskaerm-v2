@@ -500,7 +500,7 @@ def test_system_reboot_roundtrip_uses_real_route_agent_broker_and_boot_evidence(
     result = system_agent.build_handler(SimpleNamespace())(context)
     assert result["exit_code"] == 0
     assert executed == [
-        {"command": ["/usr/bin/systemctl", "--no-block", "--ignore-inhibitors", "reboot"], "timeout": 10}
+        {"command": ["/usr/bin/systemctl", "--no-block", "--check-inhibitors=no", "reboot"], "timeout": 10}
     ]
 
     completed = http.post(
@@ -835,7 +835,7 @@ def test_calendar_backend_route_agent_transition_broker_and_observed_status_roun
     assert power_actions == ["off", "on"]
     assert runtime_actions == []
     assert reboot_commands == [
-        ["/usr/bin/systemctl", "--no-block", "--ignore-inhibitors", "reboot"]
+        ["/usr/bin/systemctl", "--no-block", "--check-inhibitors=no", "reboot"]
     ]
 
     calendar_agent._write_status(
