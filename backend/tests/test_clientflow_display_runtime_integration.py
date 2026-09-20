@@ -70,10 +70,12 @@ def test_display_configuration_starts_browser_and_survives_runtime_recreation(mo
     monkeypatch.setattr(runtime_module.DisplayRuntime, "_graphical_environment", lambda self: dict(graphical_env))
 
     launched: list[tuple[list[str], dict[str, str]]] = []
+    launch_stdio: list[tuple[object, object]] = []
     pids = iter((5101, 5102))
 
     def fake_popen(command, **kwargs):
         launched.append((list(command), dict(kwargs["env"])))
+        launch_stdio.append((kwargs.get("stdout"), kwargs.get("stderr")))
         return _FakeProcess(next(pids))
 
     monkeypatch.setattr(runtime_module.subprocess, "Popen", fake_popen)
@@ -127,6 +129,8 @@ def test_display_configuration_starts_browser_and_survives_runtime_recreation(mo
     assert first_env["XDG_CONFIG_HOME"] == str(state / "chrome-xdg" / "config")
     assert first_env["XDG_CACHE_HOME"] == str(state / "chrome-xdg" / "cache")
     assert first_env["XDG_DATA_HOME"] == str(state / "chrome-xdg" / "data")
+    assert launch_stdio[0][0] is runtime_module.subprocess.DEVNULL
+    assert launch_stdio[0][1] is None
 
     # Simulate service recreation/reboot: durable Display configuration is reloaded
     # and makes the browser desired again without any cloned machine state.
@@ -380,3 +384,48 @@ def test_schema_one_to_two_same_revision_can_add_refresh_without_browser_restart
                 "browser_refresh_interval_sec": 300,
             }
         )
+
+
+def test_boot_marker_is_persisted_only_after_successful_browser_start(monkeypatch, tmp_path):
+    state, _run = _configure_runtime_paths(monkeypatch, tmp_path)
+    boot_id_path = tmp_path / "boot-id"
+    boot_id_path.write_text("boot-a\n", encoding="ascii")
+    monkeypatch.setattr(runtime_module, "BOOT_ID_PATH", boot_id_path)
+
+    runtime = runtime_module.DisplayRuntime()
+    runtime.shared_group_gid = os.getgid()
+    runtime.boot_start_pending = True
+    seen: list[tuple[str, object]] = []
+    monkeypatch.setattr(runtime, "_clear_browser_profile", lambda **kwargs: seen.append(("clear", kwargs)))
+    monkeypatch.setattr(runtime, "_countdown", lambda step, seconds, **kwargs: seen.append(("countdown", (step, seconds, kwargs))))
+
+    attempts = iter((RuntimeError("first start failed"), {"started": True, "pid": 6001}))
+
+    def fake_start_browser():
+        result = next(attempts)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(runtime, "start_browser", fake_start_browser)
+
+    with pytest.raises(RuntimeError, match="first start failed"):
+        runtime._start_browser_with_boot_policy()
+
+    assert runtime.boot_start_pending is False
+    assert runtime._boot_start_required() is True
+    assert not (state / "browser-boot.json").exists()
+    assert [name for name, _value in seen].count("countdown") == 1
+
+    result = runtime._start_browser_with_boot_policy()
+
+    assert result["started"] is True
+    assert runtime._boot_start_required() is False
+    assert (state / "browser-boot.json").is_file()
+    assert [name for name, _value in seen].count("countdown") == 1
+
+
+def test_display_runtime_unit_routes_chrome_stderr_to_journal():
+    root = Path(__file__).resolve().parents[2]
+    unit = (root / "client/systemd/clientflow-display-runtime.service").read_text(encoding="utf-8")
+    assert "StandardError=journal" in unit
