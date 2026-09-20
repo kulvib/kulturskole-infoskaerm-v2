@@ -1,20 +1,20 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1224,
-  "latest_stable": "1.3.23",
-  "default_install_version": "1.3.23",
+  "catalog_sequence": 1225,
+  "latest_stable": "1.3.24",
+  "default_install_version": "1.3.24",
   "retention_policy": {
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
   },
-  "created_at": "2026-09-19T00:00:00Z",
+  "created_at": "2026-09-20T13:17:38Z",
   "releases": [
     {
-      "version": "1.3.23",
-      "client_version": "1.3.23",
-      "release_sequence": 1224,
-      "revision": "clientflow-1.3.23-seq-1224",
+      "version": "1.3.24",
+      "client_version": "1.3.24",
+      "release_sequence": 1225,
+      "revision": "clientflow-1.3.24-seq-1225",
       "status": "stable",
       "installable": true,
       "update_allowed": true,
@@ -34,12 +34,11 @@
         "requires_platform_preflight": true
       },
       "notes": [
-        "Canonical ClientFlow 1.3.23 release containing the completed two-phase factory/customer fresh-install lifecycle: office-side 01 Klient klargøring provisions clientflow-kiosk and cfadmin, scrubs factory network profiles and hands off the no-sudo 02 Aktiver ClientFlow flow; the customer path is exact-release-bound, resumable on ambiguous claim outcomes, enters pending_manual_activation, shows the approval-gated legacy-layout preactivation GUI and automatically activates after backend approval.",
-        "The release also contains the database/request consolidation, direct browser-to-backend API transport and auth-route churn closures. Production acceptance measured the direct transport at 125.4 ms median for /clients/ versus 840.9 ms through the former Render rewrite, and 119 ms for /chrome-status versus 427.6 ms, while preserving the existing auth, Terminal, Remote Desktop and Livestream trust boundaries.",
-        "Fresh install and in-place update remain bounded to the safe ClientFlow 1.3.11 baseline. Ubuntu Desktop 26.04 LTS amd64/Wayland platform preflight remains mandatory, rollback remains disabled and the controlled reboot lifecycle remains required.",
-        "Promoted only after source 98380ac6254f9bbd214223c3f6a1703d3a13c732 passed canonical push CI, runtime-input transport 1224 was pinned, two independent 1.3.23/1224 candidate builds were byte-identical, the Ubuntu 26.04 executable-candidate gate passed, the exact candidate was manually approved with reference clientflow-1.3.23-seq-1224/manual-approval/candidate-2d3a6f28856920295fe3e6129cb8edd667bb13f18796dbbdba2ce1c581576cc1, and the approved 223119360-byte bundle was immutably published and independently re-read at SHA-256 32241e0e2db55d2345a3144e6c11bb9c80aaf99c07ec061ba1358a8b8bb4b53c before this catalog change."
+        "Canonical ClientFlow 1.3.24 release closing the physical Ubuntu 26.04 factory-handoff defects found after 1.3.23/1224: the temporary customer-activation sudoers capability is sudo-rs-compatible while remaining exact-path and no-arguments-only, the office/factory shipping-network cleanup removes persistent Netplan network definitions and fails closed if they can regenerate, and controlled reboot uses the documented systemd 259 inhibitor-control spelling.",
+        "The release preserves the canonical two-phase 01 Klient klarg\u00f8ring -> 02 Aktiver ClientFlow lifecycle, pending_manual_activation GUI, explicit backend approval and automatic first activation. Fresh install and in-place update remain bounded to the safe ClientFlow 1.3.11 baseline, Ubuntu Desktop 26.04 LTS amd64/Wayland platform preflight remains mandatory, rollback remains disabled and the controlled reboot lifecycle remains required.",
+        "Promoted only after source 929d3eb74334bd8d9177d2792f33f92ac338b5cb passed canonical push CI #779 / run 35511136741, runtime-input transport 1225 was pinned at SHA-256 233e2e36323bcb7c15bf3d44eeb03c46a00edf84746a50598cde18d565976619, release-build run 35511471702 produced byte-identical candidates and passed the Ubuntu 26.04 executable-candidate gate, approval run 35511931903 approved candidate 57d7c3629a70dd2c2a353470707f3eef1dc65cdf5a8305b093e151311a0b9baf, and the exact 223119360-byte approved bundle was immutably published and independently re-read at SHA-256 032d49c9c3db7f88bcb31dac8aeefa24db45684a95344fd38ee64a2572b327ae before this catalog change."
       ],
-      "release_id": "clientflow-1.3.23-seq-1224",
+      "release_id": "clientflow-1.3.24-seq-1225",
       "artifact_type": "runtime_release",
       "install_modes": [
         "fresh_install",

@@ -36,12 +36,12 @@ def _class_tuple(source: str, class_name: str, name: str):
     raise AssertionError(f"{class_name}.{name} not found")
 
 
-def test_staged_1324_1225_source_identity_leads_promoted_1323_1224_catalog_by_one():
+def test_promoted_1324_1225_source_identity_matches_catalog():
     # Immutable 1.3.23/1224 was approved, published and promoted, then failed
-    # physical Ubuntu 26.04 factory-handoff acceptance. The canonical repairs
-    # therefore receive a new source/build identity while runtime selection
-    # remains on the last published catalog until the new candidate crosses all
-    # release gates.
+    # physical Ubuntu 26.04 factory-handoff acceptance. The repaired
+    # 1.3.24/1225 release has now crossed reproducibility, executable-candidate,
+    # approval and immutable-publication gates, so runtime selection aligns
+    # with the exact published source/build identity.
     assert VERSION.read_text(encoding="utf-8").strip() == "1.3.24"
     release_input = json.loads(_source(RELEASE_INPUT))
     assert release_input["release_sequence"] == 1225
@@ -50,13 +50,13 @@ def test_staged_1324_1225_source_identity_leads_promoted_1323_1224_catalog_by_on
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
-    assert catalog["catalog_sequence"] == 1224
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert catalog["latest_stable"] == "1.3.23"
-    assert catalog["default_install_version"] == "1.3.23"
+    assert catalog["catalog_sequence"] == 1225
+    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert catalog["latest_stable"] == "1.3.24"
+    assert catalog["default_install_version"] == "1.3.24"
     selected = catalog["releases"][0]
-    assert selected["release_id"] == "clientflow-1.3.23-seq-1224"
-    assert selected["release_sequence"] == 1224
+    assert selected["release_id"] == "clientflow-1.3.24-seq-1225"
+    assert selected["release_sequence"] == 1225
 
 
 def test_dispatch_uses_staged_immutable_release_cli_not_stable_updater():

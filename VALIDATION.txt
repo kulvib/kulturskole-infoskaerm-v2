@@ -1,3 +1,58 @@
+ClientFlow 1.3.24 / sequence 1225 catalog-promotion validation
+Date: 2026-09-20
+
+Canonical release authority before selector change:
+PASS: source commit = 929d3eb74334bd8d9177d2792f33f92ac338b5cb.
+PASS: canonical push CI = #779 / run 35511136741 / completed success.
+PASS: runtime-input transport #4 / run 35511321989 completed success.
+PASS: runtime-input transport SHA-256 = 233e2e36323bcb7c15bf3d44eeb03c46a00edf84746a50598cde18d565976619.
+PASS: release build #27 / run 35511471702 produced byte-identical independent candidates and passed the Ubuntu 26.04 executable-candidate gate.
+PASS: candidate SHA-256 = 57d7c3629a70dd2c2a353470707f3eef1dc65cdf5a8305b093e151311a0b9baf.
+PASS: installer SHA-256 = b158e2bcc786b60485730a0a61b1bd6d238cf89387b816384c54f635512f42c0.
+PASS: payload SHA-256 = c7ab9c1569c96583848bfa832b9c2a9eadb6d007e4d26333de783d20c10efc46.
+PASS: approval #11 / run 35511931903 approved the exact candidate.
+PASS: approval reference is clientflow-1.3.24-seq-1225/manual-approval/candidate-57d7c3629a70dd2c2a353470707f3eef1dc65cdf5a8305b093e151311a0b9baf.
+
+Immutable publication before selector change:
+PASS: approved transport tag = clientflow-1.3.24-1225-approved-transport.
+PASS: approved bundle size = 223119360.
+PASS: approved bundle SHA-256 = 032d49c9c3db7f88bcb31dac8aeefa24db45684a95344fd38ee64a2572b327ae.
+PASS: immutable Render store path = /var/data/clientflow-release-artifacts/store/clientflow-1.3.24-seq-1225.tar.
+PASS: store re-read matched exact size and SHA-256.
+PASS: stored manifest proved deployable=true, source commit, release id and approval reference.
+PASS: transport/store manifest bytes were identical.
+PASS: catalog remained 1.3.23/1224 throughout immutable publication and re-read.
+
+Catalog promotion in this package:
+- catalog_sequence: 1225
+- latest_stable: 1.3.24
+- default_install_version: 1.3.24
+- selected release: clientflow-1.3.24-seq-1225
+- installable: true
+- update_allowed: true
+- min_current_version: 1.3.11
+- requires_reboot: true
+- rollback_allowed: false
+PASS: source release sequence and catalog sequence are aligned at 1225.
+PASS: retention remains one selectable installable release.
+PASS: catalog contains no mutable duplicate bundle hash/source/approval authority fields.
+PASS: client/VERSION and client/release/release-input.json are unchanged by this promotion package.
+
+Local promotion-package gates:
+PASS: complete scripts/tests suite: 257 passed.
+PASS: focused backend catalog/identity suite: 19 passed.
+PASS: dependency contract validation.
+PASS: Python compileall for backend/service1, client and scripts.
+PASS: SHA256SUMS refreshed against every listed canonical file; final checksum gate included in the complete scripts suite.
+PENDING: Ruff and display-baseline remain canonical GitHub CI gates in the local tool environment.
+
+Post-merge gates:
+PENDING: record exact promoted-main commit and canonical push-CI success.
+PENDING: verify deployed backend exposes only 1.3.24/1225 as stable/default fresh-install selection.
+PENDING: independently re-read immutable store SHA-256 after deployment.
+PENDING: regenerate canonical USB from promoted main.
+PENDING: restart clean Ubuntu 26.04 physical fresh-install acceptance from phase 0.
+
 ClientFlow 1.3.23 / sequence 1224 catalog-promotion validation
 Date: 2026-09-19
 
