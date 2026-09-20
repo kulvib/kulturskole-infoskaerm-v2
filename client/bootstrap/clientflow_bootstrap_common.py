@@ -337,6 +337,98 @@ def validate_factory_human_accounts() -> None:
         raise BootstrapError("cfadmin mangler et aktivt password")
 
 
+def _ubuntu_version_id(os_release: Path = Path("/etc/os-release")) -> str:
+    try:
+        lines = os_release.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise BootstrapError("Ubuntu VERSION_ID kunne ikke læses") from exc
+    for line in lines:
+        if line.startswith("VERSION_ID="):
+            value = line.split("=", 1)[1].strip().strip('"').strip("'")
+            if re.fullmatch(r"[0-9]{2}\.[0-9]{2}", value):
+                return value
+            break
+    raise BootstrapError("Ubuntu VERSION_ID er ugyldig")
+
+
+def _ensure_user_owned_directory(path: Path, *, user: str, mode: int = 0o700) -> None:
+    account = pwd.getpwnam(validate_local_user(user))
+    try:
+        meta = path.lstat()
+    except FileNotFoundError:
+        path.mkdir(mode=mode)
+        os.chown(path, account.pw_uid, account.pw_gid)
+        os.chmod(path, mode)
+        meta = path.lstat()
+    if stat.S_ISLNK(meta.st_mode) or not stat.S_ISDIR(meta.st_mode):
+        raise BootstrapError(f"GNOME onboarding-katalog er ugyldigt: {path}")
+    if meta.st_uid != account.pw_uid or meta.st_gid != account.pw_gid:
+        raise BootstrapError(f"GNOME onboarding-katalog har forkert ejerskab: {path}")
+    os.chmod(path, mode)
+
+
+def _gnome_initial_setup_marker_paths(
+    user: str,
+    *,
+    os_release: Path = Path("/etc/os-release"),
+) -> tuple[Path, Path]:
+    account = pwd.getpwnam(validate_local_user(user))
+    home = Path(account.pw_dir)
+    try:
+        meta = home.lstat()
+    except FileNotFoundError as exc:
+        raise BootstrapError(f"Home mangler for {user}: {home}") from exc
+    if stat.S_ISLNK(meta.st_mode) or not stat.S_ISDIR(meta.st_mode):
+        raise BootstrapError(f"Home er ugyldigt for {user}: {home}")
+    if meta.st_uid != account.pw_uid:
+        raise BootstrapError(f"Home har forkert ejerskab for {user}: {home}")
+    config_root = home / ".config"
+    upgrade_root = config_root / "gnome-initial-setup"
+    return (
+        config_root / "gnome-initial-setup-done",
+        upgrade_root / f"upgrade-{_ubuntu_version_id(os_release)}-done",
+    )
+
+
+def prepare_factory_gnome_initial_setup_markers(
+    user: str,
+    *,
+    os_release: Path = Path("/etc/os-release"),
+) -> None:
+    account = pwd.getpwnam(validate_local_user(user))
+    home = Path(account.pw_dir)
+    first, upgrade = _gnome_initial_setup_marker_paths(user, os_release=os_release)
+    _ensure_user_owned_directory(home / ".config", user=user)
+    _ensure_user_owned_directory(home / ".config/gnome-initial-setup", user=user)
+    _write_user_file_no_follow(first, "yes\n", user=user, mode=0o600)
+    _write_user_file_no_follow(upgrade, "yes\n", user=user, mode=0o600)
+
+
+def validate_factory_gnome_initial_setup_markers(
+    user: str,
+    *,
+    os_release: Path = Path("/etc/os-release"),
+) -> None:
+    account = pwd.getpwnam(validate_local_user(user))
+    for marker in _gnome_initial_setup_marker_paths(user, os_release=os_release):
+        try:
+            meta = marker.lstat()
+        except FileNotFoundError as exc:
+            raise BootstrapError(f"GNOME onboarding-marker mangler for {user}: {marker}") from exc
+        if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode):
+            raise BootstrapError(f"GNOME onboarding-marker er ugyldig for {user}: {marker}")
+        if meta.st_uid != account.pw_uid or meta.st_gid != account.pw_gid:
+            raise BootstrapError(f"GNOME onboarding-marker har forkert ejerskab for {user}: {marker}")
+        if stat.S_IMODE(meta.st_mode) != 0o600:
+            raise BootstrapError(f"GNOME onboarding-marker har forkert mode for {user}: {marker}")
+        try:
+            value = marker.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise BootstrapError(f"GNOME onboarding-marker kan ikke læses for {user}: {marker}") from exc
+        if value != "yes\n":
+            raise BootstrapError(f"GNOME onboarding-marker har ugyldigt indhold for {user}: {marker}")
+
+
 def provision_factory_human_accounts() -> None:
     require_root()
     password = _prompt_admin_password()
@@ -356,7 +448,12 @@ def provision_factory_human_accounts() -> None:
     finally:
         password = ""
     validate_factory_human_accounts()
-    ok("cfadmin og clientflow-kiosk er oprettet og valideret; kiosk har ingen privilegerede grupper.")
+    for username in (KIOSK_USER, ADMIN_USER):
+        prepare_factory_gnome_initial_setup_markers(username)
+    ok(
+        "cfadmin og clientflow-kiosk er oprettet og valideret; kiosk har ingen privilegerede grupper, "
+        "og GNOME first-login/upgrade onboarding er markeret færdig for begge konti."
+    )
 
 
 def _replace_ini_section_keys(text: str, section: str, replacements: dict[str, str]) -> str:
@@ -598,6 +695,8 @@ def validate_factory_handoff(*, client_name: str, operator_user: str) -> None:
     if state.get("operator_user") != validate_local_user(operator_user):
         raise BootstrapError("Factory-state operator matcher ikke")
     validate_factory_human_accounts()
+    for username in (KIOSK_USER, ADMIN_USER):
+        validate_factory_gnome_initial_setup_markers(username)
     gdm = GDM_CONFIG.read_text(encoding="utf-8") if GDM_CONFIG.is_file() else ""
     if "AutomaticLoginEnable=true" not in gdm or f"AutomaticLogin={KIOSK_USER}" not in gdm or "WaylandEnable=true" not in gdm:
         raise BootstrapError("GDM factory-handoff peger ikke på canonical kiosk-bruger")
