@@ -53,9 +53,12 @@ def test_factory_flow_preserves_legacy_customer_handoff_before_reboot():
 def test_factory_cleanup_deletes_all_saved_shipping_network_profiles_fail_closed():
     source = COMMON.read_text(encoding="utf-8")
     cleanup = source[source.index("def forget_saved_networks"):source.index("def validate_factory_handoff")]
-    assert '"wifi", "802-11-wireless", "ethernet", "802-3-ethernet", "gsm", "cdma", "vpn", "wireguard"' in cleanup
+    assert '_FORGET_NETWORK_TYPES = {"wifi", "802-11-wireless", "ethernet", "802-3-ethernet", "gsm", "cdma", "vpn", "wireguard"}' in source
     assert '"connection", "delete", "uuid", connection_uuid' in cleanup
+    assert "_forget_persistent_netplan_networks()" in cleanup
     assert "Gemte netværksprofiler findes stadig efter factory-cleanup" in cleanup
+    assert '"network.ethernets", "network.wifis", "network.modems", "network.tunnels", "network.nm-devices"' in source
+    assert '"generate"' in source[source.index("def _validate_persistent_network_cleanup"):source.index("def _forget_persistent_netplan_networks")]
     factory = FACTORY.read_text(encoding="utf-8")
     body = factory[factory.index("def factory_prepare"):factory.index("def main")]
     assert body.index("forget_saved_networks()") < body.index("validate_factory_handoff(")
@@ -138,7 +141,7 @@ def test_reboot_contract_is_confirmed_narrow_inhibitor_override_and_never_force(
     fn = source[source.index("def confirmed_reboot"):source.index("def install_persistent_bootstrap")]
     assert "Maskinen genstarter IKKE automatisk. Du skal bekræfte først." in fn
     assert 'input("Vil du genstarte nu? [j/N]: ")' in fn
-    assert '[str(SYSTEMCTL), "--no-block", "--ignore-inhibitors", "reboot"]' in fn
+    assert '[str(SYSTEMCTL), "--no-block", "--check-inhibitors=no", "reboot"]' in fn
     assert "timeout=10" in fn
     assert "--force" not in fn
 

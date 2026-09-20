@@ -62,3 +62,37 @@ PENDING: verify deployed backend exposes only 1.3.23/1224 as stable/default fres
 PENDING: re-read immutable store SHA-256 after deployment.
 PENDING: regenerate canonical USB from promoted main.
 PENDING: restart clean Ubuntu 26.04 physical fresh-install acceptance from phase 0.
+
+ClientFlow 1224 Ubuntu 26.04 factory-handoff defect-closure validation
+Date: 2026-09-20
+
+Physical failure evidence:
+PASS: CF-1224-SUDO-RS-01 reproduced on Ubuntu 26.04.1 / sudo-rs 0.2.13-0ubuntu1.2; classic sudoers digest syntax was rejected fail-closed.
+PASS: exact replacement activation rule without digest parsed OK on the physical sudo-rs host.
+PASS: CF-1224-NETPLAN-CLEANUP-02 proved with isolated physical Netplan regeneration: installer-persisted factory Wi-Fi regenerated after removal of NetworkManager-owned 90-NM YAML.
+PASS: planned Netplan fix mechanism physically verified in an offline root: persistent shipping network subtrees removed, no factory profile regenerated, live /etc/netplan byte-identical before/after.
+PASS: Ubuntu 26.04.1 systemd 259 exposes --check-inhibitors=no / -i; reboot authorities hardened to the documented spelling without --force.
+
+Source-fix scope:
+PASS: temporary factory activation sudoers remains exact-path, no-arguments-only, root-owned and visudo-validated.
+PASS: factory network cleanup deletes current NetworkManager profiles and persistent Netplan shipping-network subtrees, then fails closed if Netplan can regenerate a shipping profile.
+PASS: persistent Netplan cleanup is revalidated before handoff_ready=true.
+PASS: active ClientFlow reboot authorities use --check-inhibitors=no.
+PASS: client/VERSION remains 1.3.23 and release_sequence remains 1224; this defect closure does not mutate the failed immutable 1224 release identity.
+PASS: no release catalog or immutable release artifact is modified by this package.
+
+Local gates:
+PASS: focused affected test suite: 68 passed, 1 skipped before final manifest freeze.
+PASS: dependency contract validation.
+PASS: physical offline Netplan fix-mechanism validation on Ubuntu 26.04.1.
+PASS: final complete scripts/tests suite after SHA256SUMS refresh: 257 passed.
+PASS: affected backend contract/integration tests: 18 passed, 1 skipped.
+PASS: Python compileall for backend/client release/runtime/scripts.
+PASS: deterministic USB builder produced byte-identical candidates; size 208620, SHA-256 cff2ea07c8fc902ca3a00720c61fec56d732154d91678d19fc42911f4b55787e; both internal manifests verified.
+PENDING: Ruff and display-baseline CI gates; local tool container lacks ruff and sqlmodel, so these remain canonical GitHub CI gates.
+PENDING: canonical GitHub push CI after branch upload/merge.
+
+Release follow-up:
+PENDING: after merge + canonical green CI, allocate a NEW release/source sequence through CLIENTFLOW_RELEASE_PROCEDURE.md.
+PENDING: build/reproducibility/manual approval/immutable publication/catalog promotion for that new release.
+PENDING: regenerate canonical USB from promoted main and restart clean Ubuntu 26.04 physical acceptance from phase 0.

@@ -60,7 +60,7 @@ This is the only accepted visible ordering exception in this package.
 - Bootstrap state is root-owned and mode-restricted.
 - Ambiguous first-claim failures retain only the already verified exact bundle root-only so the one-time CF code is not incorrectly reused.
 - A crash after durable `pending_manual_activation` resumes through the product customer orchestrator, so it cannot bypass the approval waiter or the operator-confirmed reboot.
-- Reboot primitive is `systemctl --no-block --ignore-inhibitors reboot`, 10-second command timeout, with no `--force`.
+- Reboot primitive is `systemctl --no-block --check-inhibitors=no reboot`, 10-second command timeout, with no `--force`.
 
 ## USB build evidence
 

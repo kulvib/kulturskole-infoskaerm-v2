@@ -78,7 +78,7 @@ def test_fresh_install_materializes_graphical_login_before_reboot_and_activation
     assert '"clientflow_runtime.display_session_prepare"' in helper
     assert '_prepare_pre_activation_graphical_session()' in helper
     queue = helper[helper.index("def _queue_controlled_pre_activation_reboot"):helper.index("def _prompt")]
-    assert '[str(SYSTEMCTL), "--no-block", "--ignore-inhibitors", "reboot"]' in queue
+    assert '[str(SYSTEMCTL), "--no-block", "--check-inhibitors=no", "reboot"]' in queue
     assert "timeout=10" in queue
     assert '"--force"' not in queue
     customer_start = helper.index("def _customer_install")

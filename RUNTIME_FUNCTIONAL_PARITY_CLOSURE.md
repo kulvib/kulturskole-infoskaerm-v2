@@ -77,7 +77,7 @@ This closure is intentionally limited to runtime functional parity and the cross
   - 300-second reboot cooldown with browser-start fallback;
   - boot-scoped manual override until next real schedule boundary.
 - Privilege boundary: new `clientflow-calendar-reboot-broker` accepts only a fixed reboot operation over a root-owned Unix socket; Calendar receives no System credential or generic root access.
-- Reboot uses `--ignore-inhibitors`, matching the proven legacy appliance behaviour for Calendar/manual reboot.
+- Reboot uses `--check-inhibitors=no`, matching the proven legacy appliance behaviour for Calendar/manual reboot.
 - Frozen risk: none.
 
 ### 6. System power and Ubuntu update drift

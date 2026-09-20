@@ -12,7 +12,7 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
     if int(request.get("schema_version") or 0) != 1 or request.get("action") != "reboot":
         raise ValueError("Calendar reboot broker accepterer kun schema_version=1/action=reboot")
     completed = subprocess.run(
-        ["/usr/bin/systemctl", "--no-block", "--ignore-inhibitors", "reboot"],
+        ["/usr/bin/systemctl", "--no-block", "--check-inhibitors=no", "reboot"],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, timeout=10, check=False,
         env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},

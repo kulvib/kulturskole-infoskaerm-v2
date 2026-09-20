@@ -204,7 +204,7 @@ def test_controlled_pre_activation_reboot_uses_narrow_inhibitor_override(monkeyp
     module._queue_controlled_pre_activation_reboot()
 
     assert captured["command"] == [
-        str(module.SYSTEMCTL), "--no-block", "--ignore-inhibitors", "reboot"
+        str(module.SYSTEMCTL), "--no-block", "--check-inhibitors=no", "reboot"
     ]
     assert captured["kwargs"] == {"check": False, "timeout": 10}
     assert "--force" not in captured["command"]
@@ -214,7 +214,7 @@ def test_fresh_install_prepares_graphical_login_before_queuing_reboot():
     source = HELPER.read_text(encoding="utf-8")
     queue = source[source.index("def _queue_controlled_pre_activation_reboot"):source.index("def _prompt")]
     assert 'state.get("status") != "pending_manual_activation"' in queue
-    assert '[str(SYSTEMCTL), "--no-block", "--ignore-inhibitors", "reboot"]' in queue
+    assert '[str(SYSTEMCTL), "--no-block", "--check-inhibitors=no", "reboot"]' in queue
     assert "timeout=10" in queue
     assert '"--force"' not in queue
     assert "fresh_install_binding" in queue

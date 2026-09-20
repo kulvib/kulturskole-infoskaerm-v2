@@ -40,7 +40,7 @@ def test_system_broker_retains_reboot_and_shutdown_fixed_function_contract(monke
     command_id = "00000000-0000-4000-8000-000000000001"
 
     assert system_broker._prepare("reboot", {}, client_id=42, command_id=command_id) == {
-        "command": ["/usr/bin/systemctl", "--no-block", "--ignore-inhibitors", "reboot"],
+        "command": ["/usr/bin/systemctl", "--no-block", "--check-inhibitors=no", "reboot"],
         "timeout": 10,
     }
     assert system_broker._prepare("shutdown", {}, client_id=42, command_id=command_id) == {
@@ -168,7 +168,7 @@ def test_update_reboot_boundary_never_returns_success_before_boot(monkeypatch):
     )
     with pytest.raises(system_broker.SystemCommandInDoubt, match="system_reboot_returned_without_boot_boundary"):
         system_broker._cross_update_reboot_boundary()
-    assert calls == [(["/usr/bin/systemctl", "--ignore-inhibitors", "reboot"], {"timeout": 7200})]
+    assert calls == [(["/usr/bin/systemctl", "--check-inhibitors=no", "reboot"], {"timeout": 7200})]
 
 
 def test_power_transition_stops_browser_then_waits_status_then_final_status(monkeypatch):

@@ -235,4 +235,4 @@ def test_calendar_first_on_is_baseline_off_is_enforced_and_wake_reboots(monkeypa
 
 def test_calendar_reboot_broker_ignores_session_inhibitors_like_legacy():
     broker = (ROOT / "client/runtime/clientflow_runtime/calendar_reboot_broker.py").read_text(encoding="utf-8")
-    assert '["/usr/bin/systemctl", "--no-block", "--ignore-inhibitors", "reboot"]' in broker
+    assert '["/usr/bin/systemctl", "--no-block", "--check-inhibitors=no", "reboot"]' in broker
