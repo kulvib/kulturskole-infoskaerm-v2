@@ -25,6 +25,10 @@ def test_factory_popup_list_matches_activation_time_popup_authority() -> None:
     common = _load(COMMON, "clientflow_factory_popup_common_list")
     platform = _load(PLATFORM, "clientflow_factory_popup_platform_list")
     assert common._FACTORY_DISABLED_AUTOSTARTS == platform.KIOSK_DISABLED_AUTOSTARTS
+    # Ubuntu 26.04 update-notifier ships this additional XDG autostart.
+    # It is specifically an Ubuntu Pro/Advantage notification launcher and
+    # must be suppressed before either human account's first graphical login.
+    assert "ubuntu-advantage-notification.desktop" in common._FACTORY_DISABLED_AUTOSTARTS
 
 
 def test_factory_popup_autostarts_are_materialized_and_validated_before_first_login(

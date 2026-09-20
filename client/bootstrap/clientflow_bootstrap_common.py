@@ -43,6 +43,7 @@ ADMIN_DISPLAY_NAME = "ClientFlow local admin"
 _PRIVILEGED_KIOSK_GROUPS = ("sudo", "adm", "admin", "wheel", "lpadmin", "lxd")
 _FACTORY_DISABLED_AUTOSTARTS = (
     "update-notifier.desktop",
+    "ubuntu-advantage-notification.desktop",
     "update-manager.desktop",
     "org.gnome.Software.desktop",
     "gnome-software-service.desktop",
