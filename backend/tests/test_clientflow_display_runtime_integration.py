@@ -38,6 +38,11 @@ def _configure_runtime_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.setattr(runtime_module, "SOCKET_PATH", run / "runtime.sock")
     monkeypatch.setattr(runtime_module, "PID_PATH", run / "browser.pid")
     monkeypatch.setattr(runtime_module, "PROFILE_DIR", state / "browser-profile")
+    chrome_xdg_root = state / "chrome-xdg"
+    monkeypatch.setattr(runtime_module, "CHROME_XDG_ROOT", chrome_xdg_root)
+    monkeypatch.setattr(runtime_module, "CHROME_XDG_CONFIG", chrome_xdg_root / "config")
+    monkeypatch.setattr(runtime_module, "CHROME_XDG_CACHE", chrome_xdg_root / "cache")
+    monkeypatch.setattr(runtime_module, "CHROME_XDG_DATA", chrome_xdg_root / "data")
     monkeypatch.setattr(runtime_module, "BOOT_MARKER_PATH", state / "browser-boot.json")
     monkeypatch.setattr(runtime_module, "CHROME_BINARY", Path("/bin/true"))
     state.mkdir(parents=True)
@@ -119,6 +124,9 @@ def test_display_configuration_starts_browser_and_survives_runtime_recreation(mo
     assert navigated == [kiosk_url]
     assert first_env["WAYLAND_DISPLAY"] == "wayland-0"
     assert first_env["XDG_SESSION_TYPE"] == "wayland"
+    assert first_env["XDG_CONFIG_HOME"] == str(state / "chrome-xdg" / "config")
+    assert first_env["XDG_CACHE_HOME"] == str(state / "chrome-xdg" / "cache")
+    assert first_env["XDG_DATA_HOME"] == str(state / "chrome-xdg" / "data")
 
     # Simulate service recreation/reboot: durable Display configuration is reloaded
     # and makes the browser desired again without any cloned machine state.
