@@ -41,6 +41,19 @@ KIOSK_DISPLAY_NAME = "ClientFlow kiosk user"
 ADMIN_USER = "cfadmin"
 ADMIN_DISPLAY_NAME = "ClientFlow local admin"
 _PRIVILEGED_KIOSK_GROUPS = ("sudo", "adm", "admin", "wheel", "lpadmin", "lxd")
+_FACTORY_DISABLED_AUTOSTARTS = (
+    "update-notifier.desktop",
+    "update-manager.desktop",
+    "org.gnome.Software.desktop",
+    "gnome-software-service.desktop",
+    "snap-store_ubuntu-software.desktop",
+    "snap-store.desktop",
+    "apport-gtk.desktop",
+    "ubuntu-report-on-upgrade.desktop",
+    "update-notifier-crash.desktop",
+    "software-properties-gtk.desktop",
+    "firefox.desktop",
+)
 MAX_JSON_BYTES = 128 * 1024
 _ALLOWED_NETWORK_TYPES = {"wifi", "802-11-wireless", "ethernet", "802-3-ethernet"}
 _FORGET_NETWORK_TYPES = {"wifi", "802-11-wireless", "ethernet", "802-3-ethernet", "gsm", "cdma", "vpn", "wireguard"}
@@ -429,6 +442,66 @@ def validate_factory_gnome_initial_setup_markers(
             raise BootstrapError(f"GNOME onboarding-marker har ugyldigt indhold for {user}: {marker}")
 
 
+def _factory_disabled_autostart_content(name: str) -> str:
+    return (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        f"Name=ClientFlow disabled {name}\n"
+        "Hidden=true\n"
+        "X-GNOME-Autostart-enabled=false\n"
+        "NoDisplay=true\n"
+    )
+
+
+def prepare_factory_popup_autostarts(user: str) -> None:
+    """Suppress known stock Ubuntu update/crash/report popups before first login."""
+    account = pwd.getpwnam(validate_local_user(user))
+    home = Path(account.pw_dir)
+    _ensure_user_owned_directory(home / ".config", user=user)
+    autostart = home / ".config/autostart"
+    _ensure_user_owned_directory(autostart, user=user)
+    for name in _FACTORY_DISABLED_AUTOSTARTS:
+        _write_user_file_no_follow(
+            autostart / name,
+            _factory_disabled_autostart_content(name),
+            user=user,
+            mode=0o644,
+        )
+
+
+def validate_factory_popup_autostarts(user: str) -> None:
+    account = pwd.getpwnam(validate_local_user(user))
+    autostart = Path(account.pw_dir) / ".config/autostart"
+    try:
+        directory_meta = autostart.lstat()
+    except FileNotFoundError as exc:
+        raise BootstrapError(f"Ubuntu popup-autostart katalog mangler for {user}: {autostart}") from exc
+    if stat.S_ISLNK(directory_meta.st_mode) or not stat.S_ISDIR(directory_meta.st_mode):
+        raise BootstrapError(f"Ubuntu popup-autostart katalog er ugyldigt for {user}: {autostart}")
+    if directory_meta.st_uid != account.pw_uid or directory_meta.st_gid != account.pw_gid:
+        raise BootstrapError(f"Ubuntu popup-autostart katalog har forkert ejerskab for {user}: {autostart}")
+    if stat.S_IMODE(directory_meta.st_mode) != 0o700:
+        raise BootstrapError(f"Ubuntu popup-autostart katalog har forkert mode for {user}: {autostart}")
+    for name in _FACTORY_DISABLED_AUTOSTARTS:
+        path = autostart / name
+        try:
+            meta = path.lstat()
+        except FileNotFoundError as exc:
+            raise BootstrapError(f"Ubuntu popup-autostart override mangler for {user}: {path}") from exc
+        if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode):
+            raise BootstrapError(f"Ubuntu popup-autostart override er ugyldig for {user}: {path}")
+        if meta.st_uid != account.pw_uid or meta.st_gid != account.pw_gid:
+            raise BootstrapError(f"Ubuntu popup-autostart override har forkert ejerskab for {user}: {path}")
+        if stat.S_IMODE(meta.st_mode) != 0o644:
+            raise BootstrapError(f"Ubuntu popup-autostart override har forkert mode for {user}: {path}")
+        try:
+            value = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise BootstrapError(f"Ubuntu popup-autostart override kan ikke læses for {user}: {path}") from exc
+        if value != _factory_disabled_autostart_content(name):
+            raise BootstrapError(f"Ubuntu popup-autostart override har ugyldigt indhold for {user}: {path}")
+
+
 def provision_factory_human_accounts() -> None:
     require_root()
     password = _prompt_admin_password()
@@ -450,9 +523,11 @@ def provision_factory_human_accounts() -> None:
     validate_factory_human_accounts()
     for username in (KIOSK_USER, ADMIN_USER):
         prepare_factory_gnome_initial_setup_markers(username)
+        prepare_factory_popup_autostarts(username)
     ok(
         "cfadmin og clientflow-kiosk er oprettet og valideret; kiosk har ingen privilegerede grupper, "
-        "og GNOME first-login/upgrade onboarding er markeret færdig for begge konti."
+        "GNOME first-login/upgrade onboarding er markeret færdig, og kendte Ubuntu update/crash/report "
+        "popup-autostarts er deaktiveret før første login for begge konti."
     )
 
 
@@ -697,6 +772,7 @@ def validate_factory_handoff(*, client_name: str, operator_user: str) -> None:
     validate_factory_human_accounts()
     for username in (KIOSK_USER, ADMIN_USER):
         validate_factory_gnome_initial_setup_markers(username)
+        validate_factory_popup_autostarts(username)
     gdm = GDM_CONFIG.read_text(encoding="utf-8") if GDM_CONFIG.is_file() else ""
     if "AutomaticLoginEnable=true" not in gdm or f"AutomaticLogin={KIOSK_USER}" not in gdm or "WaylandEnable=true" not in gdm:
         raise BootstrapError("GDM factory-handoff peger ikke på canonical kiosk-bruger")
