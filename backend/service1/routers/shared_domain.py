@@ -16,6 +16,7 @@ from ..display_control import (
 )
 from ..calendar_control import build_display_calendar_delivery
 from ..system_control import apply_status_power_observation, apply_system_command_completion
+from ..models import Client
 from ..shared_domain import (
     claim_shared_command,
     complete_shared_command,
@@ -57,6 +58,18 @@ class FailBody(BaseModel):
     retryable: bool = False
 
 
+def _client_identity_payload(session: Session, client_id: int) -> dict[str, Any]:
+    client = session.get(Client, client_id)
+    if client is None:
+        raise RuntimeError("Status credential refererer til en manglende klient")
+    return {
+        "schema_version": 1,
+        "client_id": int(client.id),
+        "name": str(client.name or "").strip(),
+        "locality": str(client.locality).strip() if client.locality else None,
+    }
+
+
 def _status(domain: str, client_id: int, body: StatusBody, authorization: str | None):
     with Session(engine) as session:
         credential = require_shared_agent_token(
@@ -88,14 +101,20 @@ def _status(domain: str, client_id: int, body: StatusBody, authorization: str | 
                 status_payload=body.status_payload,
                 boot_id=body.boot_id,
             )
+        client_identity = None
+        if domain == "status":
+            client_identity = _client_identity_payload(session, client_id)
         session.commit()
-        return {
+        response = {
             "ok": True,
             "client_id": row.client_id,
             "domain": row.domain,
             "observed_state": row.observed_state,
             "reported_at": row.reported_at,
         }
+        if client_identity is not None:
+            response["client_identity"] = client_identity
+        return response
 
 
 def _claim(domain: str, client_id: int, body: ClaimBody, authorization: str | None):

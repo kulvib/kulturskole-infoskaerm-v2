@@ -551,13 +551,17 @@ def _preactivation_gui() -> int:
     runtime_dir = wayland_socket.parent
     gui_root = Path("/var/lib/clientflow/preactivation-gui")
     gui_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chown(gui_root, account.pw_uid, account.pw_gid)
     xdg: dict[str, Path] = {}
     for name in ("cache", "config", "data"):
         directory = gui_root / name
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chown(directory, account.pw_uid, account.pw_gid)
         xdg[name] = directory
+    # The service deliberately lacks CAP_DAC_OVERRIDE.  Create the complete
+    # root-owned tree before transferring ownership of its 0700 parent;
+    # otherwise root can no longer create children after the chown.
+    for directory in (gui_root, *xdg.values()):
+        os.chown(directory, account.pw_uid, account.pw_gid)
+        os.chmod(directory, 0o700)
 
     environment = {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -619,7 +623,7 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 LockPersonality=yes
-CapabilityBoundingSet=CAP_CHOWN CAP_SETGID CAP_SETUID
+CapabilityBoundingSet=CAP_CHOWN CAP_SETGID CAP_SETUID CAP_DAC_READ_SEARCH
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
 
 [Install]

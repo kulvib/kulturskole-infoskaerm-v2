@@ -586,7 +586,19 @@ def _atomic_copy(source: Path, destination: Path, *, mode: int) -> None:
     atomic_write_bytes(destination, source.read_bytes(), mode=mode)
 
 
+_BOOTSTRAP_ONLY_UNITS = frozenset({
+    "clientflow-first-activation.service",
+    "clientflow-preactivation-gui.service",
+})
+
+
 def _managed_unit_paths(layout: Layout) -> list[Path]:
+    """Return release-owned ClientFlow units, never temporary bootstrap units.
+
+    First-activation and pre-activation GUI units are installed by the outer
+    bootstrap and must survive the release transaction until the bootstrap
+    lifecycle cleans them up after durable activation health.
+    """
     if not layout.unit_root.exists():
         return []
     paths: set[Path] = set()
@@ -595,7 +607,7 @@ def _managed_unit_paths(layout: Layout) -> list[Path]:
     target = layout.unit_root / "clientflow.target"
     if target.exists() or target.is_symlink():
         paths.add(target)
-    return sorted(paths)
+    return sorted(path for path in paths if path.name not in _BOOTSTRAP_ONLY_UNITS)
 
 
 def _remove_managed_units(layout: Layout) -> None:
@@ -723,7 +735,8 @@ _UPDATE_CONTROL_PLANE_UNITS = frozenset({
 
 def _runtime_unit_names(layout: Layout) -> list[str]:
     names = {path.name for path in _managed_unit_paths(layout)}
-    return sorted(name for name in names if name not in _UPDATE_CONTROL_PLANE_UNITS)
+    excluded = _UPDATE_CONTROL_PLANE_UNITS | _BOOTSTRAP_ONLY_UNITS
+    return sorted(name for name in names if name not in excluded)
 
 
 def _quiesce_runtime(layout: Layout, *, require_target: bool = True) -> None:

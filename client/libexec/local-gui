@@ -37,6 +37,7 @@ RESOLUTION_DESIRED_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_RESOLUTION_DESIRED_
 GUI_STATUS_PATH = Path(os.getenv("CLIENTFLOW_GUI_STATUS_PATH", "/var/lib/clientflow/display-runtime/local-gui-status.json"))
 CALENDAR_PREVIEW_PATH = Path(os.getenv("CLIENTFLOW_CALENDAR_PREVIEW_PATH", "/var/lib/clientflow/display-runtime/calendar-preview.json"))
 PUBLIC_CLIENT_PATH = Path(os.getenv("CLIENTFLOW_PUBLIC_CLIENT_PATH", "/var/lib/clientflow/client-public.json"))
+SYNCED_PUBLIC_CLIENT_PATH = Path(os.getenv("CLIENTFLOW_SYNCED_PUBLIC_CLIENT_PATH", "/var/lib/clientflow/status/client-public.json"))
 VERSION_PATH = Path(os.getenv("CLIENTFLOW_VERSION_PATH", "/opt/clientflow/active/VERSION"))
 GUI_MODE = str(os.getenv("CLIENTFLOW_GUI_MODE") or "active").strip().lower()
 PREACTIVATION_MODE = GUI_MODE == "preactivation"
@@ -795,7 +796,15 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
     def refresh(self) -> bool:
         try:
             runtime = _read_json(STATUS_PATH)
-            public = _read_json(PUBLIC_CLIENT_PATH)
+            baseline_public = _read_json(PUBLIC_CLIENT_PATH)
+            synced_public = _read_json(SYNCED_PUBLIC_CLIENT_PATH)
+            public = baseline_public
+            if (
+                synced_public.get("schema_version") == 1
+                and synced_public.get("client_id") == baseline_public.get("client_id")
+                and str(synced_public.get("name") or "").strip()
+            ):
+                public = synced_public
             configuration = _read_json(CONFIG_PATH)
             resolution = _read_json(RESOLUTION_STATUS_PATH)
             resolution_desired = _read_json(RESOLUTION_DESIRED_PATH)

@@ -384,6 +384,52 @@ def _prepare_accounts_service(kiosk_user: str, accounts_root: Path = Path("/var/
     _atomic_write_text(path, text)
 
 
+def _ubuntu_version_id(os_release: Path = Path("/etc/os-release")) -> str:
+    try:
+        lines = os_release.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise DisplayPlatformPreparationError("Ubuntu VERSION_ID kunne ikke læses") from exc
+    for line in lines:
+        if line.startswith("VERSION_ID="):
+            value = line.split("=", 1)[1].strip().strip('"').strip("'")
+            if re.fullmatch(r"[0-9]{2}\.[0-9]{2}", value):
+                return value
+            break
+    raise DisplayPlatformPreparationError("Ubuntu VERSION_ID er ugyldig")
+
+
+def _prepare_gnome_initial_setup_markers(
+    kiosk_user: str,
+    home: Path,
+    *,
+    os_release: Path = Path("/etc/os-release"),
+) -> None:
+    """Suppress both GNOME existing-user and release-upgrade onboarding.
+
+    Ubuntu 26.04 ships separate first-login and upgrade-login services.  The
+    latter is conditioned on the first marker existing and a release-specific
+    upgrade marker being absent, so both markers must be materialized before
+    the first kiosk login.
+    """
+    try:
+        record = pwd.getpwnam(kiosk_user)
+    except KeyError as exc:
+        raise DisplayPlatformPreparationError(f"Kiosk-bruger findes ikke: {kiosk_user}") from exc
+    config_root = home / ".config"
+    upgrade_root = config_root / "gnome-initial-setup"
+    for directory in (config_root, upgrade_root):
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chown(directory, record.pw_uid, record.pw_gid)
+        os.chmod(directory, 0o700)
+    markers = (
+        config_root / "gnome-initial-setup-done",
+        upgrade_root / f"upgrade-{_ubuntu_version_id(os_release)}-done",
+    )
+    for marker in markers:
+        _atomic_write_text(marker, "yes\n", mode=0o600)
+        os.chown(marker, record.pw_uid, record.pw_gid)
+
+
 def _gsettings_commands() -> Iterable[tuple[str, str, str]]:
     # Port the physically proven legacy Golden kiosk behaviour into the V2
     # Display/platform authority.  These settings are scoped to the kiosk user;
@@ -674,6 +720,7 @@ def _prepare_graphical_kiosk(kiosk_user: str) -> bool:
         raise DisplayPlatformPreparationError("Kiosk-brugerens home mangler eller har forkert ejerskab")
     gdm_changed = _prepare_gdm(kiosk_user)
     _prepare_accounts_service(kiosk_user)
+    _prepare_gnome_initial_setup_markers(kiosk_user, home)
     _prepare_gnome_settings(kiosk_user, home)
     _prepare_human_popup_baseline(kiosk_user)
     return gdm_changed
@@ -692,6 +739,7 @@ def prepare_graphical_login_baseline(kiosk_user: str) -> bool:
         raise DisplayPlatformPreparationError("Kiosk-brugerens home mangler eller har forkert ejerskab")
     gdm_changed = _prepare_gdm(kiosk_user)
     _prepare_accounts_service(kiosk_user)
+    _prepare_gnome_initial_setup_markers(kiosk_user, home)
     return gdm_changed
 
 

@@ -23,10 +23,11 @@ def test_pending_gui_is_a_separate_temporary_service_not_full_runtime() -> None:
     assert 'NoNewPrivileges=yes' in source
     assert 'ProtectSystem=full' in source
     assert 'ProtectKernelTunables=yes' in source
-    assert 'CapabilityBoundingSet=CAP_CHOWN CAP_SETGID CAP_SETUID' in source
+    assert 'CapabilityBoundingSet=CAP_CHOWN CAP_SETGID CAP_SETUID CAP_DAC_READ_SEARCH' in source
     assert 'RestrictAddressFamilies=AF_UNIX AF_NETLINK' in source
     assert 'ProtectHome=' not in source[source.index('def _install_preactivation_gui_service'):source.index('def _ensure_preactivation_gui_started')]
     install_block = source[source.index("def _install_preactivation_gui_service"):source.index("def _ensure_preactivation_gui_started")]
+    assert 'CAP_DAC_OVERRIDE' not in install_block
     assert '"--now"' not in install_block
 
     target = _source(TARGET)
