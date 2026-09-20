@@ -129,3 +129,53 @@ def test_systemd_259_documented_inhibitor_override_is_used_by_all_reboot_authori
         assert "--ignore-inhibitors" not in source, label
         assert "--check-inhibitors=no" in source, label
         assert "--force" not in source, label
+
+
+def test_factory_creates_gnome_first_login_and_upgrade_markers_before_first_reboot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_common()
+    os_release = tmp_path / "os-release"
+    os_release.write_text('NAME="Ubuntu"\nVERSION_ID="26.04"\n', encoding="utf-8")
+
+    users = {}
+    for index, username in enumerate((module.KIOSK_USER, module.ADMIN_USER), start=1001):
+        home = tmp_path / username
+        home.mkdir(mode=0o700)
+        users[username] = SimpleNamespace(
+            pw_uid=home.stat().st_uid,
+            pw_gid=home.stat().st_gid,
+            pw_dir=str(home),
+        )
+
+    monkeypatch.setattr(module.pwd, "getpwnam", lambda username: users[username])
+    monkeypatch.setattr(module, "validate_local_user", lambda username: username)
+    monkeypatch.setattr(module.os, "chown", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module.os, "fchown", lambda *_args, **_kwargs: None)
+
+    for username in (module.KIOSK_USER, module.ADMIN_USER):
+        module.prepare_factory_gnome_initial_setup_markers(username, os_release=os_release)
+        home = Path(users[username].pw_dir)
+        first = home / ".config/gnome-initial-setup-done"
+        upgrade = home / ".config/gnome-initial-setup/upgrade-26.04-done"
+        assert first.read_text(encoding="utf-8") == "yes\n"
+        assert upgrade.read_text(encoding="utf-8") == "yes\n"
+        assert first.stat().st_mode & 0o777 == 0o600
+        assert upgrade.stat().st_mode & 0o777 == 0o600
+        module.validate_factory_gnome_initial_setup_markers(username, os_release=os_release)
+
+
+def test_factory_provisioning_materializes_onboarding_markers_for_both_human_accounts() -> None:
+    source = COMMON.read_text(encoding="utf-8")
+    provision = source[source.index("def provision_factory_human_accounts") : source.index("def _replace_ini_section_keys")]
+    assert "for username in (KIOSK_USER, ADMIN_USER):" in provision
+    assert "prepare_factory_gnome_initial_setup_markers(username)" in provision
+
+
+def test_factory_handoff_fails_closed_unless_both_onboarding_markers_are_validated() -> None:
+    source = COMMON.read_text(encoding="utf-8")
+    handoff = source[source.index("def validate_factory_handoff") : source.index("def load_usb_state")]
+    marker_check = "validate_factory_gnome_initial_setup_markers(username)"
+    ready = "write_factory_state(client_name=client_name, operator_user=operator_user, handoff_ready=True)"
+    assert "for username in (KIOSK_USER, ADMIN_USER):" in handoff
+    assert handoff.index(marker_check) < handoff.index(ready)
