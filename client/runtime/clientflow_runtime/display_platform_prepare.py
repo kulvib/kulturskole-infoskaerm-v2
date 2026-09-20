@@ -26,6 +26,7 @@ CFADMIN_USER = "cfadmin"
 SLEEP_TARGETS = ("sleep.target", "suspend.target", "hibernate.target", "hybrid-sleep.target")
 KIOSK_DISABLED_AUTOSTARTS = (
     "update-notifier.desktop",
+    "ubuntu-advantage-notification.desktop",
     "update-manager.desktop",
     "org.gnome.Software.desktop",
     "gnome-software-service.desktop",
