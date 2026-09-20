@@ -15,11 +15,18 @@ def test_source_freeze_has_no_repo_overlay_duplicate_tree() -> None:
 
 def test_source_freeze_has_no_delivery_package_artifacts() -> None:
     """Delivery-only bundle metadata must never become canonical source."""
-    assert not (ROOT / "SHA256SUMS_PACKAGE.txt").exists()
-    leaked_readmes = sorted(ROOT.glob("CLIENTFLOW_*_FIX_PACKAGE_README.txt"))
-    assert leaked_readmes == [], (
-        "delivery package README leaked into canonical source: "
-        + ", ".join(path.name for path in leaked_readmes)
+    forbidden_root_artifacts = {
+        "CHANGED_FILES.txt",
+        "DELETIONS.txt",
+        "DELIVERY_MANIFEST.sha256",
+        "README.txt",
+        "SHA256SUMS_PACKAGE.txt",
+    }
+    leaked = sorted(name for name in forbidden_root_artifacts if (ROOT / name).exists())
+    leaked.extend(path.name for path in sorted(ROOT.glob("*.patch")))
+    leaked.extend(path.name for path in sorted(ROOT.glob("CLIENTFLOW_*_FIX_PACKAGE_README.txt")))
+    assert leaked == [], (
+        "delivery-only artifact leaked into canonical source: " + ", ".join(leaked)
     )
 
 

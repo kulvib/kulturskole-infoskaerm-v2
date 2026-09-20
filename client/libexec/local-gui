@@ -471,6 +471,14 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         value.set_hexpand(True)
         value.set_wrap(True)
         value.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        # GTK4 uses height-for-width geometry.  A wrapping label without a
+        # minimum character width may report its vertical request at an almost
+        # zero-width allocation, which made the fixed legacy panel request
+        # thousands of pixels of height on Ubuntu 26.04.  Preserve wrapping,
+        # but bound the minimum/natural width so the grid has a stable vertical
+        # requisition at the supported compact/standard/large panel widths.
+        value.set_width_chars(24)
+        value.set_max_width_chars(40)
         value.set_ellipsize(Pango.EllipsizeMode.NONE)
         grid.attach(label, column, row, 1, 1)
         grid.attach(value, column + 1, row, 1, 1)

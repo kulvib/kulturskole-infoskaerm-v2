@@ -224,6 +224,8 @@ def test_gui_visual_constants_responsiveness_no_scroll_and_wrapping_match_contra
         "homogeneous=True",
         "GLib.timeout_add_seconds(1, self.refresh)",
         "value.set_wrap(True)",
+        "value.set_width_chars(24)",
+        "value.set_max_width_chars(40)",
         "value.set_ellipsize(Pango.EllipsizeMode.NONE)",
         "font-family: Arial, sans-serif",
         ".start-button {{ background-image: none; background-color: #4BB543; }}",
