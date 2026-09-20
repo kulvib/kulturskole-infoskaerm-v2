@@ -13,6 +13,16 @@ def test_source_freeze_has_no_repo_overlay_duplicate_tree() -> None:
     )
 
 
+def test_source_freeze_has_no_delivery_package_artifacts() -> None:
+    """Delivery-only bundle metadata must never become canonical source."""
+    assert not (ROOT / "SHA256SUMS_PACKAGE.txt").exists()
+    leaked_readmes = sorted(ROOT.glob("CLIENTFLOW_*_FIX_PACKAGE_README.txt"))
+    assert leaked_readmes == [], (
+        "delivery package README leaked into canonical source: "
+        + ", ".join(path.name for path in leaked_readmes)
+    )
+
+
 def test_nanoid_high_severity_advisory_is_fixed_without_waiver() -> None:
     lock = json.loads((ROOT / "frontend" / "package-lock.json").read_text(encoding="utf-8"))
     nanoid = lock["packages"]["node_modules/nanoid"]
