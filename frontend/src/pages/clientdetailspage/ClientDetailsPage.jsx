@@ -262,6 +262,40 @@ const DISPLAY_RESOLUTION_LIVE_FIELDS = [
   "display_detected_updated_at",
 ];
 
+const DETAIL_HOT_FIELDS = [
+  // Stable detail/configuration values are already loaded by /chrome-status
+  // for authorization. Carry them on the same hot response so Configuration
+  // and Diagnostics do not need parallel full-client polling loops.
+  "name",
+  "locality",
+  "status",
+  "organization_id",
+  "machine_id",
+  "kiosk_url",
+  "browser_refresh_interval_sec",
+  "service_clientflow_status",
+  "service_calendar_status",
+  "service_browser_guard_status",
+  "service_remote_terminal_status",
+  "service_admin_terminal_status",
+  "service_remote_desktop_status",
+  "service_livestream_status",
+  "last_boot_at",
+  "last_boot_id",
+  "last_power_event",
+  "last_power_event_at",
+  "last_power_event_source",
+  "last_reboot_started_at",
+  "last_shutdown_started_at",
+  "livestream_last_segment",
+  "livestream_last_error",
+  "desktop_lockdown_enabled",
+  "desktop_lockdown_status",
+  "desktop_lockdown_message",
+  "desktop_lockdown_updated_at",
+  "desktop_lockdown_last_applied_at",
+];
+
 const NETWORK_LIVE_FIELDS = [
   "network_status",
   "network_status_message",
@@ -330,6 +364,10 @@ function pickLiveFields(data, fields) {
     }
     return acc;
   }, {});
+}
+
+function pickDetailHotFields(data) {
+  return pickLiveFields(data, DETAIL_HOT_FIELDS);
 }
 
 function pickDisplayResolutionFields(data) {
@@ -967,6 +1005,13 @@ export default function ClientDetailsPage({
   const liveStepRef                  = useRef(client?.chrome_step ?? null);
   const liveStepTimestampRef         = useRef(client?.chrome_last_updated ?? null);
 
+  // Stable detail/configuration data piggybacks on the same /chrome-status
+  // request. This preserves 5-second idle freshness while removing separate
+  // 10/15-second full-client DB polling from Diagnostics/Configuration.
+  const [liveDetailHotFields, setLiveDetailHotFields] = useState(() =>
+    pickDetailHotFields(client)
+  );
+
   // Display-opløsning kommer med i /chrome-status, så UI'et kan følge
   // backend-/klientændringer uden at vente på manuel eller silent refresh.
   const [liveDisplayResolution, setLiveDisplayResolution] = useState(() =>
@@ -1108,6 +1153,7 @@ export default function ClientDetailsPage({
     } else {
       setLiveBrowserRequested(null);
     }
+    setLiveDetailHotFields(pickDetailHotFields(client));
     setLiveDisplayResolution(pickDisplayResolutionFields(client));
     setLiveNetworkStatus(pickNetworkFields(client));
     setLiveUpdateFields(pickUpdateFields(client));
@@ -1206,6 +1252,12 @@ export default function ClientDetailsPage({
             setLocalPendingAction(pendingChromeAction || "none");
           }
           if (data?.state) setLocalClientState(data.state);
+
+          const nextDetailHotFields = pickDetailHotFields(data);
+          if (Object.keys(nextDetailHotFields).length > 0) {
+            setLiveDetailHotFields((prev) => ({ ...prev, ...nextDetailHotFields }));
+          }
+
           const nextDisplayResolution = pickDisplayResolutionFields(data);
           if (Object.keys(nextDisplayResolution).length > 0) {
             setLiveDisplayResolution((prev) => ({ ...prev, ...nextDisplayResolution }));
@@ -1538,6 +1590,7 @@ export default function ClientDetailsPage({
   const liveClient = useMemo(
     () => ({
       ...(client || {}),
+      ...liveDetailHotFields,
       ...liveDisplayResolution,
       ...liveNetworkStatus,
       ...liveUpdateFields,
@@ -1563,6 +1616,7 @@ export default function ClientDetailsPage({
     }),
     [
       client,
+      liveDetailHotFields,
       liveDisplayResolution,
       liveNetworkStatus,
       liveUpdateFields,

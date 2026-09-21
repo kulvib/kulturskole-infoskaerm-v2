@@ -36,7 +36,6 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
-import { isPageVisible } from "../../utils/pageVisibility";
 import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
 
 const UKEDAGE = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag"];
@@ -3054,7 +3053,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
           alignItems: { xs: "flex-start", sm: "center" }
         }}>
           <Typography variant="caption" sx={{ color: MUTED, fontWeight: 800 }}>
-            Opdateret: {formatDiagnosticDate(client?.diagnostics_updated_at)} · auto hvert 10 sek.
+            Opdateret: {formatDiagnosticDate(client?.diagnostics_updated_at)} · live-status
           </Typography>
           {onRefresh ? (
             <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={onRefresh} sx={{ borderRadius: 999, color: TEXT, borderColor: BORDER }}>
@@ -3172,8 +3171,6 @@ export default function ClientDetailsInfoSection({
   const isViewer = user?.role === "viewer";
   const canViewDiagnostics = isSuperadmin || isViewer;
   const [activeTab, setActiveTab] = React.useState("calendar");
-  const diagnosticsRefreshInFlightRef = React.useRef(false);
-  const configRefreshInFlightRef = React.useRef(false);
 
   const tabs = React.useMemo(() => {
     const base = [
@@ -3194,61 +3191,10 @@ export default function ClientDetailsInfoSection({
 
   const currentTab = tabs.some((tab) => tab.value === activeTab) ? activeTab : "calendar";
 
-  React.useEffect(() => {
-    if (currentTab !== "config" || typeof onDiagnosticsRefresh !== "function") {
-      return undefined;
-    }
-
-    let alive = true;
-
-    const refreshConfig = async () => {
-      if (!alive || configRefreshInFlightRef.current || !isPageVisible()) return;
-      configRefreshInFlightRef.current = true;
-      try {
-        await onDiagnosticsRefresh();
-      } catch {
-        // Ignorer stille refresh-fejl i Konfiguration. Næste interval prøver igen.
-      } finally {
-        configRefreshInFlightRef.current = false;
-      }
-    };
-
-    refreshConfig();
-    const timer = window.setInterval(refreshConfig, 15_000);
-
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [currentTab, onDiagnosticsRefresh]);
-
-  React.useEffect(() => {
-    if (!canViewDiagnostics || currentTab !== "diagnostics" || typeof onDiagnosticsRefresh !== "function") {
-      return undefined;
-    }
-
-    let alive = true;
-
-    const refreshDiagnostics = async () => {
-      if (!alive || diagnosticsRefreshInFlightRef.current || !isPageVisible()) return;
-      diagnosticsRefreshInFlightRef.current = true;
-      try {
-        await onDiagnosticsRefresh();
-      } catch {
-        // Ignorer stille refresh-fejl i diagnostik. Næste interval prøver igen.
-      } finally {
-        diagnosticsRefreshInFlightRef.current = false;
-      }
-    };
-
-    refreshDiagnostics();
-    const timer = window.setInterval(refreshDiagnostics, 10_000);
-
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [canViewDiagnostics, currentTab, onDiagnosticsRefresh]);
+  // Configuration and Diagnostics no longer start parallel full-client polling.
+  // Their live values arrive on the parent /chrome-status poll, which is 1s
+  // during active transitions and 5s while stable. Manual refresh remains
+  // available for an explicit full re-read.
 
   return (
     <Box sx={{ color: TEXT }}>

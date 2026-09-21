@@ -57,8 +57,7 @@ def test_chrome_status_route_surfaces_browser_request_state(monkeypatch):
     client = _Client()
 
     class _Session:
-        def get(self, _model, _id):
-            return client
+        pass
 
     projection = {
         "kiosk_url": "https://example.test/",
@@ -85,8 +84,8 @@ def test_chrome_status_route_surfaces_browser_request_state(monkeypatch):
     )
     monkeypatch.setattr(
         clients,
-        "load_client_presences_with_status_rows",
-        lambda *_args, **_kwargs: ({4242: presence}, {(4242, "display"): object()}),
+        "load_client_with_presence_rows",
+        lambda *_args, **_kwargs: (client, presence, {(4242, "display"): object()}),
     )
     monkeypatch.setattr(
         clients,

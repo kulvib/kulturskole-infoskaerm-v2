@@ -134,5 +134,9 @@ def test_frontend_always_on_database_polls_are_visibility_aware():
     assert "refreshDeployment" not in actions
     assert "if (isPageVisible()) refreshClientflowDeployment();" in details_page
     assert "!clientflowDeploymentActive" in details_page
-    assert "configRefreshInFlightRef.current || !isPageVisible()" in info
-    assert "diagnosticsRefreshInFlightRef.current || !isPageVisible()" in info
+    # Configuration/Diagnostics must not add their own full-client intervals.
+    # Their state rides on the already visibility-aware /chrome-status poll.
+    assert "const DETAIL_HOT_FIELDS = [" in details_page
+    assert "setLiveDetailHotFields" in details_page
+    assert "setInterval(refreshConfig" not in info
+    assert "setInterval(refreshDiagnostics" not in info

@@ -315,14 +315,52 @@ def test_chrome_status_projection_query_count_is_constant(seed_count: int) -> No
             assert payload["local_management_desired_hostname"] == "host-0"
             assert payload["local_management_status"] == "pending"
             assert payload["local_management_message"] == "Afventer System-agent: Lokalt hostname ændres"
+            assert payload["name"] == "perf-000"
+            assert "kiosk_url" in payload
+            assert "browser_refresh_interval_sec" in payload
+            assert "service_clientflow_status" in payload
+            assert "last_boot_id" in payload
+            assert "livestream_last_error" in payload
     finally:
         event.remove(engine, "before_cursor_execute", count_selects)
 
-    # 1 Client lookup + 1 joined presence/credential query +
-    # 2 Display batch queries + 1 latest-System-command window query. The
-    # 1-second detail poll must not grow with the number of clients present in
-    # the database.
-    assert select_count == 5
+    # 1 joined Client/presence/credential query + 2 Display batch queries +
+    # 1 latest-System-command window query. The detail hot poll must not grow
+    # with the number of clients present in the database.
+    assert select_count == 4
+
+
+@pytest.mark.parametrize("seed_count", [1, 10, 50, 100])
+def test_single_client_detail_query_count_is_constant(seed_count: int) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    _seed(engine, seed_count)
+
+    select_count = 0
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        nonlocal select_count
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_count += 1
+
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        with Session(engine) as session:
+            result = clients_router.get_client(
+                1,
+                session=session,
+                user=SimpleNamespace(is_superadmin=True),
+            )
+            assert result.id == 1
+            assert result.presence["status"]["domain"] == "status"
+            assert result.browser_requested is True
+            assert result.local_management_status == "pending"
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+
+    # Initial/manual full detail reads share the same joined base evidence and
+    # bounded Display/System projection as the hot path.
+    assert select_count == 4
 
 
 @pytest.mark.parametrize("client_count", [1, 10, 50, 100])
