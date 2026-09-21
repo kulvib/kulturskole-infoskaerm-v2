@@ -88,7 +88,9 @@ import {
     shutdown → system_shutting_down, error
 */
 
-const CHROME_STATUS_POLL_MS = 1000;
+const CHROME_STATUS_ACTIVE_POLL_MS = 1000;
+const CHROME_STATUS_IDLE_POLL_MS = 5000;
+const CHROME_STATUS_HIDDEN_CHECK_MS = 1000;
 const ACTION_POLL_MS        = 1500;
 const CLIENTFLOW_DEPLOYMENT_POLL_MS = 2500;
 const CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES = new Set([
@@ -159,6 +161,27 @@ const BUSY_CHROME_STEPS = new Set([
   "system_rebooting",
   "system_shutting_down",
 ]);
+
+function chromeStatusNeedsFastPolling(data) {
+  const pendingAction = String(data?.pending_chrome_action || "none").trim().toLowerCase();
+  const state = String(data?.state || "").trim().toLowerCase();
+  const step = String(data?.chrome_step || data?.step?.step || "").trim().toLowerCase();
+  const updateStatus = String(data?.ubuntu_update_status || "").trim().toLowerCase();
+  const localManagementStatus = String(data?.local_management_status || "").trim().toLowerCase();
+
+  return (
+    (pendingAction && pendingAction !== "none") ||
+    data?.pending_reboot === true ||
+    data?.pending_shutdown === true ||
+    data?.pending_os_update === true ||
+    ["wakeup", "rebooting", "updating"].includes(state) ||
+    BUSY_CHROME_STEPS.has(step) ||
+    updateStatus === "requested" ||
+    updateStatus === "installing" ||
+    localManagementStatus === "pending" ||
+    localManagementStatus === "running"
+  );
+}
 
 /*
   Handlings-specifikke terminal steps.
@@ -1020,6 +1043,8 @@ export default function ClientDetailsPage({
     pendingShutdown: client?.pending_shutdown === true,
     state: client?.state ?? null,
   });
+  const hotPollFastUntilRef = useRef(0);
+  const hotPollWakeRef = useRef(null);
 
   // v7.1.34: Livestream-status skal følge den hurtige /chrome-status polling.
   // Ellers kan Start kiosk være låst af et stale initialt client-snapshot,
@@ -1114,7 +1139,7 @@ export default function ClientDetailsPage({
   // a second 5-second HTTP/DB poll would only duplicate work.
   // ---------------------------------------------------------------------------
   // ---------------------------------------------------------------------------
-  // Chrome-status polling — hvert 1s
+  // Chrome-status polling — adaptive: 1s while active, 5s while stable.
   // ---------------------------------------------------------------------------
   const mountedRef = useRef(true);
 
@@ -1122,11 +1147,34 @@ export default function ClientDetailsPage({
     if (!client?.id) return;
     mountedRef.current = true;
     let cancelled = false;
+    let nextPollMs = CHROME_STATUS_ACTIVE_POLL_MS;
+
+    const waitForNextPoll = (delay) =>
+      new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timerId);
+          if (hotPollWakeRef.current === finish) hotPollWakeRef.current = null;
+          resolve();
+        };
+        const timerId = window.setTimeout(finish, delay);
+        hotPollWakeRef.current = finish;
+      });
+
+    const wakeWhenVisible = () => {
+      if (isPageVisible() && typeof hotPollWakeRef.current === "function") {
+        hotPollWakeRef.current();
+      }
+    };
+    window.addEventListener("focus", wakeWhenVisible);
+    document.addEventListener("visibilitychange", wakeWhenVisible);
 
     async function poll() {
       while (!cancelled && mountedRef.current) {
         if (!isPageVisible()) {
-          await new Promise((res) => setTimeout(res, CHROME_STATUS_POLL_MS));
+          await waitForNextPoll(CHROME_STATUS_HIDDEN_CHECK_MS);
           continue;
         }
         try {
@@ -1206,21 +1254,32 @@ export default function ClientDetailsPage({
               setUptime(parsed);
             }
           }
+
+          nextPollMs =
+            chromeStatusNeedsFastPolling(data) || Date.now() < hotPollFastUntilRef.current
+              ? CHROME_STATUS_ACTIVE_POLL_MS
+              : CHROME_STATUS_IDLE_POLL_MS;
         } catch {
           // Presence is canonical server state. If the hot poll cannot obtain a
           // fresh server evaluation, fail closed locally instead of keeping a
-          // stale online value. Other chrome/runtime fields keep their last
-          // observation until the next successful poll.
+          // stale online value. Retry at the historical active cadence.
           if (!cancelled && mountedRef.current) {
             setLivePresence((previous) => presenceFetchFailed(previous));
           }
+          nextPollMs = CHROME_STATUS_ACTIVE_POLL_MS;
         }
-        await new Promise((res) => setTimeout(res, CHROME_STATUS_POLL_MS));
+        await waitForNextPoll(nextPollMs);
       }
     }
 
     poll();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (typeof hotPollWakeRef.current === "function") hotPollWakeRef.current();
+      hotPollWakeRef.current = null;
+      window.removeEventListener("focus", wakeWhenVisible);
+      document.removeEventListener("visibilitychange", wakeWhenVisible);
+    };
   }, [client?.id]);
 
   // ---------------------------------------------------------------------------
@@ -1244,6 +1303,7 @@ export default function ClientDetailsPage({
 
   const cancelActionPoll = useCallback(() => {
     actionPollStopRef.current = true;
+    hotPollFastUntilRef.current = 0;
     setClientActionPending(false);
     setLocalPendingAction("none");
   }, []);
@@ -1257,6 +1317,8 @@ export default function ClientDetailsPage({
   const startActionConfirmationPolling = useCallback((action) => {
     actionPollStopRef.current = false;
     setClientActionPending(true);
+    hotPollFastUntilRef.current = Date.now() + ACTION_POLL_MAX_MS;
+    if (typeof hotPollWakeRef.current === "function") hotPollWakeRef.current();
 
     const startTime    = Date.now();
     const startTimeISO = new Date(startTime).toISOString();
@@ -1320,6 +1382,7 @@ export default function ClientDetailsPage({
         break;
       }
 
+      hotPollFastUntilRef.current = 0;
       if (mountedRef.current && !actionPollStopRef.current) {
         try {
           const refresh = silentRefresh ?? handleRefresh;

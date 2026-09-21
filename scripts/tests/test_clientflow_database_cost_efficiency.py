@@ -122,8 +122,14 @@ def test_frontend_always_on_database_polls_are_visibility_aware():
     actions = _read("frontend/src/pages/clientdetailspage/ClientDetailsActionsSection.jsx")
     info = _read("frontend/src/pages/clientdetailspage/ClientDetailsInfoSection.jsx")
 
-    assert "if (isPageVisible()) fetchClients(false, false);" in list_page
+    assert "if (!cancelled && isPageVisible()) {" in list_page
+    assert "await fetchClients(false, false);" in list_page
+    assert "CLIENT_LIST_ACTIVE_POLL_MS = 2_000" in list_page
+    assert "CLIENT_LIST_IDLE_POLL_MS = 5_000" in list_page
     assert "if (!isPageVisible()) {" in details_page
+    assert "await waitForNextPoll(CHROME_STATUS_HIDDEN_CHECK_MS);" in details_page
+    assert "CHROME_STATUS_ACTIVE_POLL_MS = 1000" in details_page
+    assert "CHROME_STATUS_IDLE_POLL_MS = 5000" in details_page
     assert "getActiveClientflowDeployment" not in actions
     assert "refreshDeployment" not in actions
     assert "if (isPageVisible()) refreshClientflowDeployment();" in details_page

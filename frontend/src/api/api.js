@@ -458,6 +458,17 @@ export async function getMyClients() {
 }
 
 
+export async function getControlRoomClients() {
+  const res = await apiFetch(`${apiUrl}/api/clients/control-room-summary`, {
+    headers: authHeaders(),
+    credentials: "include",
+  });
+  if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
+  if (!res.ok) throw new Error(await extractError(res, "Kunne ikke hente Control Room-klienter"));
+  return readJsonResponse(res);
+}
+
+
 export async function getClient(id) {
   const res = await apiFetch(`${apiUrl}/api/clients/${id}/`, {
     headers: authHeaders(),

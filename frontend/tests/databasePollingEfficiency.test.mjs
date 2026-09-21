@@ -17,8 +17,9 @@ test("always-on ClientFlow database polling pauses while the browser page is hid
   const actions = read("src/pages/clientdetailspage/ClientDetailsActionsSection.jsx");
   const info = read("src/pages/clientdetailspage/ClientDetailsInfoSection.jsx");
 
-  assert.match(listPage, /if \(isPageVisible\(\)\) fetchClients\(false, false\);/);
-  assert.match(detailsPage, /if \(!isPageVisible\(\)\) \{\s*await new Promise/);
+  assert.match(listPage, /if \(!cancelled && isPageVisible\(\)\) \{\s*await fetchClients\(false, false\);/);
+  assert.match(detailsPage, /if \(!isPageVisible\(\)\) \{\s*await waitForNextPoll\(CHROME_STATUS_HIDDEN_CHECK_MS\);/);
+  assert.match(detailsPage, /document\.addEventListener\("visibilitychange", wakeWhenVisible\)/);
   assert.doesNotMatch(actions, /getActiveClientflowDeployment|refreshDeployment/);
   assert.match(detailsPage, /if \(isPageVisible\(\)\) refreshClientflowDeployment\(\);/);
   assert.match(detailsPage, /if \(!client\?\.id \|\| !isSuperadmin \|\| !clientflowDeploymentActive\) return undefined;/);

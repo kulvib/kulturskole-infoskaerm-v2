@@ -323,3 +323,38 @@ def test_chrome_status_projection_query_count_is_constant(seed_count: int) -> No
     # 1-second detail poll must not grow with the number of clients present in
     # the database.
     assert select_count == 5
+
+
+@pytest.mark.parametrize("client_count", [1, 10, 50, 100])
+def test_control_room_summary_query_count_is_constant_and_payload_is_narrow(client_count: int) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    _seed(engine, client_count)
+
+    select_count = 0
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        nonlocal select_count
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_count += 1
+
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        with Session(engine) as session:
+            result = clients_router.get_control_room_clients(
+                session=session,
+                user=SimpleNamespace(is_superadmin=True, role="superadmin"),
+            )
+            assert len(result) == client_count
+            if result:
+                payload = clients_router.ClientControlRoomListRead.model_validate(result[0]).model_dump()
+                assert payload["id"] == 1
+                assert "presence" in payload
+                assert "pending_chrome_action" in payload
+                assert "kiosk_url" not in payload
+                assert "ubuntu_update_status" not in payload
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+
+    # Same canonical five-query list projection; only response width changes.
+    assert select_count == 5

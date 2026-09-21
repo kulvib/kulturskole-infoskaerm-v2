@@ -47,8 +47,7 @@ import {
 } from "../utils/layoutStyles";
 import { Link } from "react-router-dom";
 import {
-  getClients,
-  getMyClients,
+  getControlRoomClients,
   approveClient,
   removeClient,
   restoreClient,
@@ -85,10 +84,35 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 // Polling
 // ---------------------------------------------------------------------------
 
-// Detaljesiden får online/offline hurtigt via /chrome-status.
-// Oversigten henter hele klientlisten, så vi poller lidt langsommere, men
-// stadig hurtigere end før, så status ikke føles forsinket.
-const CLIENT_LIST_POLL_MS = 2_000;
+// Stable Control Room state changes only when backend/client state changes; the
+// shared agents themselves report on a 15-second cadence. Keep the historical
+// 2-second cadence while something is actually moving, but do not continually
+// re-read a stable 100-client list five times per 10 seconds.
+const CLIENT_LIST_ACTIVE_POLL_MS = 2_000;
+const CLIENT_LIST_IDLE_POLL_MS = 5_000;
+
+function clientListNeedsFastPolling(items = []) {
+  return items.some((client) => {
+    const status = String(client?.status || "").trim().toLowerCase();
+    const state = String(client?.state || "").trim().toLowerCase();
+    const pendingAction = String(client?.pending_chrome_action || "none").trim().toLowerCase();
+
+    return (
+      status !== "approved" ||
+      (pendingAction && pendingAction !== "none") ||
+      client?.pending_reboot === true ||
+      client?.pending_shutdown === true ||
+      client?.pending_os_update === true ||
+      ["wakeup", "rebooting", "updating"].includes(state)
+    );
+  });
+}
+
+function clientListPollDelay(items = []) {
+  return clientListNeedsFastPolling(items)
+    ? CLIENT_LIST_ACTIVE_POLL_MS
+    : CLIENT_LIST_IDLE_POLL_MS;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -595,7 +619,6 @@ export default function ClientInfoPage() {
   const isSuperadmin = role === "superadmin";
   const isAdmin = role === "admin" || isSuperadmin;
   const isViewer = role === "viewer";
-  const isOrgReadRole = role === "bruger";
   const canViewClientId = isSuperadmin;
   const canManageClients = isSuperadmin;
   const canViewTrash = isSuperadmin || isViewer;
@@ -618,7 +641,7 @@ export default function ClientInfoPage() {
       fetchingClientsRef.current = true;
       if (showLoading) setLoading(true);
       try {
-        const data = isOrgReadRole ? await getMyClients() : await getClients();
+        const data = await getControlRoomClients();
 
         if (
           forceUpdate ||
@@ -636,7 +659,7 @@ export default function ClientInfoPage() {
         if (showLoading) setLoading(false);
       }
     },
-    [isOrgReadRole, showSnackbar],
+    [showSnackbar],
   );
 
   const fetchDeletedClients = useCallback(
@@ -669,14 +692,35 @@ export default function ClientInfoPage() {
     }
   }, []);
 
-  // Initial load + hurtigere polling af online/offline-status.
+  // Initial load + adaptive polling. Hidden pages perform no DB-backed poll.
+  // Stable lists use 5s; pending/action states retain the historical 2s cadence.
+  // Recursive timeout avoids overlapping work and lets every completed fetch
+  // choose the next cadence from the newest canonical snapshot.
   useEffect(() => {
-    fetchClients(false, true);
+    let cancelled = false;
+    let timerId = null;
+
+    const scheduleNext = () => {
+      if (cancelled) return;
+      const delay = clientListPollDelay(lastFetchedClients.current);
+      timerId = window.setTimeout(async () => {
+        if (!cancelled && isPageVisible()) {
+          await fetchClients(false, false);
+        }
+        scheduleNext();
+      }, delay);
+    };
+
+    void (async () => {
+      await fetchClients(false, true);
+      if (!cancelled) scheduleNext();
+    })();
     fetchDeletedClients(false);
-    const timer = setInterval(() => {
-      if (isPageVisible()) fetchClients(false, false);
-    }, CLIENT_LIST_POLL_MS);
-    return () => clearInterval(timer);
+
+    return () => {
+      cancelled = true;
+      if (timerId !== null) window.clearTimeout(timerId);
+    };
   }, [fetchClients, fetchDeletedClients]);
 
   // Når brugeren vender tilbage til fanen/siden, hent status med det samme
