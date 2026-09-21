@@ -196,3 +196,57 @@ def test_status_heartbeat_uses_one_select_for_authorization_only(monkeypatch):
     assert payload["client_identity"]["client_id"] == client_id
     # The only SELECT is the joined credential + parent-client authorization.
     assert counter["count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("domain", "expected_selects"),
+    [
+        ("system", 2),
+        ("display", 3),
+    ],
+)
+def test_due_status_can_piggyback_on_command_claim_without_second_authorization(
+    monkeypatch, domain: str, expected_selects: int
+):
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    client_id, token = _seed_credential(engine, domain=domain)
+    monkeypatch.setattr(shared_domain_router, "engine", engine)
+
+    counter, listener = _count_selects(engine)
+    try:
+        payload = shared_domain_router._claim(
+            domain,
+            client_id,
+            shared_domain_router.ClaimBody(
+                lease_seconds=60,
+                status_report=shared_domain_router.StatusBody(
+                    schema_version=1,
+                    observed_state="online",
+                    status_payload={},
+                    agent_version="1.3.24",
+                    boot_id="boot-piggyback",
+                ),
+            ),
+            f"Bearer {token}",
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+
+    assert payload == {"claimed": None, "status_reported": True}
+    # One joined credential/client authorization is shared by status + claim.
+    # System then needs only the active-command SELECT. Display additionally
+    # checks its durable desired configuration before the same command claim.
+    assert counter["count"] == expected_selects
+
+    from service1.client_domain_models import ClientDomainStatus
+
+    with Session(engine) as session:
+        status = session.exec(
+            select(ClientDomainStatus).where(
+                ClientDomainStatus.client_id == client_id,
+                ClientDomainStatus.domain == domain,
+            )
+        ).one()
+        assert status.observed_state == "online"
+        assert status.boot_id == "boot-piggyback"

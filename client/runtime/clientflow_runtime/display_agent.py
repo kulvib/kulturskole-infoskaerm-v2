@@ -88,5 +88,6 @@ def main() -> int:
         _handle,
         status_payload=_status,
         report_status_after_command=True,
+        piggyback_status_on_claim=True,
     ).run_forever()
     return 0
