@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from ..db import get_session
 from ..audit import add_audit_log
-from ..models import Client, ClientRead, ClientPresenceRead, ClientCreate, ClientUpdate, CalendarMarking, ChromeAction, Organization
+from ..models import Client, ClientRead, ClientControlRoomListRead, ClientPresenceRead, ClientCreate, ClientUpdate, CalendarMarking, ChromeAction, Organization
 from ..auth import get_current_user, get_current_admin_user, get_current_superadmin_user, get_current_user_or_client, require_client_self_or_user, principal_is_client, get_password_hash, validate_password_strength
 from ..models import utcnow
 from ..observability import log_safe_exception
@@ -1316,6 +1316,20 @@ def get_clients(session=Depends(get_session), user=Depends(get_current_user)):
     _prepare_clients_read(session, clients)
     clients.sort(key=lambda c: (c.sort_order is None, c.sort_order if c.sort_order is not None else 9999, c.id))
     return clients
+
+
+@router.get("/clients/control-room-summary", response_model=List[ClientControlRoomListRead])
+def get_control_room_clients(session=Depends(get_session), user=Depends(get_current_user)):
+    """Return only the fields the Control Room list renders.
+
+    Authorization and canonical runtime projections deliberately reuse the
+    existing list functions, so this transport optimization cannot invent a
+    second liveness/display/system truth. The narrower response model strips
+    the large detail-only payload before it leaves the backend.
+    """
+    if getattr(user, "role", None) == "bruger":
+        return get_clients_for_my_organization(session=session, user=user)
+    return get_clients(session=session, user=user)
 
 
 @router.get("/clients/deleted", response_model=List[ClientRead])

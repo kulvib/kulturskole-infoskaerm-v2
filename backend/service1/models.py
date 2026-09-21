@@ -383,6 +383,33 @@ class ClientPresenceRead(SQLModel):
     system: ClientDomainPresenceRead = Field(default_factory=lambda: _default_domain_presence("system"))
 
 
+class ClientControlRoomListRead(ClientBase):
+    """Minimal Control Room list projection.
+
+    Keeps the list page off the very broad ``ClientRead`` response while
+    preserving every field the list actually renders or compares. Runtime
+    values are still projected from the same canonical Status/Display/System
+    authorities before serialization.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: Optional[int] = None
+    machine_id: Optional[str] = None
+    status: Optional[str] = "pending"
+    presence: ClientPresenceRead = Field(default_factory=ClientPresenceRead)
+    sort_order: Optional[int] = None
+    created_at: Optional[datetime] = None
+    chrome_step: Optional[str] = None
+    display_power: Optional[str] = None
+    pending_chrome_action: Optional[ChromeAction] = ChromeAction.NONE
+    pending_reboot: Optional[bool] = False
+    pending_shutdown: Optional[bool] = False
+    pending_os_update: Optional[bool] = False
+    organization_id: Optional[int] = None
+    state: Optional[str] = "normal"
+
+
 class ClientRead(ClientBase):
     model_config = ConfigDict(from_attributes=True)
 
