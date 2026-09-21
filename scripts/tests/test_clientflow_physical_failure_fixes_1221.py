@@ -36,6 +36,19 @@ def _class_tuple(source: str, class_name: str, name: str):
     raise AssertionError(f"{class_name}.{name} not found")
 
 
+def _method_local_tuple(source: str, class_name: str, method_name: str, name: str):
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            for statement in node.body:
+                if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)) and statement.name == method_name:
+                    for child in ast.walk(statement):
+                        if isinstance(child, ast.Assign) and any(
+                            isinstance(target, ast.Name) and target.id == name for target in child.targets
+                        ):
+                            return ast.literal_eval(child.value)
+    raise AssertionError(f"{class_name}.{method_name} local {name} not found")
+
 def test_promoted_1324_1225_source_identity_matches_catalog():
     # Immutable 1.3.23/1224 was approved, published and promoted, then failed
     # physical Ubuntu 26.04 factory-handoff acceptance. The repaired
@@ -181,18 +194,23 @@ def test_gui_system_network_kiosk_and_calendar_fields_match_deployed_legacy_cont
         ("LAN IP", "network_lan_ip"),
         ("LAN MAC", "network_lan_mac"),
     )
+    assert _method_local_tuple(source, "ClientFlowWindow", "_build", "kiosk_fields") == (
+        ("Kiosk URL", "kiosk_url"),
+        ("Status", "operational_status"),
+        ("Kiosk browser status", "display"),
+        ("Aktuel skærm", "resolution_current"),
+        ("Backend-valgt", "resolution_desired"),
+        ("Skærmstatus", "resolution_status"),
+    )
+    assert '"Auto refresh"' not in source
+    assert '"browser_refresh"' not in source
     for token in (
-        '("Kiosk URL", "kiosk_url")',
-        '("Auto refresh", "browser_refresh")',
-        'configuration.get("browser_refresh_interval_sec")',
-        'self._set("browser_refresh", "slået fra" if refresh_seconds == 0 else f"{refresh_seconds} sek.")',
-        '("Status", "operational_status")',
-        '("Kiosk browser status", "display")',
-        '("Aktuel skærm", "resolution_current")',
-        '("Backend-valgt", "resolution_desired")',
-        '("Skærmstatus", "resolution_status")',
         '("Dato", "Status", "Åbner", "Lukker")',
         '"💤 Skærm slukket — klient online"',
+        'self._set("version", _version_display(), COLOR_GREEN)',
+        '"Pending / Venter på godkendelse"',
+        '"Pending – venter på godkendelse"',
+        'DISPLAY_RESOLUTION_PRESET_LABELS',
     ):
         assert token in source
 
@@ -221,20 +239,22 @@ def test_gui_visual_constants_responsiveness_no_scroll_and_wrapping_match_contra
         "GUI_CALENDAR_VISIBLE_DAYS = 7",
         "self.set_resizable(False)",
         "action_grid.set_column_homogeneous(True)",
-        "homogeneous=True",
         "GLib.timeout_add_seconds(1, self.refresh)",
-        "value.set_wrap(True)",
-        "value.set_width_chars(24)",
-        "value.set_max_width_chars(40)",
-        "value.set_ellipsize(Pango.EllipsizeMode.NONE)",
+        "value.set_wrap(False)",
+        "value.set_ellipsize(Pango.EllipsizeMode.END)",
         "font-family: Arial, sans-serif",
         ".start-button {{ background-image: none; background-color: #4BB543; }}",
+        'ratios = (0.34, 0.16, 0.20, 0.20)',
+        'ratios = (0.38, 0.17, 0.19, 0.19)',
     }
     for token in expected:
         assert token in source
     assert "Gtk.ScrolledWindow" not in source
     assert "geometry.width * scale" not in source
     assert "geometry.height * scale" not in source
+    assert "value.set_wrap(True)" not in source
+    assert "value.set_ellipsize(Pango.EllipsizeMode.NONE)" not in source
+    assert "system_columns = Gtk.Box" not in source
     assert re.search(r'hidden_network = \{"network_active_mac", "network_wifi_mac", "network_lan_mac"\}', source)
 
 
