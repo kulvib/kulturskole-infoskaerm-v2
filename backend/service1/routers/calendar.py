@@ -73,20 +73,42 @@ def save_marked_days(
         raise HTTPException(status_code=403, detail="Du har ikke adgang til at gemme kalenderdage")
 
     season = _validated_supported_season(data.season)
-    clients: list[Client] = []
-    for client_id in data.clients:
-        client = session.get(Client, client_id)
-        if not client:
+    requested_client_ids = [int(client_id) for client_id in data.clients]
+    unique_client_ids = list(dict.fromkeys(requested_client_ids))
+    client_rows = (
+        session.exec(
+            select(Client.id, Client.organization_id).where(
+                Client.id.in_(unique_client_ids)
+            )
+        ).all()
+        if unique_client_ids
+        else []
+    )
+    client_organization_by_id = {
+        int(client_id): organization_id
+        for client_id, organization_id in client_rows
+        if client_id is not None
+    }
+
+    # Preserve legacy error ordering even though the DB lookup is batched.
+    for client_id in requested_client_ids:
+        if client_id not in client_organization_by_id:
             raise HTTPException(status_code=404, detail=f"Klient {client_id} ikke fundet")
-        if not getattr(user, "is_superadmin", False) and client.organization_id != user.organization_id:
-            raise HTTPException(status_code=403, detail="Du har kun adgang til klienter i din egen organisation")
-        clients.append(client)
+        organization_id = client_organization_by_id[client_id]
+        if (
+            not getattr(user, "is_superadmin", False)
+            and organization_id != user.organization_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Du har kun adgang til klienter i din egen organisation",
+            )
 
     normalized_by_client: dict[int, Dict[str, Dict[str, str]]] = {}
     try:
-        for client in clients:
-            normalized_by_client[int(client.id)] = validate_and_normalize_markings(
-                data.markedDays.get(str(client.id), {}),
+        for client_id in requested_client_ids:
+            normalized_by_client[client_id] = validate_and_normalize_markings(
+                data.markedDays.get(str(client_id), {}),
                 season,
                 require_complete=True,
             )
@@ -94,15 +116,22 @@ def save_marked_days(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
-        for client in clients:
-            client_id = int(client.id)
-            markings = normalized_by_client[client_id]
-            existing = session.exec(
+        existing_rows = (
+            session.exec(
                 select(CalendarMarking).where(
                     CalendarMarking.season == season,
-                    CalendarMarking.client_id == client_id,
+                    CalendarMarking.client_id.in_(unique_client_ids),
                 )
-            ).first()
+            ).all()
+            if unique_client_ids
+            else []
+        )
+        existing_by_client = {int(row.client_id): row for row in existing_rows}
+
+        # Duplicate client IDs in the request are idempotent; write each client once.
+        for client_id in unique_client_ids:
+            markings = normalized_by_client[client_id]
+            existing = existing_by_client.get(client_id)
             if existing:
                 existing.markings = markings
                 session.add(existing)
