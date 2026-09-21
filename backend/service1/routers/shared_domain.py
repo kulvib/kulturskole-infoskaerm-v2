@@ -59,7 +59,25 @@ class FailBody(BaseModel):
     retryable: bool = False
 
 
-def _client_identity_payload(client: Client) -> dict[str, Any]:
+def _client_identity_payload(
+    client_or_session: Client | Session,
+    client_id: int | None = None,
+) -> dict[str, Any]:
+    """Build the public client identity without forcing a second hot-path read.
+
+    The status heartbeat passes the Client already validated by
+    ``require_shared_agent_context``.  The optional ``client_id`` form keeps the
+    pre-existing helper contract for focused callers/tests and performs the
+    legacy lookup only when that form is explicitly used.
+    """
+    client: Any
+    if client_id is None:
+        client = client_or_session
+    else:
+        client = client_or_session.get(Client, client_id)
+        if client is None:
+            raise RuntimeError("Status credential refererer til en manglende klient")
+
     return {
         "schema_version": 1,
         "client_id": int(client.id),
