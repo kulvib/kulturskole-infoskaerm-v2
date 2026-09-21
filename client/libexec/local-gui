@@ -40,6 +40,8 @@ CALENDAR_PREVIEW_PATH = Path(os.getenv("CLIENTFLOW_CALENDAR_PREVIEW_PATH", "/var
 PUBLIC_CLIENT_PATH = Path(os.getenv("CLIENTFLOW_PUBLIC_CLIENT_PATH", "/var/lib/clientflow/client-public.json"))
 SYNCED_PUBLIC_CLIENT_PATH = Path(os.getenv("CLIENTFLOW_SYNCED_PUBLIC_CLIENT_PATH", "/var/lib/clientflow/status/client-public.json"))
 VERSION_PATH = Path(os.getenv("CLIENTFLOW_VERSION_PATH", "/opt/clientflow/active/VERSION"))
+RELEASE_INPUT_PATH = Path(os.getenv("CLIENTFLOW_RELEASE_INPUT_PATH", "/opt/clientflow/active/release/release-input.json"))
+STATUS_SYNC_PATH = Path(os.getenv("CLIENTFLOW_STATUS_SYNC_PATH", "/var/lib/clientflow/status/last-success.json"))
 GUI_MODE = str(os.getenv("CLIENTFLOW_GUI_MODE") or "active").strip().lower()
 PREACTIVATION_MODE = GUI_MODE == "preactivation"
 CLIENT_ID = str(os.getenv("CLIENTFLOW_CLIENT_ID") or "-").strip() or "-"
@@ -67,6 +69,31 @@ GUI_COMPACT_SCALE_MIN = 0.66
 GUI_STANDARD_SCALE_MAX = 1.02
 GUI_LARGE_SCALE_MAX = 1.22
 GUI_CALENDAR_VISIBLE_DAYS = 7
+BACKEND_SYNC_WARN_SECONDS = 45
+BACKEND_SYNC_FAILED_SECONDS = 120
+
+DISPLAY_RESOLUTION_PRESET_LABELS = {
+    "auto": "Auto",
+    "hd_720p": "HD 720p",
+    "hd_ready": "HD Ready",
+    "hd_plus": "HD+",
+    "full_hd": "Full HD",
+    "qhd_1440p": "QHD",
+    "uhd_4k": "4K UHD",
+    "wxga": "WXGA",
+    "wuxga": "WUXGA",
+    "wqxga": "WQXGA",
+    "ultrawide_fhd": "Ultrawide FHD",
+    "ultrawide_qhd": "Ultrawide QHD",
+    "super_ultrawide": "Super ultrawide",
+    "signage_wide": "Signage wide",
+    "hd_portrait": "Portrait HD",
+    "hd_ready_portrait": "Portrait HD Ready",
+    "full_hd_portrait": "Portrait Full HD",
+    "qhd_portrait": "Portrait QHD",
+    "uhd_4k_portrait": "Portrait 4K",
+    "custom": "Custom",
+}
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -195,14 +222,15 @@ def _network_snapshot() -> dict[str, str]:
 
 
 def _uptime() -> str:
+    """Legacy 1.1.19 uptime presentation: total hours as H:MM:SS."""
     try:
         seconds = int(float(Path("/proc/uptime").read_text(encoding="ascii").split()[0]))
     except (OSError, ValueError, IndexError):
         return "-"
-    days, rem = divmod(seconds, 86400)
-    hours, rem = divmod(rem, 3600)
-    minutes = rem // 60
-    return f"{days}d {hours:02d}t {minutes:02d}m"
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    seconds = seconds % 60
+    return f"{hours}:{minutes:02d}:{seconds:02d}"
 
 
 def _version() -> str:
@@ -210,6 +238,54 @@ def _version() -> str:
         return VERSION_PATH.read_text(encoding="utf-8").strip() or "-"
     except OSError:
         return "-"
+
+
+def _release_sequence() -> int | None:
+    value = _read_json(RELEASE_INPUT_PATH).get("release_sequence")
+    try:
+        sequence = int(value)
+    except (TypeError, ValueError):
+        return None
+    return sequence if sequence > 0 else None
+
+
+def _version_display() -> str:
+    version = _version().lstrip("v")
+    sequence = _release_sequence()
+    if sequence is None:
+        return f"v{version}"
+    return f"v{version} · seq {sequence}"
+
+
+def _format_age(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds} sek. siden"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} min. siden"
+    hours = minutes // 60
+    return f"{hours} t. siden"
+
+
+def _backend_sync_display(*, service_state: str, now: float | None = None) -> tuple[str, str]:
+    if service_state == "failed":
+        return "Fejl", COLOR_RED
+    if service_state != "active":
+        return ("Stop", COLOR_RED) if service_state == "inactive" else ("Ukendt", COLOR_ORANGE)
+
+    sync = _read_json(STATUS_SYNC_PATH)
+    try:
+        updated_at = float(sync.get("updated_at"))
+    except (TypeError, ValueError):
+        return "Afventer sync", COLOR_ORANGE
+    current = time.time() if now is None else float(now)
+    age = max(0, int(current - updated_at))
+    age_text = _format_age(age)
+    if age <= BACKEND_SYNC_WARN_SECONDS:
+        return f"OK · {age_text}", COLOR_GREEN
+    if age < BACKEND_SYNC_FAILED_SECONDS:
+        return f"Forsinket · {age_text}", COLOR_ORANGE
+    return f"Ingen kontakt · {age_text}", COLOR_RED
 
 
 def _calendar_rows(*, preactivation: bool = False) -> list[tuple[str, str, str, str]]:
@@ -277,6 +353,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         self.copy_ok: dict[str, Gtk.Label] = {}
         self.network_row_widgets: dict[str, tuple[Gtk.Widget, ...]] = {}
         self.calendar_labels: list[tuple[Gtk.Label, Gtk.Label, Gtk.Label, Gtk.Label]] = []
+        self.calendar_column_widgets: list[list[Gtk.Label]] = [[], [], [], []]
         self.field_grids: list[Gtk.Grid] = []
         self.action_grid: Gtk.Grid | None = None
         self.startup_disable_until = time.monotonic() + 10.0
@@ -469,17 +546,12 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         label = self._label(f"{title}:", css="field-label")
         value = self._label("", css="field-value")
         value.set_hexpand(True)
-        value.set_wrap(True)
-        value.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        # GTK4 uses height-for-width geometry.  A wrapping label without a
-        # minimum character width may report its vertical request at an almost
-        # zero-width allocation, which made the fixed legacy panel request
-        # thousands of pixels of height on Ubuntu 26.04.  Preserve wrapping,
-        # but bound the minimum/natural width so the grid has a stable vertical
-        # requisition at the supported compact/standard/large panel widths.
-        value.set_width_chars(24)
-        value.set_max_width_chars(40)
-        value.set_ellipsize(Pango.EllipsizeMode.NONE)
+        # Legacy 1.1.19 keeps status/value rows at one line and truncates long
+        # values with an ellipsis so one long URL or status cannot move every
+        # section below it. GTK4 provides the same presentation contract
+        # natively through non-wrapping END ellipsize.
+        value.set_wrap(False)
+        value.set_ellipsize(Pango.EllipsizeMode.END)
         grid.attach(label, column, row, 1, 1)
         grid.attach(value, column + 1, row, 1, 1)
         self.labels[key] = value
@@ -526,19 +598,17 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
 
         system_frame, system_box = self._frame("Systeminfo")
         outer.append(system_frame)
-        system_columns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8, homogeneous=True)
-        system_box.append(system_columns)
-        left_grid = self._grid()
-        right_grid = self._grid()
-        left_grid.set_hexpand(True)
-        right_grid.set_hexpand(True)
-        system_columns.append(left_grid)
-        system_columns.append(right_grid)
+        # Legacy uses one four-column grid: label/value + label/value. Keep the
+        # same structure instead of two independent GTK grids so column spacing
+        # and vertical alignment follow the deployed 1.1.19 panel.
+        system_grid = self._grid()
+        system_grid.set_hexpand(True)
+        system_box.append(system_grid)
         rows_per_col = (len(self.SYSTEM_FIELDS) + 1) // 2
         for index, (title, key) in enumerate(self.SYSTEM_FIELDS):
-            target_grid = left_grid if index < rows_per_col else right_grid
+            column = 0 if index < rows_per_col else 2
             row = index if index < rows_per_col else index - rows_per_col
-            self._attach_field(target_grid, row, 0, title, key)
+            self._attach_field(system_grid, row, column, title, key)
 
         kiosk_frame, kiosk_box = self._frame("Kioskinfo")
         outer.append(kiosk_frame)
@@ -546,9 +616,6 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         kiosk_box.append(kiosk_grid)
         kiosk_fields = (
             ("Kiosk URL", "kiosk_url"),
-            # Required V2 operational-parity field retained inside the legacy
-            # Kioskinfo visual grammar.
-            ("Auto refresh", "browser_refresh"),
             ("Status", "operational_status"),
             ("Kiosk browser status", "display"),
             ("Aktuel skærm", "resolution_current"),
@@ -583,23 +650,38 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             label = self._label(heading, css="calendar-heading", xalign=0.5)
             label.set_hexpand(column == 0)
             calendar_grid.attach(label, column, 0, 1, 1)
+            self.calendar_column_widgets[column].append(label)
         for index in range(GUI_CALENDAR_VISIBLE_DAYS):
             labels = tuple(self._label("", css="calendar-cell", xalign=0.5) for _ in range(4))
             labels[0].set_xalign(0.5)
             labels[0].set_hexpand(True)
-            labels[0].set_width_chars(26)
-            labels[1].set_width_chars(7)
-            labels[2].set_width_chars(8)
-            labels[3].set_width_chars(8)
             for column, label in enumerate(labels):
                 calendar_grid.attach(label, column, index + 1, 1, 1)
+                self.calendar_column_widgets[column].append(label)
             self.calendar_labels.append(labels)  # type: ignore[arg-type]
+        self._update_calendar_columns()
 
         self.error_label = self._label("", css="error-label")
         self.error_label.set_margin_start(10)
         self.error_label.set_margin_end(10)
         self.error_label.set_margin_bottom(5)
         outer.append(self.error_label)
+
+    def _update_calendar_columns(self) -> None:
+        """Mirror the deployed legacy Treeview column ratios."""
+        panel_width, _height = self._target_panel_size()
+        if self._layout_mode == "compact":
+            ratios = (0.34, 0.16, 0.20, 0.20)
+        else:
+            ratios = (0.38, 0.17, 0.19, 0.19)
+        minimums = (125, 62, 74, 74)
+        widths = [max(minimum, int(panel_width * ratio)) for minimum, ratio in zip(minimums, ratios)]
+        # Gtk.Grid spacing/margins consume some of the panel width. Preserve
+        # ratios while allowing GTK to shrink naturally when compositor logical
+        # coordinates make the fixed panel slightly narrower than Tk/X11.
+        for column, widgets in enumerate(self.calendar_column_widgets):
+            for widget in widgets:
+                widget.set_size_request(widths[column], -1)
 
     def _refresh_layout(self) -> bool:
         old_mode = self._layout_mode
@@ -622,6 +704,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 self.action_grid.set_margin_bottom(action_y)
                 self.action_grid.set_margin_start(action_x)
                 self.action_grid.set_margin_end(action_x)
+            self._update_calendar_columns()
         return True
 
     def _copy(self, key: str) -> None:
@@ -734,38 +817,59 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         return "Ingen status.", COLOR_GRAY
 
     @staticmethod
-    def _format_current_resolution(resolution: dict[str, Any]) -> str:
+    def _format_refresh_rate(value: Any) -> str:
+        try:
+            refresh = float(value)
+        except (TypeError, ValueError):
+            return ""
+        if refresh <= 0:
+            return ""
+        if abs(refresh - round(refresh)) < 0.01:
+            return f" @ {int(round(refresh))}Hz"
+        return f" @ {refresh:.2f}Hz"
+
+    @classmethod
+    def _format_resolution(cls, width: Any, height: Any, refresh: Any = None, output: Any = None) -> str:
+        try:
+            width_value = int(round(float(width)))
+            height_value = int(round(float(height)))
+        except (TypeError, ValueError):
+            return ""
+        if width_value <= 0 or height_value <= 0:
+            return ""
+        value = f"{width_value}×{height_value}{cls._format_refresh_rate(refresh)}"
+        output_value = str(output or "").strip()
+        return f"{value} · {output_value}" if output_value else value
+
+    @classmethod
+    def _format_current_resolution(cls, resolution: dict[str, Any]) -> str:
         if not resolution:
             return "Ikke rapporteret endnu"
         if not resolution.get("ok"):
             return str(resolution.get("error") or "Ikke rapporteret endnu")[:120]
-        width = resolution.get("width")
-        height = resolution.get("height")
-        refresh = resolution.get("refresh_rate")
-        output = str(resolution.get("output") or "").strip()
-        if not width or not height:
-            return "Ikke rapporteret endnu"
-        try:
-            refresh_text = f" @{float(refresh):g} Hz" if refresh not in (None, "") else ""
-        except (TypeError, ValueError):
-            refresh_text = ""
-        base = f"{width}×{height}{refresh_text}"
-        return f"{base} · {output}" if output else base
+        value = cls._format_resolution(
+            resolution.get("width"),
+            resolution.get("height"),
+            resolution.get("refresh_rate"),
+            resolution.get("output"),
+        )
+        return value or "Ikke rapporteret endnu"
 
-    @staticmethod
-    def _format_desired_resolution(desired: dict[str, Any]) -> str:
-        mode = str(desired.get("mode") or "auto").strip().lower()
-        if mode == "auto":
+    @classmethod
+    def _format_desired_resolution(cls, desired: dict[str, Any]) -> str:
+        preset = str(desired.get("preset") or "auto").strip().lower()
+        mode = str(desired.get("mode") or ("auto" if preset == "auto" else "fixed")).strip().lower()
+        label = DISPLAY_RESOLUTION_PRESET_LABELS.get(preset, preset or "Auto")
+        if mode == "auto" or preset == "auto":
             return "Auto-detektering"
-        width, height = desired.get("width"), desired.get("height")
-        if width and height:
-            refresh = desired.get("refresh_rate")
-            try:
-                suffix = f" @{float(refresh):g} Hz" if refresh not in (None, "") else ""
-            except (TypeError, ValueError):
-                suffix = ""
-            return f"{width}×{height}{suffix}"
-        return "-"
+        value = cls._format_resolution(
+            desired.get("width"),
+            desired.get("height"),
+            desired.get("refresh_rate"),
+        )
+        if value:
+            return f"{label} · {value}" if preset != "custom" else value
+        return label or "-"
 
     @staticmethod
     def _format_resolution_status(resolution: dict[str, Any], desired: dict[str, Any]) -> tuple[str, str]:
@@ -828,7 +932,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
 
             backend_state = _service_state("clientflow-status-agent.service")
             if PREACTIVATION_MODE and client_id not in {"", "-"}:
-                self._set("backend", "Registreret / afventer godkendelse", COLOR_ORANGE)
+                self._set("backend", "Pending / Venter på godkendelse", COLOR_ORANGE)
                 backend_approved = False
             elif client_id not in {"", "-"} and backend_state == "active":
                 self._set("backend", "Approved / Godkendt", COLOR_GREEN)
@@ -840,7 +944,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 self._set("backend", "Ikke registreret", COLOR_RED)
                 backend_approved = False
 
-            self._set("version", f"v{_version().lstrip('v')}", COLOR_GREEN)
+            self._set("version", _version_display(), COLOR_GREEN)
             if PREACTIVATION_MODE:
                 for key in (
                     "backend_sync",
@@ -855,8 +959,11 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 ):
                     self._set(key, "Ikke aktiveret", COLOR_GRAY)
             else:
+                backend_sync_value, backend_sync_color = _backend_sync_display(
+                    service_state=_service_state("clientflow-status-agent.service")
+                )
+                self._set("backend_sync", backend_sync_value, backend_sync_color)
                 for key, unit in (
-                    ("backend_sync", "clientflow-display-agent.service"),
                     ("calendar_service", "clientflow-calendar.service"),
                     ("browser_guard", "clientflow-browser-guard.service"),
                     ("admin_terminal", "clientflow-root-terminal-broker.socket"),
@@ -883,14 +990,8 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             kiosk_url = str(configuration.get("kiosk_url") or "Afventer godkendelse / ingen kiosk-URL endnu")
             self._set("kiosk_url", kiosk_url)
             if PREACTIVATION_MODE:
-                self._set("browser_refresh", "Ikke aktiveret", COLOR_GRAY)
                 self._set("display", "Afventer godkendelse", COLOR_ORANGE)
             else:
-                try:
-                    refresh_seconds = max(0, int(configuration.get("browser_refresh_interval_sec") or 0))
-                except (TypeError, ValueError):
-                    refresh_seconds = 0
-                self._set("browser_refresh", "slået fra" if refresh_seconds == 0 else f"{refresh_seconds} sek.")
                 browser_status, browser_color = self._browser_status(runtime)
                 self._set("display", browser_status, browser_color)
             self._set("resolution_current", self._format_current_resolution(resolution))
@@ -911,7 +1012,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 else:
                     op_text, op_color = "Approved – kalender Off", COLOR_BLUE
             elif PREACTIVATION_MODE and client_id not in {"", "-"}:
-                op_text, op_color = "Registreret – afventer godkendelse", COLOR_ORANGE
+                op_text, op_color = "Pending – venter på godkendelse", COLOR_ORANGE
             elif client_id not in {"", "-"}:
                 op_text, op_color = "Registreret – henter status", COLOR_ORANGE
             else:

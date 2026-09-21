@@ -23,6 +23,7 @@ from .status import report_status
 ACTIVE_SYSTEMD_ROOT = Path("/opt/clientflow/active/client-runtime/systemd")
 SYS_CLASS_NET = Path("/sys/class/net")
 PUBLIC_IDENTITY_PATH = Path(os.getenv("CLIENTFLOW_STATUS_PUBLIC_IDENTITY_PATH", "/var/lib/clientflow/status/client-public.json"))
+STATUS_SYNC_PATH = Path(os.getenv("CLIENTFLOW_STATUS_SYNC_PATH", "/var/lib/clientflow/status/last-success.json"))
 
 
 def _meminfo() -> dict[str, int]:
@@ -269,6 +270,24 @@ def sync_public_identity(
     return True
 
 
+def record_backend_sync_success(
+    *,
+    client_id: int,
+    path: Path = STATUS_SYNC_PATH,
+    now: float | None = None,
+) -> None:
+    """Publish a non-secret local timestamp after a successful status round trip."""
+    atomic_write_json(
+        path,
+        {
+            "schema_version": 1,
+            "client_id": int(client_id),
+            "updated_at": time.time() if now is None else float(now),
+        },
+        mode=0o644,
+    )
+
+
 def main() -> int:
     logger = configure_logging("clientflow.status")
     credential = DomainCredential.load(Domain.STATUS)
@@ -278,6 +297,7 @@ def main() -> int:
         try:
             response = report_status(transport, observed_state="online", payload=collect_host_status())
             sync_public_identity(response, client_id=credential.client_id)
+            record_backend_sync_success(client_id=credential.client_id)
             attempt = 0
             time.sleep(SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS)
         except KeyboardInterrupt:

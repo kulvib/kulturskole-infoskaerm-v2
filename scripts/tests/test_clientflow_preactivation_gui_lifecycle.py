@@ -83,8 +83,8 @@ def test_same_legacy_layout_gui_has_strict_status_only_pending_mode() -> None:
     assert 'GUI_MODE = str(os.getenv("CLIENTFLOW_GUI_MODE") or "active").strip().lower()' in source
     assert 'PREACTIVATION_MODE = GUI_MODE == "preactivation"' in source
     assert 'VERSION_PATH = Path(os.getenv("CLIENTFLOW_VERSION_PATH", "/opt/clientflow/active/VERSION"))' in source
-    assert '"Registreret / afventer godkendelse"' in source
-    assert '"Registreret – afventer godkendelse"' in source
+    assert '"Pending / Venter på godkendelse"' in source
+    assert '"Pending – venter på godkendelse"' in source
     assert 'self._set(key, "Ikke aktiveret", COLOR_GRAY)' in source
     assert 'self.start_button.set_sensitive(False)' in source
     assert 'self.stop_button.set_sensitive(False)' in source

@@ -152,6 +152,21 @@ def test_status_identity_sync_is_credential_bound_and_public_only(tmp_path: Path
         status_agent.sync_public_identity(response, client_id=41, path=target)
 
 
+def test_status_agent_publishes_non_secret_backend_sync_success(tmp_path: Path) -> None:
+    target = tmp_path / "last-success.json"
+    status_agent.record_backend_sync_success(client_id=42, path=target, now=1_700_000_000.0)
+    payload = __import__("json").loads(target.read_text(encoding="utf-8"))
+    assert payload == {
+        "schema_version": 1,
+        "client_id": 42,
+        "updated_at": 1_700_000_000.0,
+    }
+    assert target.stat().st_mode & 0o777 == 0o644
+    serialized = target.read_text(encoding="utf-8").lower()
+    for forbidden in ("secret", "credential", "token", "private_key", "backend_url"):
+        assert forbidden not in serialized
+
+
 def test_active_gui_prefers_synced_identity_and_status_directory_is_readable() -> None:
     gui = LOCAL_GUI.read_text(encoding="utf-8")
     assert 'SYNCED_PUBLIC_CLIENT_PATH = Path(os.getenv("CLIENTFLOW_SYNCED_PUBLIC_CLIENT_PATH", "/var/lib/clientflow/status/client-public.json"))' in gui

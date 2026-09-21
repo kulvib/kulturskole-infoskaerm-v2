@@ -109,7 +109,7 @@ def test_local_gui_contains_operational_parity_fields_without_credentials() -> N
 
     for label in (
         "Handlinger", "Systeminfo", "Kioskinfo", "Netværksinfo",
-        "Kiosk URL", "Auto refresh", "Aktuel skærm", "Backend-valgt", "Skærmstatus", "Browser Guard",
+        "Kiosk URL", "Aktuel skærm", "Backend-valgt", "Skærmstatus", "Browser Guard",
         "Admin terminal", "Aktiv forbindelse", "Aktiv IP", "Aktiv MAC",
         "WiFi IP", "WiFi MAC", "LAN IP", "LAN MAC", "Kalender – næste 7 dage",
     ):
@@ -123,10 +123,12 @@ def test_local_gui_contains_operational_parity_fields_without_credentials() -> N
 
     # Step 54A originally pinned a transitional 820x900 GTK window.  The
     # physical-harvest GUI work intentionally replaces that with the deployed
-    # 1.1.19 responsive visual contract while preserving all 54A fields.
+    # 1.1.19 responsive visual contract. Auto refresh remains a V2 Display
+    # runtime capability but is deliberately not an extra visible legacy row.
     assert "GUI_PANEL_WIDTH_RATIO = 0.43" in gui
     assert "GUI_PANEL_HEIGHT_RATIO = 0.98" in gui
     assert "GUI_PANEL_MAX_WIDTH = 900" in gui
     assert "self.set_resizable(False)" in gui
     assert "self._target_panel_size()" in gui
+    assert '"Auto refresh"' not in gui
     assert "self.next_resolution_probe" in runtime
