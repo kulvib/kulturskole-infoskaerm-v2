@@ -280,7 +280,6 @@ const DETAIL_HOT_FIELDS = [
   "service_admin_terminal_status",
   "service_remote_desktop_status",
   "service_livestream_status",
-  "service_selfupdate_status",
   "last_boot_at",
   "last_boot_id",
   "last_power_event",

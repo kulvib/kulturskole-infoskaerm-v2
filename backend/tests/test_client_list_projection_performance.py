@@ -315,7 +315,7 @@ def test_chrome_status_projection_query_count_is_constant(seed_count: int) -> No
             assert payload["local_management_desired_hostname"] == "host-0"
             assert payload["local_management_status"] == "pending"
             assert payload["local_management_message"] == "Afventer System-agent: Lokalt hostname ændres"
-            assert payload["name"] == "Client 0"
+            assert payload["name"] == "perf-000"
             assert "kiosk_url" in payload
             assert "browser_refresh_interval_sec" in payload
             assert "service_clientflow_status" in payload
