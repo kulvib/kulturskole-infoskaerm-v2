@@ -5,12 +5,16 @@ import uuid
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import event
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import SQLModel, Session, create_engine, select
 
 from service1.client_domain_models import ClientDomainCredential
 from service1.models import Client, utcnow
 from service1.routers import shared_domain as shared_domain_router
-from service1.shared_domain import create_shared_domain_token, require_shared_agent_token
+from service1.shared_domain import (
+    create_shared_domain_token,
+    require_shared_agent_token,
+    upsert_shared_status,
+)
 
 
 def _seed_credential(engine, *, domain: str) -> tuple[int, str]:
@@ -121,3 +125,74 @@ def test_empty_shared_command_claim_uses_two_selects_including_auth(monkeypatch,
     # 1 joined credential/client authorization SELECT + 1 locked active-queue SELECT.
     # Display must not read ClientDomainStatus when there is no command to claim.
     assert counter["count"] == 2
+
+
+def test_shared_status_upsert_uses_no_select_on_sqlite_insert_or_update():
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    client_id, _token = _seed_credential(engine, domain="status")
+
+    with Session(engine) as session:
+        credential = session.exec(
+            select(ClientDomainCredential).where(
+                ClientDomainCredential.client_id == client_id,
+                ClientDomainCredential.domain == "status",
+            )
+        ).one()
+
+        counter, listener = _count_selects(engine)
+        try:
+            first = upsert_shared_status(
+                session,
+                credential=credential,
+                schema_version=1,
+                observed_state="online",
+                status_payload={"sample": 1},
+                agent_version="1.3.24",
+                boot_id="boot-a",
+            )
+            second = upsert_shared_status(
+                session,
+                credential=credential,
+                schema_version=1,
+                observed_state="online",
+                status_payload={"sample": 2},
+                agent_version="1.3.24",
+                boot_id="boot-a",
+            )
+            session.commit()
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+
+    assert first.client_id == client_id
+    assert second.client_id == client_id
+    assert counter["count"] == 0
+
+
+def test_status_heartbeat_uses_one_select_for_authorization_only(monkeypatch):
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    client_id, token = _seed_credential(engine, domain="status")
+    monkeypatch.setattr(shared_domain_router, "engine", engine)
+
+    counter, listener = _count_selects(engine)
+    try:
+        payload = shared_domain_router._status(
+            "status",
+            client_id,
+            shared_domain_router.StatusBody(
+                schema_version=1,
+                observed_state="online",
+                status_payload={},
+                agent_version="1.3.24",
+                boot_id="boot-a",
+            ),
+            f"Bearer {token}",
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+
+    assert payload["ok"] is True
+    assert payload["client_identity"]["client_id"] == client_id
+    # The only SELECT is the joined credential + parent-client authorization.
+    assert counter["count"] == 1

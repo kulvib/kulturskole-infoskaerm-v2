@@ -202,6 +202,20 @@ def _active_display_commands(session: Session, client_id: int) -> list[ClientCom
     )
 
 
+def _cached_active_display_commands(
+    session: Session,
+    client_id: int,
+    cache: dict[str, list[ClientCommand]] | None,
+) -> list[ClientCommand]:
+    if cache is None:
+        return _active_display_commands(session, client_id)
+    rows = cache.get("active")
+    if rows is None:
+        rows = _active_display_commands(session, client_id)
+        cache["active"] = rows
+    return rows
+
+
 def active_display_control_command(session: Session, client_id: int) -> ClientCommand | None:
     for row in _active_display_commands(session, client_id):
         if row.command_type in DISPLAY_CONTROL_COMMANDS:
@@ -262,6 +276,7 @@ def reconcile_display_configuration(
     client_id: int,
     agent_version: str | None,
     status_payload: dict[str, Any] | None,
+    active_command_cache: dict[str, list[ClientCommand]] | None = None,
 ) -> ClientCommand | None:
     """Ensure durable desired configuration eventually reaches a capable agent.
 
@@ -284,7 +299,7 @@ def reconcile_display_configuration(
         observed_schema = 1
     target_schema = DISPLAY_CONFIGURATION_SCHEMA if display_agent_supports_configuration_v2(agent_version) else DISPLAY_CONFIGURATION_V1_SCHEMA
 
-    active = _active_display_commands(session, client_id)
+    active = _cached_active_display_commands(session, client_id, active_command_cache)
     if observed_revision == desired.revision and observed_schema >= target_schema:
         for row in active:
             if row.command_type == "apply_configuration" and row.status == "queued":
@@ -342,12 +357,15 @@ def reconcile_kiosk_lockdown(
     client_id: int,
     agent_version: str | None,
     status_payload: dict[str, Any] | None,
+    client: Client | None = None,
+    active_command_cache: dict[str, list[ClientCommand]] | None = None,
 ) -> ClientCommand | None:
     """Converge durable backend lockdown desired-state through Display domain."""
     if not display_agent_supports_commands(agent_version):
         return None
-    client = session.get(Client, client_id)
     if client is None:
+        client = session.get(Client, client_id)
+    if client is None or int(getattr(client, "id", 0) or 0) != int(client_id):
         return None
     payload = status_payload if isinstance(status_payload, dict) else {}
     observed_raw = payload.get("kiosk_lockdown")
@@ -374,7 +392,7 @@ def reconcile_kiosk_lockdown(
     if not observed_present and not desired and previous_status != "pending":
         return None
 
-    active = _active_display_commands(session, client_id)
+    active = _cached_active_display_commands(session, client_id, active_command_cache)
     if observed_desired is desired and observed_status == ("applied" if desired else "disabled"):
         for row in active:
             if row.command_type == "set_kiosk_lockdown" and row.status == "queued":

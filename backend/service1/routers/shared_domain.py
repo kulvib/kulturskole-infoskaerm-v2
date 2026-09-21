@@ -22,6 +22,7 @@ from ..shared_domain import (
     complete_shared_command,
     fail_shared_command,
     renew_shared_command,
+    require_shared_agent_context,
     require_shared_agent_token,
     upsert_shared_status,
 )
@@ -58,10 +59,25 @@ class FailBody(BaseModel):
     retryable: bool = False
 
 
-def _client_identity_payload(session: Session, client_id: int) -> dict[str, Any]:
-    client = session.get(Client, client_id)
-    if client is None:
-        raise RuntimeError("Status credential refererer til en manglende klient")
+def _client_identity_payload(
+    client_or_session: Client | Session,
+    client_id: int | None = None,
+) -> dict[str, Any]:
+    """Build the public client identity without forcing a second hot-path read.
+
+    The status heartbeat passes the Client already validated by
+    ``require_shared_agent_context``.  The optional ``client_id`` form keeps the
+    pre-existing helper contract for focused callers/tests and performs the
+    legacy lookup only when that form is explicitly used.
+    """
+    client: Any
+    if client_id is None:
+        client = client_or_session
+    else:
+        client = client_or_session.get(Client, client_id)
+        if client is None:
+            raise RuntimeError("Status credential refererer til en manglende klient")
+
     return {
         "schema_version": 1,
         "client_id": int(client.id),
@@ -72,12 +88,14 @@ def _client_identity_payload(session: Session, client_id: int) -> dict[str, Any]
 
 def _status(domain: str, client_id: int, body: StatusBody, authorization: str | None):
     with Session(engine) as session:
-        credential = require_shared_agent_token(
+        authorization_context = require_shared_agent_context(
             session,
             authorization,
             client_id=client_id,
             domain=domain,
         )
+        credential = authorization_context.credential
+        client = authorization_context.client
         row = upsert_shared_status(
             session,
             credential=credential,
@@ -88,11 +106,21 @@ def _status(domain: str, client_id: int, body: StatusBody, authorization: str | 
             boot_id=body.boot_id,
         )
         if domain == "display":
+            active_command_cache: dict[str, Any] = {}
             reconcile_display_configuration(
-                session, client_id=client_id, agent_version=body.agent_version, status_payload=body.status_payload,
+                session,
+                client_id=client_id,
+                agent_version=body.agent_version,
+                status_payload=body.status_payload,
+                active_command_cache=active_command_cache,
             )
             reconcile_kiosk_lockdown(
-                session, client_id=client_id, agent_version=body.agent_version, status_payload=body.status_payload,
+                session,
+                client_id=client_id,
+                agent_version=body.agent_version,
+                status_payload=body.status_payload,
+                client=client,
+                active_command_cache=active_command_cache,
             )
         elif domain == "status":
             apply_status_power_observation(
@@ -100,10 +128,9 @@ def _status(domain: str, client_id: int, body: StatusBody, authorization: str | 
                 client_id=client_id,
                 status_payload=body.status_payload,
                 boot_id=body.boot_id,
+                client=client,
             )
-        client_identity = None
-        if domain == "status":
-            client_identity = _client_identity_payload(session, client_id)
+        client_identity = _client_identity_payload(client) if domain == "status" else None
         session.commit()
         response = {
             "ok": True,
@@ -180,13 +207,17 @@ def _fail(domain: str, client_id: int, command_id: str, body: FailBody, authoriz
 @router.get("/display-agent/clients/{client_id}/calendar")
 def display_calendar(client_id: int, authorization: str | None = Header(default=None)):
     with Session(engine) as session:
-        require_shared_agent_token(
+        authorization_context = require_shared_agent_context(
             session,
             authorization,
             client_id=client_id,
             domain="display",
         )
-        return build_display_calendar_delivery(session, client_id=client_id)
+        return build_display_calendar_delivery(
+            session,
+            client_id=client_id,
+            authorized_client=authorization_context.client,
+        )
 
 
 @router.put("/status-agent/clients/{client_id}/status")
