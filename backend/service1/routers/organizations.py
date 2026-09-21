@@ -217,23 +217,25 @@ def get_organization_season_summary(session=Depends(get_session), user=Depends(g
     else:
         allowed_organization_ids = set()
 
-    organizations = session.exec(select(Organization)).all()
+    if allowed_organization_ids is not None and not allowed_organization_ids:
+        return {}
+
+    organization_query = select(Organization.id, Organization.name)
+    if allowed_organization_ids is not None:
+        organization_query = organization_query.where(
+            Organization.id.in_(tuple(allowed_organization_ids))
+        )
+    organization_rows = session.exec(organization_query).all()
     organization_map = {
-        item.id: item.name
-        for item in organizations
-        if item.id is not None and (allowed_organization_ids is None or item.id in allowed_organization_ids)
+        int(organization_id): name
+        for organization_id, name in organization_rows
+        if organization_id is not None
     }
+    if not organization_map:
+        return {}
 
-    clients = session.exec(select(Client)).all()
-    client_organization_map = {
-        c.id: c.organization_id
-        for c in clients
-        if c.id is not None
-        and c.organization_id
-        and (allowed_organization_ids is None or c.organization_id in allowed_organization_ids)
-    }
-
-    season_organizations: dict[str, set] = {}
+    organization_ids = tuple(organization_map)
+    season_organizations: dict[str, set[int]] = {}
 
     def add(season: Any, organization_id: Any) -> None:
         if not season or not organization_id or organization_id not in organization_map:
@@ -241,15 +243,25 @@ def get_organization_season_summary(session=Depends(get_session), user=Depends(g
         season = str(season)
         if season not in season_organizations:
             season_organizations[season] = set()
-        season_organizations[season].add(organization_id)
+        season_organizations[season].add(int(organization_id))
 
-    for row in session.exec(select(OrganizationSeasonTimes)).all():
-        if allowed_organization_ids is not None and row.organization_id not in allowed_organization_ids:
-            continue
-        add(row.season, row.organization_id)
+    season_time_rows = session.exec(
+        select(OrganizationSeasonTimes.season, OrganizationSeasonTimes.organization_id).where(
+            OrganizationSeasonTimes.organization_id.in_(organization_ids)
+        )
+    ).all()
+    for season_value, organization_id in season_time_rows:
+        add(season_value, organization_id)
 
-    for marking in session.exec(select(CalendarMarking)).all():
-        add(marking.season, client_organization_map.get(marking.client_id))
+    # Only project season + organization. CalendarMarking.markings may contain a
+    # complete season JSON document and must not be loaded for this summary.
+    calendar_rows = session.exec(
+        select(CalendarMarking.season, Client.organization_id)
+        .join(Client, Client.id == CalendarMarking.client_id)
+        .where(Client.organization_id.in_(organization_ids))
+    ).all()
+    for season_value, organization_id in calendar_rows:
+        add(season_value, organization_id)
 
     def sort_key(value: str) -> int:
         try:
@@ -683,31 +695,42 @@ def apply_organization_season_times(
     session.add(season_times)
 
     total_days = len(_get_season_year_dates(season))
-    clients = session.exec(
-        select(Client).where(
-            Client.organization_id == organization_id,
-            Client.status == "approved",
-            Client.deleted_at == None,
-        )
-    ).all()
+    client_ids = [
+        int(client_id)
+        for client_id in session.exec(
+            select(Client.id).where(
+                Client.organization_id == organization_id,
+                Client.status == "approved",
+                Client.deleted_at == None,
+            )
+        ).all()
+        if client_id is not None
+    ]
+
+    existing_rows = (
+        session.exec(
+            select(CalendarMarking).where(
+                CalendarMarking.season == season,
+                CalendarMarking.client_id.in_(client_ids),
+            )
+        ).all()
+        if client_ids
+        else []
+    )
+    existing_by_client = {int(row.client_id): row for row in existing_rows}
 
     updated_clients: list[int] = []
     created_calendars = 0
     changed_days = 0
     preserved_manual_days = 0
     filled_days = 0
-    for client in clients:
-        existing = session.exec(
-            select(CalendarMarking).where(
-                CalendarMarking.season == season,
-                CalendarMarking.client_id == client.id,
-            )
-        ).first()
+    for client_id in client_ids:
+        existing = existing_by_client.get(client_id)
         if existing is None:
             session.add(
                 CalendarMarking(
                     season=season,
-                    client_id=client.id,
+                    client_id=client_id,
                     markings=build_season_calendar(season, new_day_times),
                 )
             )
@@ -725,7 +748,7 @@ def apply_organization_season_times(
             changed_days += changed
             preserved_manual_days += preserved
             filled_days += filled
-        updated_clients.append(client.id)
+        updated_clients.append(client_id)
 
     add_audit_log(
         session,
@@ -795,28 +818,39 @@ def replace_organization_season_calendars(
     session.add(season_times)
 
     replacement_calendar = build_season_calendar(season, new_day_times)
-    clients = session.exec(
-        select(Client).where(
-            Client.organization_id == organization_id,
-            Client.status == "approved",
-            Client.deleted_at == None,
-        )
-    ).all()
+    client_ids = [
+        int(client_id)
+        for client_id in session.exec(
+            select(Client.id).where(
+                Client.organization_id == organization_id,
+                Client.status == "approved",
+                Client.deleted_at == None,
+            )
+        ).all()
+        if client_id is not None
+    ]
+
+    existing_rows = (
+        session.exec(
+            select(CalendarMarking).where(
+                CalendarMarking.season == season,
+                CalendarMarking.client_id.in_(client_ids),
+            )
+        ).all()
+        if client_ids
+        else []
+    )
+    existing_by_client = {int(row.client_id): row for row in existing_rows}
 
     updated_clients: list[int] = []
     created_calendars = 0
     replaced_calendars = 0
-    for client in clients:
-        existing = session.exec(
-            select(CalendarMarking).where(
-                CalendarMarking.season == season,
-                CalendarMarking.client_id == client.id,
-            )
-        ).first()
+    for client_id in client_ids:
+        existing = existing_by_client.get(client_id)
         if existing is None:
             existing = CalendarMarking(
                 season=season,
-                client_id=client.id,
+                client_id=client_id,
                 markings={key: dict(value) for key, value in replacement_calendar.items()},
             )
             created_calendars += 1
@@ -824,7 +858,7 @@ def replace_organization_season_calendars(
             existing.markings = {key: dict(value) for key, value in replacement_calendar.items()}
             replaced_calendars += 1
         session.add(existing)
-        updated_clients.append(client.id)
+        updated_clients.append(client_id)
 
     add_audit_log(
         session,
