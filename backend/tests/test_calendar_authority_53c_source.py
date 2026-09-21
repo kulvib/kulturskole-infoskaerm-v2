@@ -19,7 +19,8 @@ def test_53c_calendar_delivery_is_display_domain_self_only_and_complete() -> Non
     endpoint = shared[shared.index('def display_calendar('):shared.index('@router.put("/status-agent', shared.index('def display_calendar('))]
     assert 'domain="display"' in endpoint
     assert "build_display_calendar_delivery" in endpoint
-    assert "require_shared_agent_token" in endpoint
+    assert "require_shared_agent_context" in endpoint
+    assert "authorized_client=authorization_context.client" in endpoint
 
     assert "current_and_next_seasons()" in control
     assert "validate_and_normalize_markings" in control

@@ -15,20 +15,78 @@ def _function_block(source: str, name: str, next_name: str | None = None) -> str
     return source[start:end]
 
 
-def test_shared_agent_auth_is_one_joined_database_read_per_validation():
+def test_shared_agent_auth_is_one_joined_database_read_and_reuses_authorized_client():
     source = _read("backend/service1/shared_domain.py")
     authenticate = _function_block(source, "authenticate_shared_credential", "create_shared_domain_token")
-    require_token = _function_block(source, "require_shared_agent_token", "upsert_shared_status")
+    context = _function_block(source, "require_shared_agent_context", "require_shared_agent_token")
+    wrapper = _function_block(source, "require_shared_agent_token", "upsert_shared_status")
 
-    for block in (authenticate, require_token):
-        assert ".join(Client, Client.id == ClientDomainCredential.client_id)" in block
-        assert "session.get(ClientDomainCredential" not in block
-        assert "session.get(Client," not in block
+    assert ".join(Client, Client.id == ClientDomainCredential.client_id)" in authenticate
+    assert "session.get(ClientDomainCredential" not in authenticate
+    assert "session.get(Client," not in authenticate
 
-    assert "ClientDomainCredential.revoked_at.is_(None)" in require_token
-    assert 'func.lower(Client.status) == "approved"' in require_token
-    assert "Client.deleted_at.is_(None)" in require_token
-    assert 'ClientDomainCredential.token_version == int(claims["token_version"])' in require_token
+    assert "select(ClientDomainCredential, Client)" in context
+    assert ".join(Client, Client.id == ClientDomainCredential.client_id)" in context
+    assert "ClientDomainCredential.revoked_at.is_(None)" in context
+    assert 'func.lower(Client.status) == "approved"' in context
+    assert "Client.deleted_at.is_(None)" in context
+    assert 'ClientDomainCredential.token_version == int(claims["token_version"])' in context
+    assert "return SharedAgentAuthorization(credential=credential, client=client)" in context
+    assert "return require_shared_agent_context(" in wrapper
+    assert ").credential" in wrapper
+
+
+def test_shared_status_uses_atomic_upsert_instead_of_read_before_write():
+    source = _read("backend/service1/shared_domain.py")
+    block = _function_block(source, "upsert_shared_status", "_claim_digest")
+
+    assert 'dialect_name in {"postgresql", "sqlite"}' in block
+    assert "on_conflict_do_update(" in block
+    assert 'index_elements=["client_id", "domain"]' in block
+    # Production PostgreSQL and executable SQLite tests must not SELECT the status
+    # row before every heartbeat. The ORM SELECT exists only in the explicit
+    # unsupported-dialect fallback branch.
+    assert block.index('if dialect_name in {"postgresql", "sqlite"}:') < block.index("row = session.exec(")
+
+
+def test_status_router_reuses_authorized_client_for_identity_and_power_observation():
+    source = _read("backend/service1/routers/shared_domain.py")
+    block = _function_block(source, "_status", "_claim")
+
+    assert "authorization_context = require_shared_agent_context(" in block
+    assert "client = authorization_context.client" in block
+    assert "client=client," in block
+    assert "_client_identity_payload(client)" in block
+    assert "session.get(Client," not in block
+
+
+def test_display_heartbeat_shares_lazy_active_command_read_between_reconcilers():
+    router = _read("backend/service1/routers/shared_domain.py")
+    display = _read("backend/service1/display_control.py")
+    block = _function_block(router, "_status", "_claim")
+
+    assert "active_command_cache: dict[str, Any] = {}" in block
+    assert block.count("active_command_cache=active_command_cache") == 2
+    assert "def _cached_active_display_commands(" in display
+    assert 'cache.get("active")' in display
+    assert 'cache["active"] = rows' in display
+
+
+def test_calendar_hot_path_reuses_authorized_client_and_batches_two_seasons():
+    router = _read("backend/service1/routers/shared_domain.py")
+    calendar = _read("backend/service1/calendar_control.py")
+    start = router.index("def display_calendar(")
+    end = router.index('@router.put("/status-agent', start)
+    endpoint = router[start:end]
+    delivery = _function_block(calendar, "build_display_calendar_delivery")
+
+    assert "authorization_context = require_shared_agent_context(" in endpoint
+    assert "authorized_client=authorization_context.client" in endpoint
+    assert "requested_seasons = tuple(current_and_next_seasons())" in delivery
+    assert "CalendarMarking.season.in_(requested_seasons)" in delivery
+    assert "select(CalendarMarking.season, CalendarMarking.markings)" in delivery
+    assert delivery.count("select(CalendarMarking") == 1
+    assert "if client is None:" in delivery  # safe standalone lifecycle fallback
 
 
 def test_empty_shared_command_claim_reads_active_queue_once_and_skips_display_status():

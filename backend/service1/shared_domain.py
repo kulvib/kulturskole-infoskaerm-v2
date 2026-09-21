@@ -5,6 +5,7 @@ planes and must never pass through this module.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import os
@@ -15,6 +16,8 @@ from typing import Any
 import jwt
 from fastapi import HTTPException
 from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import Session, select
 
 from .auth import SECRET_KEY, verify_password
@@ -32,6 +35,28 @@ DOMAIN_TOKEN_ISSUER = (
     os.getenv("CLIENTFLOW_DOMAIN_TOKEN_ISSUER") or "planiq-display-api"
 ).strip()
 DOMAIN_TOKEN_ALGORITHM = "HS256"
+
+
+@dataclass(frozen=True)
+class SharedAgentAuthorization:
+    """One-request authorization result from the canonical joined DB check.
+
+    The parent Client is deliberately returned from the same SELECT that
+    revalidates credential revocation/token-version and client lifecycle.
+    Hot-path callers can therefore reuse already-authorized client state
+    without a second Client SELECT or any cross-request cache.
+    """
+
+    credential: ClientDomainCredential
+    client: Client
+
+
+@dataclass(frozen=True)
+class SharedStatusReceipt:
+    client_id: int
+    domain: str
+    observed_state: str
+    reported_at: datetime
 
 
 def utcnow() -> datetime:
@@ -143,13 +168,19 @@ def issue_shared_domain_token_response(
     }
 
 
-def require_shared_agent_token(
+def require_shared_agent_context(
     session: Session,
     authorization: str | None,
     *,
     client_id: int,
     domain: str,
-) -> ClientDomainCredential:
+) -> SharedAgentAuthorization:
+    """Validate one agent request and return its already-authorized Client.
+
+    Revocation, token-version, approval and deletion remain database-authoritative
+    on every request.  This only avoids throwing away the Client row that the
+    authorization JOIN has already read.
+    """
     _validate_domain(domain)
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Bearer token mangler")
@@ -181,8 +212,8 @@ def require_shared_agent_token(
     ):
         raise HTTPException(status_code=403, detail="Token tilhører et andet domæne eller klient")
 
-    credential = session.exec(
-        select(ClientDomainCredential)
+    authorized = session.exec(
+        select(ClientDomainCredential, Client)
         .join(Client, Client.id == ClientDomainCredential.client_id)
         .where(
             ClientDomainCredential.id == credential_id,
@@ -195,9 +226,26 @@ def require_shared_agent_token(
             Client.deleted_at.is_(None),
         )
     ).first()
-    if credential is None:
+    if authorized is None:
         raise HTTPException(status_code=401, detail="Credential er tilbagekaldt, forældet eller klienten er deaktiveret")
-    return credential
+    credential, client = authorized
+    return SharedAgentAuthorization(credential=credential, client=client)
+
+
+def require_shared_agent_token(
+    session: Session,
+    authorization: str | None,
+    *,
+    client_id: int,
+    domain: str,
+) -> ClientDomainCredential:
+    """Compatibility wrapper for callers that only need the credential."""
+    return require_shared_agent_context(
+        session,
+        authorization,
+        client_id=client_id,
+        domain=domain,
+    ).credential
 
 
 def upsert_shared_status(
@@ -209,32 +257,63 @@ def upsert_shared_status(
     status_payload: dict[str, Any],
     agent_version: str | None,
     boot_id: str | None,
-) -> ClientDomainStatus:
+) -> SharedStatusReceipt:
+    """Persist liveness/status in one DB statement on supported production/test DBs.
+
+    ``(client_id, domain)`` is unique.  PostgreSQL and SQLite can therefore use
+    an atomic INSERT .. ON CONFLICT DO UPDATE instead of a SELECT followed by
+    INSERT/UPDATE on every 15-second heartbeat.  Other SQLAlchemy dialects keep
+    the conservative ORM fallback.
+    """
     if schema_version != 1:
         raise HTTPException(status_code=422, detail="Status schema_version understøttes ikke")
-    row = session.exec(
-        select(ClientDomainStatus).where(
-            ClientDomainStatus.client_id == credential.client_id,
-            ClientDomainStatus.domain == credential.domain,
+
+    reported_at = utcnow()
+    normalized_state = observed_state[:80]
+    normalized_agent_version = agent_version[:80] if agent_version else None
+    normalized_boot_id = boot_id[:128] if boot_id else None
+    values = {
+        "id": str(uuid.uuid4()),
+        "client_id": credential.client_id,
+        "domain": credential.domain,
+        "schema_version": schema_version,
+        "observed_state": normalized_state,
+        "status_payload": status_payload,
+        "agent_version": normalized_agent_version,
+        "boot_id": normalized_boot_id,
+        "credential_id": credential.id,
+        "reported_at": reported_at,
+    }
+    update_values = {key: value for key, value in values.items() if key != "id"}
+    dialect_name = session.get_bind().dialect.name
+    if dialect_name in {"postgresql", "sqlite"}:
+        insert_factory = postgresql_insert if dialect_name == "postgresql" else sqlite_insert
+        statement = insert_factory(ClientDomainStatus.__table__).values(**values)
+        statement = statement.on_conflict_do_update(
+            index_elements=["client_id", "domain"],
+            set_=update_values,
         )
-    ).first()
-    if row is None:
-        row = ClientDomainStatus(
-            id=str(uuid.uuid4()),
-            client_id=credential.client_id,
-            domain=credential.domain,
-            credential_id=credential.id,
-            reported_at=utcnow(),
-        )
-    row.schema_version = schema_version
-    row.observed_state = observed_state[:80]
-    row.status_payload = status_payload
-    row.agent_version = agent_version[:80] if agent_version else None
-    row.boot_id = boot_id[:128] if boot_id else None
-    row.credential_id = credential.id
-    row.reported_at = utcnow()
-    session.add(row)
-    return row
+        session.execute(statement)
+    else:
+        row = session.exec(
+            select(ClientDomainStatus).where(
+                ClientDomainStatus.client_id == credential.client_id,
+                ClientDomainStatus.domain == credential.domain,
+            )
+        ).first()
+        if row is None:
+            row = ClientDomainStatus(**values)
+        else:
+            for key, value in update_values.items():
+                setattr(row, key, value)
+        session.add(row)
+
+    return SharedStatusReceipt(
+        client_id=credential.client_id,
+        domain=credential.domain,
+        observed_state=normalized_state,
+        reported_at=reported_at,
+    )
 
 
 def _claim_digest(claim_token: str) -> str:

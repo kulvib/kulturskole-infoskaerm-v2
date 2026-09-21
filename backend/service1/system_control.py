@@ -496,6 +496,7 @@ def apply_status_power_observation(
     client_id: int,
     status_payload: dict[str, Any] | None,
     boot_id: str | None,
+    client: Client | None = None,
 ) -> None:
     """Persist canonical Status boot evidence and bounded local power attribution.
 
@@ -504,8 +505,9 @@ def apply_status_power_observation(
     canonical System command queue.  It can never create/complete a System
     command or change pending System state.
     """
-    client = session.get(Client, client_id)
     if client is None:
+        client = session.get(Client, client_id)
+    if client is None or int(getattr(client, "id", 0) or 0) != int(client_id):
         return
     current_boot = str(boot_id or "")
     if not current_boot or len(current_boot) > 128:
