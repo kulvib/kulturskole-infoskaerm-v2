@@ -51,19 +51,21 @@ def test_shared_status_uses_atomic_upsert_instead_of_read_before_write():
 
 def test_status_router_reuses_authorized_client_for_identity_and_power_observation():
     source = _read("backend/service1/routers/shared_domain.py")
-    block = _function_block(source, "_status", "_claim")
+    status = _function_block(source, "_status", "_claim")
+    shared_apply = _function_block(source, "_apply_status_in_session", "_status")
 
-    assert "authorization_context = require_shared_agent_context(" in block
-    assert "client = authorization_context.client" in block
-    assert "client=client," in block
-    assert "_client_identity_payload(client)" in block
-    assert "session.get(Client," not in block
+    assert "authorization_context = require_shared_agent_context(" in status
+    assert "authorization_context=authorization_context" in status
+    assert "client = authorization_context.client" in shared_apply
+    assert "client=client," in shared_apply
+    assert "_client_identity_payload(client)" in shared_apply
+    assert "session.get(Client," not in shared_apply
 
 
 def test_display_heartbeat_shares_lazy_active_command_read_between_reconcilers():
     router = _read("backend/service1/routers/shared_domain.py")
     display = _read("backend/service1/display_control.py")
-    block = _function_block(router, "_status", "_claim")
+    block = _function_block(router, "_apply_status_in_session", "_status")
 
     assert "active_command_cache: dict[str, Any] = {}" in block
     assert block.count("active_command_cache=active_command_cache") == 2

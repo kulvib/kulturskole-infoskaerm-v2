@@ -9,7 +9,7 @@ from typing import Any, Callable
 from .constants import SHARED_DOMAIN_COMMAND_POLL_SECONDS, SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS
 from .logging_utils import configure_logging
 from .net import DomainTransport, TransportError, backoff_seconds
-from .status import report_status
+from .status import build_status_body, report_status
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +78,7 @@ class QueueAgent:
         lease_seconds: int = 60,
         status_payload: Callable[[], dict[str, Any]] | None = None,
         report_status_after_command: bool = False,
+        piggyback_status_on_claim: bool = False,
     ) -> None:
         self.transport = transport
         self.handler = handler
@@ -85,26 +86,37 @@ class QueueAgent:
         self.lease_seconds = min(max(lease_seconds, 10), 300)
         self.status_payload = status_payload or (lambda: {})
         self.report_status_after_command = bool(report_status_after_command)
+        self.piggyback_status_on_claim = bool(piggyback_status_on_claim)
+        self._last_claim_status_reported = False
         self.logger = configure_logging(f"clientflow.{transport.credential.domain.value}")
         self._last_status = 0.0
 
     def _prefix(self) -> str:
         return self.transport.credential.domain.value.replace("_", "-")
 
-    def _report_status_if_due(self, *, force: bool = False, state: str = "online") -> None:
+    def _status_due(self, *, force: bool = False) -> bool:
         now = time.monotonic()
         if not force and now - self._last_status < SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS:
+            return False
+        return True
+
+    def _report_status_if_due(self, *, force: bool = False, state: str = "online") -> None:
+        if not self._status_due(force=force):
             return
         report_status(self.transport, observed_state=state, payload=self.status_payload())
-        self._last_status = now
+        self._last_status = time.monotonic()
 
-    def _claim(self) -> CommandContext | None:
+    def _claim(self, *, status_report: dict[str, Any] | None = None) -> CommandContext | None:
         client_id = self.transport.credential.client_id
+        body: dict[str, Any] = {"lease_seconds": self.lease_seconds}
+        if status_report is not None:
+            body["status_report"] = status_report
         payload = self.transport.json_request(
             "POST",
             f"/api/{self._prefix()}-agent/clients/{client_id}/commands/claim",
-            json_body={"lease_seconds": self.lease_seconds},
+            json_body=body,
         )
+        self._last_claim_status_reported = payload.get("status_reported") is True
         claimed = payload.get("claimed")
         if claimed is None:
             return None
@@ -159,8 +171,25 @@ class QueueAgent:
         attempt = 0
         while True:
             try:
-                self._report_status_if_due()
-                context = self._claim()
+                piggybacked_status: dict[str, Any] | None = None
+                if self.piggyback_status_on_claim and self._status_due():
+                    piggybacked_status = build_status_body(
+                        observed_state="online",
+                        payload=self.status_payload(),
+                    )
+                elif not self.piggyback_status_on_claim:
+                    self._report_status_if_due()
+
+                context = self._claim(status_report=piggybacked_status)
+                if piggybacked_status is not None:
+                    if self._last_claim_status_reported:
+                        # The backend applies status and claim in one transaction. Only
+                        # advance the cadence when the backend explicitly acknowledges it.
+                        self._last_status = time.monotonic()
+                    else:
+                        # Rolling-upgrade compatibility: older backends may ignore the
+                        # optional field. Preserve liveness with the historical PUT.
+                        self._report_status_if_due(force=True)
                 if context is None:
                     attempt = 0
                     time.sleep(self.poll_seconds)

@@ -40,6 +40,7 @@ class StatusBody(BaseModel):
 
 class ClaimBody(BaseModel):
     lease_seconds: int = Field(default=60, ge=10, le=300)
+    status_report: StatusBody | None = None
 
 
 class RenewBody(BaseModel):
@@ -86,6 +87,64 @@ def _client_identity_payload(
     }
 
 
+def _apply_status_in_session(
+    session: Session,
+    *,
+    domain: str,
+    client_id: int,
+    body: StatusBody,
+    authorization_context: Any,
+) -> dict[str, Any]:
+    """Apply one canonical status report using an already-validated request context."""
+    credential = authorization_context.credential
+    client = authorization_context.client
+    row = upsert_shared_status(
+        session,
+        credential=credential,
+        schema_version=body.schema_version,
+        observed_state=body.observed_state,
+        status_payload=body.status_payload,
+        agent_version=body.agent_version,
+        boot_id=body.boot_id,
+    )
+    if domain == "display":
+        active_command_cache: dict[str, Any] = {}
+        reconcile_display_configuration(
+            session,
+            client_id=client_id,
+            agent_version=body.agent_version,
+            status_payload=body.status_payload,
+            active_command_cache=active_command_cache,
+        )
+        reconcile_kiosk_lockdown(
+            session,
+            client_id=client_id,
+            agent_version=body.agent_version,
+            status_payload=body.status_payload,
+            client=client,
+            active_command_cache=active_command_cache,
+        )
+    elif domain == "status":
+        apply_status_power_observation(
+            session,
+            client_id=client_id,
+            status_payload=body.status_payload,
+            boot_id=body.boot_id,
+            client=client,
+        )
+    client_identity = _client_identity_payload(client) if domain == "status" else None
+    response = {
+        "ok": True,
+        "client_id": row.client_id,
+        "domain": row.domain,
+        "observed_state": row.observed_state,
+        "reported_at": row.reported_at,
+    }
+    if client_identity is not None:
+        response["client_identity"] = client_identity
+    return response
+
+
 def _status(domain: str, client_id: int, body: StatusBody, authorization: str | None):
     with Session(engine) as session:
         authorization_context = require_shared_agent_context(
@@ -94,60 +153,44 @@ def _status(domain: str, client_id: int, body: StatusBody, authorization: str | 
             client_id=client_id,
             domain=domain,
         )
-        credential = authorization_context.credential
-        client = authorization_context.client
-        row = upsert_shared_status(
+        response = _apply_status_in_session(
             session,
-            credential=credential,
-            schema_version=body.schema_version,
-            observed_state=body.observed_state,
-            status_payload=body.status_payload,
-            agent_version=body.agent_version,
-            boot_id=body.boot_id,
+            domain=domain,
+            client_id=client_id,
+            body=body,
+            authorization_context=authorization_context,
         )
-        if domain == "display":
-            active_command_cache: dict[str, Any] = {}
-            reconcile_display_configuration(
-                session,
-                client_id=client_id,
-                agent_version=body.agent_version,
-                status_payload=body.status_payload,
-                active_command_cache=active_command_cache,
-            )
-            reconcile_kiosk_lockdown(
-                session,
-                client_id=client_id,
-                agent_version=body.agent_version,
-                status_payload=body.status_payload,
-                client=client,
-                active_command_cache=active_command_cache,
-            )
-        elif domain == "status":
-            apply_status_power_observation(
-                session,
-                client_id=client_id,
-                status_payload=body.status_payload,
-                boot_id=body.boot_id,
-                client=client,
-            )
-        client_identity = _client_identity_payload(client) if domain == "status" else None
         session.commit()
-        response = {
-            "ok": True,
-            "client_id": row.client_id,
-            "domain": row.domain,
-            "observed_state": row.observed_state,
-            "reported_at": row.reported_at,
-        }
-        if client_identity is not None:
-            response["client_identity"] = client_identity
         return response
 
 
 def _claim(domain: str, client_id: int, body: ClaimBody, authorization: str | None):
     with Session(engine) as session:
-        credential = require_shared_agent_token(session, authorization, client_id=client_id, domain=domain)
+        if body.status_report is None:
+            credential = require_shared_agent_token(
+                session, authorization, client_id=client_id, domain=domain
+            )
+        else:
+            authorization_context = require_shared_agent_context(
+                session,
+                authorization,
+                client_id=client_id,
+                domain=domain,
+            )
+            credential = authorization_context.credential
+            _apply_status_in_session(
+                session,
+                domain=domain,
+                client_id=client_id,
+                body=body.status_report,
+                authorization_context=authorization_context,
+            )
         payload = claim_shared_command(session, credential=credential, lease_seconds=body.lease_seconds)
+        if body.status_report is not None:
+            # Explicit ACK is required for rolling compatibility. An older backend
+            # may ignore the unknown status_report field; the client then falls back
+            # to the historical standalone heartbeat instead of assuming success.
+            payload["status_reported"] = True
         session.commit()
         return payload
 

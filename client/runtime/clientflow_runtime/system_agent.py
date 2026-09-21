@@ -48,5 +48,6 @@ def main() -> int:
         build_handler(transport),
         lease_seconds=300,
         status_payload=lambda: {"broker_socket": os.path.exists(SYSTEM_SOCKET)},
+        piggyback_status_on_claim=True,
     ).run_forever()
     return 0
