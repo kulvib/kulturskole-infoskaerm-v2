@@ -65,7 +65,8 @@ def test_reads_use_batch_presence_and_dedicated_presence_endpoint():
     presence = read_backend("service1/client_presence.py")
     assert "load_client_presences_with_status_rows(session, clients)" in clients
     assert '@router.get("/clients/{id}/presence", response_model=ClientPresenceRead)' in clients
-    assert "return load_client_presence(session, client).public_dict()" in clients
+    assert "client, presence, _status_rows = load_client_with_presence_rows(session, id)" in clients
+    assert "return presence.public_dict()" in clients
     presence_route = clients.split('@router.get("/clients/{id}/presence"', 1)[1].split('@router.get("/clients/{id}/chrome-status"', 1)[0]
     assert 'response.headers["Cache-Control"] = "no-store, max-age=0"' in presence_route
     assert "ClientDomainStatus.client_id.in_(client_ids)" in presence
@@ -77,7 +78,7 @@ def test_reads_use_batch_presence_and_dedicated_presence_endpoint():
     assert '"last_seen"' not in chrome_get
     assert '"isOnline"' not in chrome_get
     assert '"is_online"' not in chrome_get
-    assert "load_client_presences_with_status_rows(session, [client])" in chrome_get
+    assert "load_client_with_presence_rows(session, id)" in chrome_get
     assert "display_read_projections(" in chrome_get
     assert "load_latest_system_projection_commands(session, [client_id])" in chrome_get
     assert "load_client_presence(session, client)" not in chrome_get
@@ -120,17 +121,21 @@ def test_os_update_no_longer_uses_legacy_staleness_mailbox():
 def test_every_clientread_response_path_attaches_canonical_presence():
     clients = read_backend("service1/routers/clients.py")
     helper = clients.split("def _prepare_full_client_read", 1)[1].split("def _prepare_clients_read", 1)[0]
-    assert "load_client_presence(session, client)" in helper
-    assert "_apply_display_projection_for_read(session, client)" in helper
-    assert "_prepare_client_read(client, evidence)" in helper
-    assert "_apply_system_projection_for_read(session, client, evidence)" in helper
+    assert "load_client_presences_with_status_rows(session, [client])" in helper
+    assert "_prepare_single_client_read_from_loaded_presence" in helper
+
+    single_helper = clients.split("def _prepare_single_client_read_from_loaded_presence", 1)[1].split("def _prepare_full_client_read", 1)[0]
+    assert "display_read_projections(" in single_helper
+    assert "_prepare_client_read(client, presence)" in single_helper
+    assert "load_latest_system_projection_commands(" in single_helper
+    assert "_apply_system_projection_for_read(" in single_helper
 
     route_expectations = {
         'def get_clients_for_my_organization': '_prepare_clients_read(session, clients)',
         'def get_clients(': '_prepare_clients_read(session, clients)',
         'def get_deleted_clients(': '_prepare_clients_read(session, clients)',
         'def get_deleted_clients_slash': 'return get_deleted_clients(session=session, user=user)',
-        'def get_client(': 'return _prepare_full_client_read(session, client)',
+        'def get_client(': 'return _prepare_single_client_read_from_loaded_presence(session, client, presence, status_rows)',
         'async def create_client': 'return _prepare_full_client_read(session, client)',
         'async def update_client': 'return _prepare_full_client_read(session, client)',
         'async def update_kiosk_url': 'return _prepare_full_client_read(session, client)',

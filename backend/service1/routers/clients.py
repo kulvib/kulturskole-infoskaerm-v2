@@ -14,7 +14,7 @@ from ..models import utcnow
 from ..observability import log_safe_exception
 from ..lifecycle import ClientPurgeBlocked, prepare_client_for_permanent_delete
 from ..clientflow_deployments import active_deployment
-from ..client_presence import ClientPresence, load_client_presence, load_client_presences_with_status_rows
+from ..client_presence import ClientPresence, load_client_presence, load_client_presences_with_status_rows, load_client_with_presence_rows
 from ..display_control import (
     active_display_control_command,
     display_agent_supports_commands,
@@ -1199,17 +1199,61 @@ def _apply_system_projection_for_read(
         _set_runtime_read_attr(client, target_key, local.get(source_key))
 
 
+def _prepare_single_client_read_from_loaded_presence(
+    session,
+    client: Client,
+    presence: ClientPresence,
+    status_rows: dict[tuple[int, str], Any],
+) -> Client:
+    """Attach the canonical single-client read projection with bounded queries.
+
+    The caller has already loaded Client + shared-domain presence evidence.
+    Display then needs its desired-state and active-command batches, while
+    System needs one latest-command batch. No per-domain re-read is necessary.
+    """
+    if client.id is None:
+        return client
+    client_id = int(client.id)
+    display_projection = display_read_projections(
+        session,
+        [client_id],
+        status_rows={client_id: status_rows.get((client_id, "display"))},
+    )[client_id]
+    system_commands = load_latest_system_projection_commands(session, [client_id]).get(client_id)
+
+    _apply_display_projection_for_read(session, client, projection=display_projection)
+    _prepare_client_read(client, presence)
+    _apply_system_projection_for_read(
+        session,
+        client,
+        presence,
+        projection_commands=system_commands,
+    )
+    return client
+
+
 def _prepare_full_client_read(
     session,
     client: Client,
     presence: Optional[ClientPresence] = None,
 ) -> Client:
-    """Attach all canonical read-time projections to one Client response."""
-    evidence = presence or load_client_presence(session, client)
-    _apply_display_projection_for_read(session, client)
-    _prepare_client_read(client, evidence)
-    _apply_system_projection_for_read(session, client, evidence)
-    return client
+    """Attach all canonical read-time projections to one Client response.
+
+    Full-client reads use the same bounded batch projection as list/hot reads.
+    This removes the former one-by-one Display/System query fan-out while
+    preserving the exact response authority.
+    """
+    if client.id is None:
+        return client
+    if presence is None:
+        presences, status_rows = load_client_presences_with_status_rows(session, [client])
+        presence = presences[int(client.id)]
+    else:
+        # A supplied presence does not include the underlying Display status
+        # row needed by the canonical Display projection. Load the shared rows
+        # once rather than falling back to the old per-domain query path.
+        _presences, status_rows = load_client_presences_with_status_rows(session, [client])
+    return _prepare_single_client_read_from_loaded_presence(session, client, presence, status_rows)
 
 
 def _prepare_clients_read(session, clients: List[Client]) -> List[Client]:
@@ -1350,11 +1394,11 @@ def get_deleted_clients_slash(session=Depends(get_session), user=Depends(get_cur
 
 @router.get("/clients/{id}/", response_model=ClientRead)
 def get_client(id: int, include_deleted: bool = False, session=Depends(get_session), user=Depends(get_current_user_or_client)):
-    client = session.get(Client, id)
-    if not client:
+    client, presence, status_rows = load_client_with_presence_rows(session, id)
+    if not client or presence is None:
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client, include_deleted=include_deleted)
-    return _prepare_full_client_read(session, client)
+    return _prepare_single_client_read_from_loaded_presence(session, client, presence, status_rows)
 
 
 @router.get("/clients/{id}/local-management", response_model=LocalManagementRead)
@@ -1479,24 +1523,22 @@ def get_client_presence(
     session=Depends(get_session),
     user=Depends(get_current_user_or_client),
 ):
-    client = session.get(Client, id)
-    if not client:
+    client, presence, _status_rows = load_client_with_presence_rows(session, id)
+    if not client or presence is None:
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client)
     response.headers["Cache-Control"] = "no-store, max-age=0"
-    return load_client_presence(session, client).public_dict()
+    return presence.public_dict()
 
 
 @router.get("/clients/{id}/chrome-status")
 def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_current_user_or_client)):
-    client = session.get(Client, id)
-    if not client:
+    client, presence, status_rows = load_client_with_presence_rows(session, id)
+    if not client or presence is None:
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client)
 
     client_id = int(client.id)
-    presences, status_rows = load_client_presences_with_status_rows(session, [client])
-    presence = presences[client_id]
     display_projection = display_read_projections(
         session,
         [client_id],
@@ -1536,6 +1578,17 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
 
     return {
         "client_id": client.id,
+        # Stable detail/configuration fields ride on the existing hot read. The
+        # Client row is already loaded for authorization, so exposing these
+        # values adds no database query and lets the UI retire parallel full-
+        # Client polling on Configuration/Diagnostics tabs.
+        "name": client.name,
+        "locality": client.locality,
+        "status": client.status,
+        "organization_id": client.organization_id,
+        "machine_id": client.machine_id,
+        "kiosk_url": client.kiosk_url,
+        "browser_refresh_interval_sec": client.browser_refresh_interval_sec,
         # Canonical shared-domain presence is already evaluated for this hot
         # projection. Transport the exact same authority in the fast poll so
         # the browser does not need a second presence request every 5 seconds.
@@ -1585,9 +1638,23 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "local_management_finished_at": getattr(client, "local_management_finished_at", None),
         "local_management_error": getattr(client, "local_management_error", None),
         "ubuntu_version": getattr(client, "ubuntu_version", None),
+        "service_clientflow_status": getattr(client, "service_clientflow_status", None),
+        "service_calendar_status": getattr(client, "service_calendar_status", None),
+        "service_browser_guard_status": getattr(client, "service_browser_guard_status", None),
+        "service_remote_terminal_status": getattr(client, "service_remote_terminal_status", None),
+        "service_admin_terminal_status": getattr(client, "service_admin_terminal_status", None),
+        "service_remote_desktop_status": getattr(client, "service_remote_desktop_status", None),
+        "service_livestream_status": getattr(client, "service_livestream_status", None),
         "service_selfupdate_status": getattr(client, "service_selfupdate_status", None),
         "service_ubuntu_update_status": getattr(client, "service_ubuntu_update_status", None),
         "ubuntu_updates_available": getattr(client, "ubuntu_updates_available", 0) or 0,
+        "last_boot_at": getattr(client, "last_boot_at", None),
+        "last_boot_id": getattr(client, "last_boot_id", None),
+        "last_power_event": getattr(client, "last_power_event", None),
+        "last_power_event_at": getattr(client, "last_power_event_at", None),
+        "last_power_event_source": getattr(client, "last_power_event_source", None),
+        "last_reboot_started_at": getattr(client, "last_reboot_started_at", None),
+        "last_shutdown_started_at": getattr(client, "last_shutdown_started_at", None),
         "diagnostics_updated_at": client.diagnostics_updated_at,
         "system_timezone": client.system_timezone,
         "ntp_enabled": client.ntp_enabled,
@@ -1610,6 +1677,7 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "display_resolution_height": client.display_resolution_height,
         "display_resolution_refresh_rate": client.display_resolution_refresh_rate,
         "display_resolution_rotation": client.display_resolution_rotation or "normal",
+        "display_resolution_action": client.display_resolution_action,
         "display_resolution_updated_at": client.display_resolution_updated_at,
         "display_resolution_current_output": client.display_resolution_current_output,
         "display_resolution_current_width": client.display_resolution_current_width,
@@ -1627,6 +1695,8 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "livestream_process_status": getattr(client, "livestream_process_status", None),
         "livestream_desired_state": getattr(client, "livestream_desired_state", None),
         "livestream_stop_reason": getattr(client, "livestream_stop_reason", None),
+        "livestream_last_segment": getattr(client, "livestream_last_segment", None),
+        "livestream_last_error": getattr(client, "livestream_last_error", None),
         "desktop_lockdown_enabled": getattr(client, "desktop_lockdown_enabled", False),
         "desktop_lockdown_status": getattr(client, "desktop_lockdown_status", None) or "unknown",
         "desktop_lockdown_message": getattr(client, "desktop_lockdown_message", None),

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 from sqlmodel import Session, select
+from sqlalchemy.orm import load_only
 
 from .client_domain_models import ClientDomainCredential, ClientDomainStatus
 from .models import Client
@@ -169,6 +170,97 @@ def evaluate_domain_presence(
     return DomainPresence(is_online=True, reason="fresh_online_status", **common)
 
 
+def _evaluate_client_presence_from_loaded_rows(
+    client: Client,
+    *,
+    row_by_key: dict[tuple[int, str], ClientDomainStatus],
+    credential_by_key: dict[tuple[int, str], ClientDomainCredential | None],
+    now: datetime | None = None,
+) -> ClientPresence:
+    """Evaluate one client's canonical presence from rows already loaded."""
+    if client.id is None:
+        return ClientPresence(
+            status=_offline("status", "client_has_no_id"),
+            display=_offline("display", "client_has_no_id"),
+            system=_offline("system", "client_has_no_id"),
+        )
+
+    current = _as_naive_utc(now) if now is not None else utcnow()
+    evaluated: dict[str, DomainPresence] = {}
+    for domain in PRESENCE_DOMAINS:
+        key = (int(client.id), domain)
+        evaluated[domain] = evaluate_domain_presence(
+            client,
+            domain=domain,
+            status=row_by_key.get(key),
+            credential=credential_by_key.get(key),
+            now=current,
+        )
+    return ClientPresence(
+        status=evaluated["status"],
+        display=evaluated["display"],
+        system=evaluated["system"],
+    )
+
+
+def load_client_with_presence_rows(
+    session: Session,
+    client_id: int,
+    *,
+    now: datetime | None = None,
+) -> tuple[Client | None, ClientPresence | None, dict[tuple[int, str], ClientDomainStatus]]:
+    """Load one Client plus all shared-domain presence evidence in one SELECT.
+
+    Detail/hot-state endpoints need the Client row for authorization and the
+    Status/Display/System rows for canonical presence. Loading them separately
+    costs one avoidable database round-trip on every poll. The outer joins keep
+    a Client with no domain status rows visible so 404 semantics stay unchanged.
+    """
+    rows = session.exec(
+        select(Client, ClientDomainStatus, ClientDomainCredential)
+        .join(
+            ClientDomainStatus,
+            (ClientDomainStatus.client_id == Client.id)
+            & ClientDomainStatus.domain.in_(PRESENCE_DOMAINS),
+            isouter=True,
+        )
+        .join(
+            ClientDomainCredential,
+            ClientDomainCredential.id == ClientDomainStatus.credential_id,
+            isouter=True,
+        )
+        .options(
+            load_only(
+                ClientDomainCredential.id,
+                ClientDomainCredential.client_id,
+                ClientDomainCredential.domain,
+                ClientDomainCredential.revoked_at,
+            )
+        )
+        .where(Client.id == int(client_id))
+    ).all()
+    if not rows:
+        return None, None, {}
+
+    client = rows[0][0]
+    row_by_key: dict[tuple[int, str], ClientDomainStatus] = {}
+    credential_by_key: dict[tuple[int, str], ClientDomainCredential | None] = {}
+    for _client, status_row, credential in rows:
+        if status_row is None:
+            continue
+        key = (int(status_row.client_id), status_row.domain)
+        row_by_key[key] = status_row
+        credential_by_key[key] = credential
+
+    presence = _evaluate_client_presence_from_loaded_rows(
+        client,
+        row_by_key=row_by_key,
+        credential_by_key=credential_by_key,
+        now=now,
+    )
+    return client, presence, row_by_key
+
+
 def _load_client_presence_batch(
     session: Session,
     clients: Iterable[Client],
@@ -194,6 +286,14 @@ def _load_client_presence_batch(
             ClientDomainCredential.id == ClientDomainStatus.credential_id,
             isouter=True,
         )
+        .options(
+            load_only(
+                ClientDomainCredential.id,
+                ClientDomainCredential.client_id,
+                ClientDomainCredential.domain,
+                ClientDomainCredential.revoked_at,
+            )
+        )
         .where(
             ClientDomainStatus.client_id.in_(client_ids),
             ClientDomainStatus.domain.in_(PRESENCE_DOMAINS),
@@ -206,25 +306,13 @@ def _load_client_presence_batch(
         row_by_key[key] = status_row
         credential_by_key[key] = credential
 
-    current = _as_naive_utc(now) if now is not None else utcnow()
     result: dict[int, ClientPresence] = {}
     for client in client_list:
-        evaluated: dict[str, DomainPresence] = {}
-        for domain in PRESENCE_DOMAINS:
-            key = (int(client.id), domain)
-            row = row_by_key.get(key)
-            credential = credential_by_key.get(key)
-            evaluated[domain] = evaluate_domain_presence(
-                client,
-                domain=domain,
-                status=row,
-                credential=credential,
-                now=current,
-            )
-        result[int(client.id)] = ClientPresence(
-            status=evaluated["status"],
-            display=evaluated["display"],
-            system=evaluated["system"],
+        result[int(client.id)] = _evaluate_client_presence_from_loaded_rows(
+            client,
+            row_by_key=row_by_key,
+            credential_by_key=credential_by_key,
+            now=now,
         )
     return result, row_by_key
 
