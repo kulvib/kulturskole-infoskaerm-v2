@@ -1060,7 +1060,7 @@ EXPECTED_FINGERPRINT = "e2f89bed46e20fd2d015f8014a889e73eed3495664595ad2168202a1
 
 # Step 56A: lightweight Calendar delivery validator metadata.
 from calendar_delivery_schema_contract import CALENDAR_DELIVERY_COLUMNS
-EXPECTED_HEAD_REVISION = "20260922_56a_calendar_delivery_revision"
+EXPECTED_HEAD_REVISION = "20260922_56a_calendar_rev"
 _calendar_columns = dict(EXPECTED_COLUMNS["calendarmarking"])
 _calendar_columns.update(CALENDAR_DELIVERY_COLUMNS)
 EXPECTED_COLUMNS["calendarmarking"] = _calendar_columns

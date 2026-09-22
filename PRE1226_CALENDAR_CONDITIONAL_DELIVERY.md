@@ -77,7 +77,7 @@ No authorization caching or stale cross-request state is introduced.
 
 ## Migration
 
-New head: `20260922_56a_calendar_delivery_revision`
+New head: `20260922_56a_calendar_rev`
 
 Predecessor: `20260908_55a_enroll_binding`
 

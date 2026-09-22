@@ -75,7 +75,7 @@ ADVISORY_LOCK_KEY = -614927384150371204
 # Baseline adoption is deliberately reviewed only for this exact graph. If a
 # later migration changes the head, the adoption path fails closed until the
 # baseline delta is reviewed again.
-REVIEWED_BASELINE_ADOPTION_HEAD = "20260922_56a_calendar_delivery_revision"
+REVIEWED_BASELINE_ADOPTION_HEAD = "20260922_56a_calendar_rev"
 REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 
 # Production was observed at this Alembic label before Step 40A was deployed,
@@ -84,7 +84,7 @@ REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 # 39A schema; otherwise deployment fails closed without stamping or DDL.
 RECOVERABLE_LEGACY_REVISION = "20260730_41a"
 RECOVERABLE_LEGACY_TARGET = "20260717_39a_livestream_leases"
-REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260922_56a_calendar_delivery_revision"
+REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260922_56a_calendar_rev"
 REVIEWED_LIVESTREAM_V2_PREDECESSOR = "20260814_40a_livestream_control"
 REVIEWED_LIVESTREAM_V2_REVISION = "20260814_41a_livestream_v2"
 REVIEWED_TERMINAL_V2_REVISION = "20260816_42a_terminal_v2"
@@ -103,7 +103,7 @@ REVIEWED_DISPLAY_AUTHORITY_REVISION = "20260823_53a_display_authority"
 REVIEWED_SYSTEM_AUTHORITY_REVISION = "20260823_53b_system_authority"
 REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION = "20260829_54a_display_parity"
 REVIEWED_ENROLLMENT_BINDING_REVISION = "20260908_55a_enroll_binding"
-REVIEWED_CALENDAR_DELIVERY_REVISION = "20260922_56a_calendar_delivery_revision"
+REVIEWED_CALENDAR_DELIVERY_REVISION = "20260922_56a_calendar_rev"
 LIVESTREAM_V2_TABLES = frozenset({
     "livestream_v2_agent_status",
     "livestream_v2_command",
