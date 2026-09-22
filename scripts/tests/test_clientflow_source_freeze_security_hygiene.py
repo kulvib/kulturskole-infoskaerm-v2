@@ -100,6 +100,9 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CLIENTFLOW_1.3.24_1225_SOURCE_FREEZE_CLOSURE.md" in seen
     assert "CLIENTFLOW_1.3.25_1226_SOURCE_REFREEZE_TERMINAL_UX_CLOSURE.md" in seen
     assert "CHANGED_FILES_1325_1226_TERMINAL_UX_CLOSURE.txt" in seen
+    assert "CLIENTFLOW_1.3.25_1226_SOURCE_REFREEZE_UNUSED_FILE_HYGIENE_CLOSURE.md" in seen
+    assert "CHANGED_FILES_1325_1226_UNUSED_FILE_HYGIENE_CLOSURE.txt" in seen
+    assert "scripts/tests/test_clientflow_1226_unused_file_hygiene.py" in seen
     assert "CHANGED_FILES_1324_1225_SOURCE_FREEZE.txt" in seen
     assert "CLIENTFLOW_1.3.24_1225_CATALOG_PROMOTION.md" in seen
     assert "CHANGED_FILES_1324_1225_CATALOG_PROMOTION.txt" in seen
@@ -122,3 +125,15 @@ def test_1323_1224_initial_freeze_is_explicitly_superseded_before_build() -> Non
     assert "35449745659" in refreeze
     assert "sequence-1224 runtime-input transport" in refreeze
     assert "source release sequence" in refreeze and "catalog sequence" in refreeze
+
+
+def test_1325_1226_refreeze_contains_no_known_unused_runtime_or_template_files() -> None:
+    forbidden = (
+        "BASE_BLOBS.txt",
+        "client/runtime/clientflow_runtime/release_download.py",
+        "client/config-examples/domain-credential.json",
+        "client/config-examples/identity.json",
+        "client/config-examples/root-grant.json",
+    )
+    leaked = [relative for relative in forbidden if (ROOT / relative).exists()]
+    assert leaked == [], "known unused pre-1226 files remain: " + ", ".join(leaked)
