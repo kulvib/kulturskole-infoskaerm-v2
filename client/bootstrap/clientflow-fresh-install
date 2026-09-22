@@ -284,6 +284,7 @@ def _run_canonical_installer(
         ]
         if authorities is not None:
             command.append("--fresh-install-authority-stdin")
+        command.append("--suppress-result-json")
         if locality:
             command += ["--locality", locality]
         print("Starter canonical ClientFlow fresh-installer. Installationslinjer vises løbende nedenfor.", flush=True)
@@ -762,7 +763,6 @@ def _http_error_detail(exc: urllib.error.HTTPError) -> str:
 
 def _interactive_bootstrap_binding() -> tuple[str, dict[str, object]]:
     phase("3/8 · CF-kode")
-    print("Koden vises som: CF-____-____-____. Bindestreger er fortrykt; copy/paste understøttes.")
     while True:
         try:
             code = read_cf_code().strip().upper()
@@ -1054,13 +1054,10 @@ def _customer_install() -> int:
     except Exception:
         _disable_preactivation_gui(remove_unit=True)
         raise
-    ok(
-        "CF-koden er accepteret. Efter reboot afventer ClientFlow selv backend-godkendelsen og aktiverer "
-        "automatisk den exact staged release; den lokale status-GUI vises imens, og der kræves ikke et ekstra klik."
-    )
+    ok("CF-koden er accepteret.")
 
-    phase("8/8 · Kundeaktivering færdig")
-    ok("Kundeaktivering færdig. Klienten kan genstartes efter bekræftelse.")
+    phase("8/8 · Aktivering færdig")
+    ok("Aktivering færdig. Klienten kan genstartes efter bekræftelse.")
     confirmed_reboot("kundeaktivering gennemført", seconds=5)
     return 0
 

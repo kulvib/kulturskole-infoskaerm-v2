@@ -1059,6 +1059,7 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--name")
     install.add_argument("--locality")
     install.add_argument("--factory-state", type=Path, help=argparse.SUPPRESS)
+    install.add_argument("--suppress-result-json", action="store_true", help=argparse.SUPPRESS)
     install.add_argument(
         "--bootstrap-network-connection-uuid",
         help="Explicit active NetworkManager WiFi/Ethernet profile owned by temporary ClientFlow bootstrap cleanup",
@@ -1209,7 +1210,8 @@ def main(argv: list[str] | None = None) -> int:
         result = {"status": "wiped"}
     else:  # pragma: no cover
         raise RuntimeError("Ukendt operation")
-    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    if not (args.operation == "install" and getattr(args, "suppress_result_json", False)):
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
 

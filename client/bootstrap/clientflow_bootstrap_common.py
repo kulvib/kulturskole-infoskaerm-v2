@@ -297,8 +297,7 @@ def _ensure_factory_user(name: str, *, comment: str) -> None:
 
 
 def _prompt_admin_password() -> str:
-    print("Adminbrugeren oprettes altid som: cfadmin")
-    print("Password vises ikke, gemmes ikke i ClientFlow-state og skrives ikke i loggen.")
+    print("Adminbrugeren oprettes som: cfadmin")
     while True:
         first = getpass.getpass("Nyt password til cfadmin: ")
         second = getpass.getpass("Gentag password til cfadmin: ")
@@ -525,11 +524,7 @@ def provision_factory_human_accounts() -> None:
     for username in (KIOSK_USER, ADMIN_USER):
         prepare_factory_gnome_initial_setup_markers(username)
         prepare_factory_popup_autostarts(username)
-    ok(
-        "cfadmin og clientflow-kiosk er oprettet og valideret; kiosk har ingen privilegerede grupper, "
-        "GNOME first-login/upgrade onboarding er markeret færdig, og kendte Ubuntu update/crash/report "
-        "popup-autostarts er deaktiveret før første login for begge konti."
-    )
+    ok("cfadmin og clientflow-kiosk er oprettet og valideret")
 
 
 def _replace_ini_section_keys(text: str, section: str, replacements: dict[str, str]) -> str:
@@ -621,7 +616,6 @@ def install_customer_activation_sudoers() -> None:
     if result.returncode != 0:
         FACTORY_ACTIVATION_SUDOERS.unlink(missing_ok=True)
         raise BootstrapError(f"Midlertidig sudoers-regel er ugyldig: {(result.stdout or '')[-1000:]}")
-    ok("Kiosk-brugeren har kun passwordfri ret til den eksakte, root-ejede kundeaktiveringshelper uden argumenter.")
 
 
 def remove_customer_activation_sudoers() -> None:
@@ -870,14 +864,14 @@ def prompt_client_name_confirmed(existing: str | None = None) -> str:
             print("Der er ikke fundet et eksisterende klientnavn.")
 
         while True:
-            value = input("Klientnavn, defineres på kontoret og vises senere ude hos kunden: ").strip()
+            value = input("Klientnavn: ").strip()
             if value:
                 value = normalize_client_name(value)
                 break
             warn("Klientnavn må ikke være tomt. Prøv igen.")
         print("\nKlientnavn bliver:\n")
         print(f"  {value}\n")
-        answer = input("Er dette korrekt? [J/n]: ").strip().lower() or "j"
+        answer = input("Er dette korrekt? [j/n]: ").strip().lower() or "j"
         if answer in {"j", "ja", "y", "yes"}:
             return value
         if answer in {"n", "nej", "no"}:
@@ -887,7 +881,7 @@ def prompt_client_name_confirmed(existing: str | None = None) -> str:
 
 
 def prompt_locality() -> str | None:
-    return normalize_locality(input("Lokation/rum hos kunden (valgfri, Enter = tom): "))
+    return normalize_locality(input("Lokation/rum (valgfri, Enter = tom): "))
 
 
 def _cf_normalize(text: str) -> str:
@@ -1359,13 +1353,14 @@ def install_terminal_launcher(path: Path, *, title: str, command: str) -> None:
 def confirmed_reboot(reason: str, *, seconds: int = 5) -> bool:
     print(f"\nFlowet er færdigt og kræver genstart: {reason}")
     print("Maskinen genstarter IKKE automatisk. Du skal bekræfte først.")
-    answer = input("Vil du genstarte nu? [j/N]: ").strip().lower() or "n"
+    answer = input("Vil du genstarte nu? [j/n]: ").strip().lower() or "n"
     if answer not in {"j", "ja", "y", "yes"}:
         warn("Genstart er ikke udført. Genstart manuelt senere for at fuldføre flowet.")
         print("Du kan genstarte manuelt med: sudo systemctl --no-block --check-inhibitors=no reboot")
         return False
     for remaining in range(seconds, 0, -1):
-        print(f"Genstarter om {remaining} sekunder...")
+        unit = "sekund" if remaining == 1 else "sekunder"
+        print(f"Genstarter om {remaining} {unit}...")
         time.sleep(1)
     result = subprocess.run(
         [str(SYSTEMCTL), "--no-block", "--check-inhibitors=no", "reboot"],

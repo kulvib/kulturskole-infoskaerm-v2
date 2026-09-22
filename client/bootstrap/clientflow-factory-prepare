@@ -12,7 +12,6 @@ if str(HERE) not in sys.path:
 from clientflow_bootstrap_common import (  # noqa: E402
     BootstrapError,
     banner,
-    ADMIN_USER,
     KIOSK_USER,
     clear_usb_state,
     configure_network_interactive,
@@ -74,14 +73,13 @@ def _install_customer_launcher(operator: str) -> None:
         ),
     )
     remove_desktop_install_icons(operator)
-    target = write_desktop_launcher(
+    write_desktop_launcher(
         operator,
         filename="02 Aktiver ClientFlow.desktop",
         name="02 Aktiver ClientFlow",
         comment="Fase 2: Aktiver klienten manuelt med kundens CF-kode",
         exec_path=str(CUSTOMER_LAUNCHER),
     )
-    ok(f"Fase 2 oprettet i aktiv XDG Desktop-mappe: {target}")
 
 
 def usb_preflight() -> int:
@@ -115,7 +113,6 @@ def factory_prepare() -> int:
     write_factory_state(client_name=client_name, operator_user=operator, handoff_ready=False)
     ok(f"Klientnavn bekræftet: {client_name}")
     ok(f"Kiosk-bruger fastlagt: ClientFlow kiosk user ({KIOSK_USER})")
-    print(f"Lokal admin-bruger fastlægges som: {ADMIN_USER}")
     provision_factory_human_accounts()
 
     phase("3/6 · Kiosk-login til kundeoverdragelse")
@@ -126,9 +123,9 @@ def factory_prepare() -> int:
     install_customer_launcher_trust_helper(KIOSK_USER)
     install_customer_activation_sudoers()
     remove_desktop_install_icons(operator)
-    ok("02 Aktiver ClientFlow er oprettet hos kiosk-brugeren og kræver ikke kundens sudo-password.")
+    ok("02 Aktiver ClientFlow er oprettet hos kiosk-brugeren.")
 
-    phase("5/6 · Glem kontor-/factory-netværk")
+    phase("5/6 · Glem factory-netværk")
     forget_saved_networks()
     clear_usb_state()
 
@@ -137,7 +134,7 @@ def factory_prepare() -> int:
     ok(
         "Klient klargøring færdig. Maskinen er klar til kundeoverdragelse: klientnavn og cfadmin er defineret, "
         "clientflow-kiosk bliver næste grafiske login, 02 Aktiver ClientFlow ligger på kiosk-skrivebordet, "
-        "og gemte kontor-netværksprofiler er fjernet. Ingen client secret er oprettet endnu."
+        "og gemte kontor-netværksprofiler er fjernet."
     )
     confirmed_reboot("klient klargøring gennemført", seconds=5)
     return 0
