@@ -247,8 +247,9 @@ def test_55a_is_wired_into_canonical_database_contract_and_migration_runner():
         "fresh_install_candidate_sha256", "fresh_install_source_commit",
     ):
         assert f'"{field}"' in delta
-    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260908_55a_enroll_binding"' in runner
-    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260908_55a_enroll_binding"' in runner
+    assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260922_56a_calendar_delivery_revision"' in runner
+    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260922_56a_calendar_delivery_revision"' in runner
     assert 'REVIEWED_ENROLLMENT_BINDING_REVISION = "20260908_55a_enroll_binding"' in runner
     assert 'enrollment_binding_revision.down_revision != REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION' in runner
-    assert 'head != REVIEWED_ENROLLMENT_BINDING_REVISION' in runner
+    assert 'calendar_delivery_revision.down_revision != REVIEWED_ENROLLMENT_BINDING_REVISION' in runner
+    assert 'head != REVIEWED_CALENDAR_DELIVERY_REVISION' in runner

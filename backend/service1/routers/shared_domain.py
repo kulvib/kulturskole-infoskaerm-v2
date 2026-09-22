@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
@@ -14,7 +15,10 @@ from ..display_control import (
     reconcile_display_configuration,
     reconcile_kiosk_lockdown,
 )
-from ..calendar_control import build_display_calendar_delivery
+from ..calendar_control import (
+    build_display_calendar_delivery_with_etag,
+    display_calendar_delivery_etag,
+)
 from ..system_control import apply_status_power_observation, apply_system_command_completion
 from ..models import Client
 from ..shared_domain import (
@@ -248,7 +252,11 @@ def _fail(domain: str, client_id: int, command_id: str, body: FailBody, authoriz
 
 
 @router.get("/display-agent/clients/{client_id}/calendar")
-def display_calendar(client_id: int, authorization: str | None = Header(default=None)):
+def display_calendar(
+    client_id: int,
+    authorization: str | None = Header(default=None),
+    if_none_match: str | None = Header(default=None, alias="If-None-Match"),
+):
     with Session(engine) as session:
         authorization_context = require_shared_agent_context(
             session,
@@ -256,11 +264,28 @@ def display_calendar(client_id: int, authorization: str | None = Header(default=
             client_id=client_id,
             domain="display",
         )
-        return build_display_calendar_delivery(
+        cache_headers = {"Cache-Control": "private, no-cache"}
+        if if_none_match:
+            current_etag = display_calendar_delivery_etag(
+                session,
+                client_id=client_id,
+                authorized_client=authorization_context.client,
+            )
+            if current_etag and current_etag in {part.strip() for part in if_none_match.split(",")}:
+                return Response(
+                    status_code=304,
+                    headers={**cache_headers, "ETag": current_etag},
+                )
+
+        payload, etag = build_display_calendar_delivery_with_etag(
             session,
             client_id=client_id,
             authorized_client=authorization_context.client,
         )
+        headers = dict(cache_headers)
+        if etag:
+            headers["ETag"] = etag
+        return JSONResponse(content=payload, headers=headers)
 
 
 @router.put("/status-agent/clients/{client_id}/status")
