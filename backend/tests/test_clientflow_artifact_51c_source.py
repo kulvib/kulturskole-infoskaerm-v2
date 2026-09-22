@@ -27,9 +27,8 @@ def test_step51c_backend_artifact_authority_is_deployment_and_dpop_bound():
 
 def test_legacy_system_agent_token_is_not_accepted_by_artifact_endpoint_contract():
     router = (ROOT / "backend/service1/routers/clientflow_update.py").read_text()
-    legacy_downloader = (ROOT / "client/runtime/clientflow_runtime/release_download.py").read_text()
+    assert not (ROOT / "client/runtime/clientflow_runtime/release_download.py").exists()
     assert 'Authorization: DPoP' in (ROOT / "backend/service1/clientflow_artifact_auth.py").read_text()
-    assert '"Authorization": f"Bearer {transport.access_token()}"' in legacy_downloader
     assert "download_clientflow_release_artifact" in router
 
 

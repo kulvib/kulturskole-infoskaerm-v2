@@ -94,10 +94,7 @@ def test_51f_canonical_release_code_has_no_hardcoded_product_version() -> None:
         assert "1.2.0" not in text, path
         assert _version() not in text, path
 
-    release_download = (ROOT / "client/runtime/clientflow_runtime/release_download.py").read_text(encoding="utf-8")
-    assert 'from .version import VERSION' in release_download
-    assert 'f"ClientFlow/{VERSION} system-agent"' in release_download
-    assert "ClientFlow/1.2.0 system-agent" not in release_download
+    assert not (ROOT / "client/runtime/clientflow_runtime/release_download.py").exists()
 
     runtime_prepare = (ROOT / "client/release/lib/clientflow_release/runtime_prepare.py").read_text(encoding="utf-8")
     assert "clientflow_runtime.__version__ == expected" in runtime_prepare
