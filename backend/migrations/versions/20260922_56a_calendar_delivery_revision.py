@@ -1,12 +1,12 @@
 """56A lightweight calendar delivery revision metadata.
 
-Revision ID: 20260922_56a_calendar_delivery_revision
+Revision ID: 20260922_56a_calendar_rev
 Revises: 20260908_55a_enroll_binding
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "20260922_56a_calendar_delivery_revision"
+revision = "20260922_56a_calendar_rev"
 down_revision = "20260908_55a_enroll_binding"
 branch_labels = None
 depends_on = None

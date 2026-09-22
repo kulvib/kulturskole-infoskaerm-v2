@@ -11,12 +11,15 @@ def read(relative: str) -> str:
 
 
 def test_56a_migration_is_additive_and_is_current_head() -> None:
-    migration = read("backend/migrations/versions/20260922_56a_calendar_rev.py")
+    migration = read("backend/migrations/versions/20260922_56a_calendar_delivery_revision.py")
     contract = read("backend/scripts/display_schema_contract.py")
     runner = read("backend/scripts/run_migrations.py")
     model = read("backend/service1/models.py")
 
     assert 'revision = "20260922_56a_calendar_rev"' in migration
+    # Alembic stores revision IDs in alembic_version.version_num (VARCHAR(32));
+    # the descriptive migration filename may be longer than the stored revision ID.
+    assert len("20260922_56a_calendar_rev") <= 32
     assert 'down_revision = "20260908_55a_enroll_binding"' in migration
     assert 'op.add_column(' in migration and '"updated_at"' in migration
     assert 'UPDATE calendarmarking SET updated_at = CURRENT_TIMESTAMP' in migration
@@ -71,7 +74,7 @@ def test_56a_modified_python_sources_parse() -> None:
         "backend/service1/models.py",
         "backend/service1/calendar_control.py",
         "backend/service1/routers/shared_domain.py",
-        "backend/migrations/versions/20260922_56a_calendar_rev.py",
+        "backend/migrations/versions/20260922_56a_calendar_delivery_revision.py",
         "backend/scripts/run_migrations.py",
         "backend/scripts/calendar_delivery_schema_contract.py",
         "backend/scripts/display_schema_contract.py",
