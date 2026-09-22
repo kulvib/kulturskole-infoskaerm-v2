@@ -97,8 +97,8 @@ def test_customer_flow_matches_legacy_customer_order_and_removes_second_manual_a
     positions = [normal.index(token) for token in order]
     assert positions == sorted(positions)
     assert "Midlertidig bootstrap-netværksprofil UUID" not in source
-    assert "CF-____-____-____" in source
-    assert "kræves ikke et ekstra klik" in source
+    assert "Koden vises som: CF-____-____-____" not in source
+    assert 'ok("CF-koden er accepteret.")' in source
     assert "cfadmin er allerede defineret i 01 Klient klargøring" in source
     assert '"--factory-state"' in source
 
@@ -140,7 +140,8 @@ def test_reboot_contract_is_confirmed_narrow_inhibitor_override_and_never_force(
     source = COMMON.read_text(encoding="utf-8")
     fn = source[source.index("def confirmed_reboot"):source.index("def install_persistent_bootstrap")]
     assert "Maskinen genstarter IKKE automatisk. Du skal bekræfte først." in fn
-    assert 'input("Vil du genstarte nu? [j/N]: ")' in fn
+    assert 'input("Vil du genstarte nu? [j/n]: ")' in fn
+    assert 'unit = "sekund" if remaining == 1 else "sekunder"' in fn
     assert '[str(SYSTEMCTL), "--no-block", "--check-inhibitors=no", "reboot"]' in fn
     assert "timeout=10" in fn
     assert "--force" not in fn
@@ -233,6 +234,7 @@ def test_claim_retry_and_crash_resume_are_explicit_fail_closed_contracts():
     assert 'digest.hexdigest() != expected_sha' in cache
     assert 'os.fsync(output.fileno())' in cache
     assert 'os.replace(temporary, PENDING_BUNDLE)' in cache
+    assert '"--suppress-result-json"' in runner
     assert 'subprocess.run(command, input=authorities, check=False)' in runner
 
 

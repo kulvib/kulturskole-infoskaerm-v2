@@ -98,6 +98,8 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CHANGED_FILES_1323_1224_CATALOG_PROMOTION.txt" in seen
     assert "CLIENTFLOW_1.3.24_1225_SOURCE_IDENTITY.md" in seen
     assert "CLIENTFLOW_1.3.24_1225_SOURCE_FREEZE_CLOSURE.md" in seen
+    assert "CLIENTFLOW_1.3.25_1226_SOURCE_REFREEZE_TERMINAL_UX_CLOSURE.md" in seen
+    assert "CHANGED_FILES_1325_1226_TERMINAL_UX_CLOSURE.txt" in seen
     assert "CHANGED_FILES_1324_1225_SOURCE_FREEZE.txt" in seen
     assert "CLIENTFLOW_1.3.24_1225_CATALOG_PROMOTION.md" in seen
     assert "CHANGED_FILES_1324_1225_CATALOG_PROMOTION.txt" in seen
