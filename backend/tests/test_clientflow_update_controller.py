@@ -507,3 +507,22 @@ def test_controller_resumes_exact_transaction_activation_intent_after_symlink_sw
         assert result["status"] == "succeeded"
         assert "local_resume" in actions
         assert controller.controller_state.phase == "activation_succeeded"
+
+
+def test_controller_idle_bootstrap_does_not_issue_second_active_deployment_request():
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        controller, transport, _snapshot, _actions, _local_state = _controller_fixture(Path(raw_tmp))
+
+        def bootstrap():
+            return "token", True, None
+
+        def unexpected_get(_access_token: str):
+            raise AssertionError("bootstrap ACK must suppress the historical active-deployment GET")
+
+        transport.issue_access_token_with_active_deployment = bootstrap
+        transport.get_active_deployment = unexpected_get
+
+        result = controller.run_once()
+
+        assert result == {"status": "idle", "deployment_id": None, "release_id": None}
+        assert controller.controller_state.phase == "idle"

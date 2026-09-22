@@ -180,9 +180,11 @@ def consume_replay(
     kind: str,
     jti: str,
     expires_at: datetime,
+    cleanup_expired: bool = True,
 ) -> None:
     now = utcnow()
-    session.exec(delete(ClientFlowUpdateReplay).where(ClientFlowUpdateReplay.expires_at < now))
+    if cleanup_expired:
+        session.exec(delete(ClientFlowUpdateReplay).where(ClientFlowUpdateReplay.expires_at < now))
     row = ClientFlowUpdateReplay(
         id=str(uuid.uuid4()),
         credential_id=credential_id,
@@ -229,15 +231,26 @@ def verify_client_assertion(
     key_id = str(header.get("kid") or "").strip()
     if not key_id or len(key_id) > 64:
         raise ClientFlowUpdateAuthError("Client assertion kid mangler eller er ugyldig")
-    credential = session.exec(
-        select(ClientFlowUpdateCredential).where(
+    row = session.exec(
+        select(ClientFlowUpdateCredential, Client)
+        .join(Client, Client.id == ClientFlowUpdateCredential.client_id, isouter=True)
+        .where(
             ClientFlowUpdateCredential.key_id == key_id,
             ClientFlowUpdateCredential.revoked_at.is_(None),
         )
     ).one_or_none()
-    if credential is None or credential.algorithm != UPDATE_CREDENTIAL_ALGORITHM:
+    if row is None:
         raise ClientFlowUpdateAuthError("Update credential blev ikke fundet")
-    client = require_update_client_active(session, credential)
+    credential, client = row
+    if credential.algorithm != UPDATE_CREDENTIAL_ALGORITHM:
+        raise ClientFlowUpdateAuthError("Update credential blev ikke fundet")
+    if (
+        client is None
+        or getattr(client, "deleted_at", None) is not None
+        or str(getattr(client, "status", "")) != "approved"
+        or credential.revoked_at is not None
+    ):
+        raise ClientFlowUpdateAuthError("Update credential er ikke aktiv for en godkendt klient")
     public_key, _pem, _kid, _jwk, _jkt = _public_key_material(credential.public_key_pem)
     try:
         claims = jwt.decode(
@@ -292,6 +305,7 @@ def verify_dpop_proof(
     credential: ClientFlowUpdateCredential,
     access_token: str | None,
     expected_thumbprint: str | None = None,
+    cleanup_expired_replay: bool = True,
 ) -> str:
     try:
         header = jwt.get_unverified_header(proof)
@@ -340,6 +354,7 @@ def verify_dpop_proof(
         kind="dpop",
         jti=jti,
         expires_at=expires_at,
+        cleanup_expired=cleanup_expired_replay,
     )
     return thumbprint
 
@@ -484,10 +499,22 @@ def authenticate_update_request(
     if claims.get("principal") != "clientflow-update":
         raise ClientFlowUpdateAuthError("Update access-token har forkert principal")
     credential_id = str(claims.get("credential_id") or "")
-    credential = session.get(ClientFlowUpdateCredential, credential_id)
-    if credential is None or credential.revoked_at is not None:
+    row = session.exec(
+        select(ClientFlowUpdateCredential, Client)
+        .join(Client, Client.id == ClientFlowUpdateCredential.client_id, isouter=True)
+        .where(ClientFlowUpdateCredential.id == credential_id)
+    ).one_or_none()
+    if row is None:
         raise ClientFlowUpdateAuthError("Update credential er revoked eller mangler")
-    client = require_update_client_active(session, credential)
+    credential, client = row
+    if credential.revoked_at is not None:
+        raise ClientFlowUpdateAuthError("Update credential er revoked eller mangler")
+    if (
+        client is None
+        or getattr(client, "deleted_at", None) is not None
+        or str(getattr(client, "status", "")) != "approved"
+    ):
+        raise ClientFlowUpdateAuthError("Update credential er ikke aktiv for en godkendt klient")
     if int(claims.get("client_id") or 0) != int(client.id):
         raise ClientFlowUpdateAuthError("Update access-token client_id matcher ikke credential")
     if claims.get("sub") != f"clientflow-update:{credential.id}" or claims.get("key_id") != credential.key_id:

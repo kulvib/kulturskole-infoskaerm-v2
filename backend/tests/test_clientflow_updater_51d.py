@@ -582,3 +582,55 @@ def test_51d_cancellation_before_artifact_authorization_is_reconciled_without_do
         assert result == {"status": "inactive", "deployment_id": None, "artifact": None}
         assert transport.downloads == 0
         assert state.snapshot is None
+
+
+def test_51d_idle_run_bootstraps_active_deployment_in_token_request_without_second_http_call():
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        tmp = Path(raw_tmp)
+        config = _config(tmp)
+        opener = _CapturingOpener([
+            _Response(json.dumps({
+                "access_token": "bootstrap-token",
+                "token_type": "DPoP",
+                "expires_in": 300,
+                "scope": " ".join(sorted(UPDATE_SCOPES)),
+                "active_deployment_included": True,
+                "active_deployment": None,
+            }).encode()),
+        ])
+        transport = UpdaterTransport(config, opener=opener)
+        state = UpdaterStateStore(config.state_root)
+        client = StableUpdaterClient(config, transport=transport, state=state)
+
+        result = client.run_once()
+
+        assert result == {"status": "idle", "deployment_id": None, "artifact": None}
+        assert len(opener.requests) == 1
+        request = opener.requests[0][0]
+        assert request.full_url == "https://display.example.invalid/api/clientflow-update/token"
+        body = json.loads(request.data.decode())
+        assert body["include_active_deployment"] is True
+
+
+def test_51d_bootstrap_missing_ack_falls_back_to_historical_active_deployment_get():
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        tmp = Path(raw_tmp)
+        config = _config(tmp)
+        opener = _CapturingOpener([
+            _Response(json.dumps({
+                "access_token": "old-backend-token",
+                "token_type": "DPoP",
+                "expires_in": 300,
+                "scope": " ".join(sorted(UPDATE_SCOPES)),
+            }).encode()),
+            _Response(b"null"),
+        ])
+        transport = UpdaterTransport(config, opener=opener)
+        state = UpdaterStateStore(config.state_root)
+        client = StableUpdaterClient(config, transport=transport, state=state)
+
+        result = client.run_once()
+
+        assert result == {"status": "idle", "deployment_id": None, "artifact": None}
+        assert len(opener.requests) == 2
+        assert opener.requests[1][0].full_url.endswith("/api/clientflow-update/deployments/active")
