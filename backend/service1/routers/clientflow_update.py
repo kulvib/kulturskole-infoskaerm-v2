@@ -63,6 +63,7 @@ class UpdateTokenRequest(BaseModel):
     client_assertion_type: str = PydanticField(min_length=1, max_length=200)
     client_assertion: str = PydanticField(min_length=40, max_length=16_384)
     scope: Optional[str] = PydanticField(default=None, max_length=500)
+    include_active_deployment: bool = False
 
 
 class UpdateTokenResponse(BaseModel):
@@ -70,6 +71,8 @@ class UpdateTokenResponse(BaseModel):
     token_type: str = "DPoP"
     expires_in: int
     scope: str
+    active_deployment_included: bool = False
+    active_deployment: Optional[ClientFlowDeploymentRead] = None
 
 
 class UpdateProvisioningTokenRead(BaseModel):
@@ -220,12 +223,29 @@ def issue_clientflow_update_token(
             proof=dpop,
             credential=credential,
             access_token=None,
+            # The client-assertion replay consumption immediately above already
+            # performed the expired-row cleanup for this transaction.
+            cleanup_expired_replay=False,
         )
         token, ttl = issue_update_access_token(
             credential=credential,
             client=client,
             scopes=scopes,
             dpop_thumbprint=dpop_thumbprint,
+        )
+        include_active = bool(body.include_active_deployment and "deployment:read" in scopes)
+        bootstrap_deployment = (
+            active_deployment(session, client_id=int(client.id))
+            if include_active
+            else None
+        )
+        # Materialize the public deployment projection before commit. SQLAlchemy
+        # may expire ORM rows on commit; serializing afterwards could otherwise
+        # trigger a hidden refresh SELECT on this hot idle path.
+        bootstrap_payload = (
+            ClientFlowDeploymentRead.model_validate(bootstrap_deployment)
+            if bootstrap_deployment is not None
+            else None
         )
         credential.last_used_at = utcnow()
         session.add(credential)
@@ -234,6 +254,8 @@ def issue_clientflow_update_token(
             access_token=token,
             expires_in=ttl,
             scope=" ".join(sorted(scopes)),
+            active_deployment_included=include_active,
+            active_deployment=bootstrap_payload,
         )
     except ClientFlowUpdateAuthError as exc:
         session.rollback()

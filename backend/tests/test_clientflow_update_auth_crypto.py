@@ -9,6 +9,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi import Request
+from sqlalchemy import event
 from sqlmodel import Session, SQLModel, create_engine
 
 from service1.clientflow_update_auth import (
@@ -31,6 +32,11 @@ from service1.clientflow_update_auth import (
     verify_client_assertion,
 )
 from service1.clientflow_update_models import ClientFlowUpdateCredential
+from service1.routers.clientflow_update import (
+    CLIENT_ASSERTION_TYPE,
+    UpdateTokenRequest,
+    issue_clientflow_update_token,
+)
 from service1.models import Client, User
 
 
@@ -214,3 +220,93 @@ def test_recovery_after_explicit_revocation_keeps_credential_lineage(auth_sessio
     assert credential2.rotated_from_credential_id == credential1.id
     assert credential2.key_id == key2
 
+
+
+
+def test_update_token_idle_bootstrap_has_bounded_database_cost_and_single_replay_cleanup(auth_session):
+    session, client, _user = auth_session
+    private, public_pem, key_id, jwk, _thumbprint = _key_material()
+    credential = create_update_credential(session, client_id=int(client.id), public_key_pem=public_pem)
+    session.commit()
+
+    path = "/api/clientflow-update/token"
+    htu = f"https://testserver{path}"
+    assertion = _client_assertion(private, credential, key_id)
+    proof = _dpop(private, jwk, method="POST", htu=htu)
+    request = _request("POST", path)
+    body = UpdateTokenRequest(
+        client_assertion_type=CLIENT_ASSERTION_TYPE,
+        client_assertion=assertion,
+        scope="deployment:read deployment:report artifact:authorize",
+        include_active_deployment=True,
+    )
+
+    counts = {"select": 0, "delete": 0}
+
+    def listener(_conn, _cursor, statement, _parameters, _context, _executemany):
+        verb = statement.lstrip().split(None, 1)[0].upper()
+        if verb == "SELECT":
+            counts["select"] += 1
+        elif verb == "DELETE":
+            counts["delete"] += 1
+
+    engine = session.get_bind()
+    event.listen(engine, "before_cursor_execute", listener)
+    try:
+        response = issue_clientflow_update_token(body, request, proof, session)
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+
+    assert response.active_deployment_included is True
+    assert response.active_deployment is None
+    # One joined credential+Client read plus one active-deployment read.
+    assert counts["select"] == 2
+    # Client-assertion and DPoP replay rows share one expired-row cleanup.
+    assert counts["delete"] == 1
+
+
+def test_update_authentication_joins_credential_and_client_in_one_select(auth_session):
+    session, client, _user = auth_session
+    private, public_pem, key_id, jwk, thumbprint = _key_material()
+    credential = create_update_credential(session, client_id=int(client.id), public_key_pem=public_pem)
+    session.commit()
+
+    assertion = _client_assertion(private, credential, key_id)
+    select_count = 0
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        nonlocal select_count
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_count += 1
+
+    engine = session.get_bind()
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        verified, verified_client, _jti, _expires_at = verify_client_assertion(session, assertion=assertion)
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+    assert verified.id == credential.id
+    assert verified_client.id == client.id
+    assert select_count == 1
+
+    scopes = normalize_scopes("deployment:read")
+    access_token, _ttl = issue_update_access_token(
+        credential=credential,
+        client=client,
+        scopes=scopes,
+        dpop_thumbprint=thumbprint,
+    )
+    resource_path = "/api/clientflow-update/deployments/active"
+    resource_htu = f"https://testserver{resource_path}"
+    proof = _dpop(private, jwk, method="GET", htu=resource_htu, access_token=access_token)
+    request = _request("GET", resource_path, {"Authorization": f"DPoP {access_token}", "DPoP": proof})
+
+    select_count = 0
+    event.listen(engine, "before_cursor_execute", count_selects)
+    try:
+        principal = authenticate_update_request(session, request=request, required_scope="deployment:read")
+    finally:
+        event.remove(engine, "before_cursor_execute", count_selects)
+    assert principal.client.id == client.id
+    assert principal.credential.id == credential.id
+    assert select_count == 1

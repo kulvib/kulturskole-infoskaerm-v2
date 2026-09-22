@@ -125,7 +125,7 @@ class UpdaterTransport:
             raise UpdaterTransportError("Updater JSON-respons skal være et objekt eller null")
         return value
 
-    def issue_access_token(self) -> str:
+    def _issue_access_token_response(self, *, include_active_deployment: bool) -> dict[str, Any]:
         path = "/api/clientflow-update/token"
         url = self._url(path)
         assertion = build_client_assertion(
@@ -139,6 +139,8 @@ class UpdaterTransport:
             "client_assertion": assertion,
             "scope": " ".join(sorted(UPDATE_SCOPES)),
         }
+        if include_active_deployment:
+            payload["include_active_deployment"] = True
         data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         request = urllib.request.Request(
             url,
@@ -177,7 +179,28 @@ class UpdaterTransport:
             raise UpdaterTransportError("Update token-respons er ugyldig")
         if scopes != UPDATE_SCOPES:
             raise UpdaterTransportError("Update access-token scopes matcher ikke den krævede least-privilege request")
-        return token
+        value["access_token"] = token
+        return value
+
+    def issue_access_token(self) -> str:
+        return str(self._issue_access_token_response(include_active_deployment=False)["access_token"])
+
+    def issue_access_token_with_active_deployment(self) -> tuple[str, bool, dict[str, Any] | None]:
+        """Issue one token and opportunistically bootstrap the active deployment.
+
+        ``active_deployment_included`` is an explicit server acknowledgement.
+        Its absence means an older backend ignored the optional request field,
+        so callers must fall back to the historical authenticated GET.
+        """
+        value = self._issue_access_token_response(include_active_deployment=True)
+        token = str(value["access_token"])
+        included = value.get("active_deployment_included") is True
+        if not included:
+            return token, False, None
+        deployment = value.get("active_deployment")
+        if deployment is not None and not isinstance(deployment, dict):
+            raise UpdaterTransportError("Update token bootstrap deployment skal være et objekt eller null")
+        return token, True, dict(deployment) if isinstance(deployment, dict) else None
 
     def get_active_deployment(self, access_token: str) -> dict[str, Any] | None:
         return self._json_request(

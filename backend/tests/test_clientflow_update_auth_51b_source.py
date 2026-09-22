@@ -48,6 +48,8 @@ def test_update_router_uses_identity_derived_client_and_scoped_dpop_auth():
     assert 'scope="credential:rotate"' in source
     assert "principal.client.id" in source
     assert "DPoP proof mangler" in source
+    assert 'body.include_active_deployment and "deployment:read" in scopes' in source
+    assert "active_deployment_included=include_active" in source
 
 
 def test_fresh_installer_generates_separate_local_update_private_key():

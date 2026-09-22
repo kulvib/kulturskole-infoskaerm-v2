@@ -950,9 +950,18 @@ class UpdateController:
             self.controller_state.reload()
             return self._run_locked()
 
-    def _run_locked(self) -> dict[str, Any]:
+    def _access_token_and_active_deployment(self) -> tuple[str, dict[str, Any] | None]:
+        bootstrap = getattr(self.transport, "issue_access_token_with_active_deployment", None)
+        if callable(bootstrap):
+            access_token, included, deployment = bootstrap()
+            if included:
+                return access_token, deployment
+            return access_token, self.transport.get_active_deployment(access_token)
         access_token = self.transport.issue_access_token()
-        deployment = self.transport.get_active_deployment(access_token)
+        return access_token, self.transport.get_active_deployment(access_token)
+
+    def _run_locked(self) -> dict[str, Any]:
+        access_token, deployment = self._access_token_and_active_deployment()
         if deployment is None:
             if self.controller_state.phase != "idle":
                 self.controller_state.clear()
