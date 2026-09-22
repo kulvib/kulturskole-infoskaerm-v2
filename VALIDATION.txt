@@ -194,3 +194,54 @@ PENDING: reproducible build + Ubuntu 26.04 executable-candidate gate + manual ap
 PENDING: immutable publication and independent store re-read.
 PENDING: only then catalog promotion to 1.3.24/1225 and canonical USB regeneration.
 PENDING: restart clean Ubuntu 26.04 physical acceptance from phase 0.
+
+ClientFlow 1.3.25 / sequence 1226 final pre-release source-freeze validation
+Date: 2026-09-22
+
+Canonical pre-freeze authority:
+PASS: fresh canonical main supplied after calendar conditional-delivery CI and merge.
+PASS: pre-freeze source/build identity = 1.3.24 / 1225.
+PASS: promoted runtime catalog = 1.3.24 / 1225.
+PASS: database migration head = 20260922_56a_calendar_rev.
+PASS: no .git metadata exists in the supplied archive; no commit SHA is guessed.
+
+Staged source/build identity:
+PASS: client/VERSION = 1.3.25.
+PASS: release_sequence = 1226.
+PASS: candidate release id = clientflow-1.3.25-seq-1226.
+PASS: minimum Ubuntu LTS remains 26.04, architecture amd64, runtime Python 3.13.14.
+PASS: runtime catalog remains 1.3.24 / 1225.
+PASS: staged source sequence leads catalog by exactly one.
+
+Included pre-1226 closure:
+PASS: legacy 1.1.19 GUI/function parity review remains included.
+PASS: agent hot-path database-cost closure remains included.
+PASS: calendar/organization batching remains included.
+PASS: Control Room adaptive polling/payload closure remains included.
+PASS: Client Details hot-state deduplication remains included.
+PASS: Display/System shared-agent request consolidation remains included.
+PASS: update-plane idle request consolidation remains included.
+PASS: calendar conditional delivery / ETag / migration 56A remains included.
+PASS: Livestream, Terminal and Remote Desktop implementation domains remain frozen.
+
+Read-only production Neon evidence captured before freeze:
+PASS: display-planiq production head = 20260922_56a_calendar_rev.
+PASS: no >5 minute running queries observed.
+PASS: no current locks observed.
+PASS: production table sizes remain small; client about 312 kB and calendarmarking about 152 kB at inspection time.
+PASS: PostgreSQL cumulative buffer statistics = 3,609,211 hits / 1,028 reads; no temp-file bytes.
+PASS: no table reported as currently expecting autovacuum.
+INFO: calls/outliers unavailable because pg_stat_statements is not installed; no production extension was added for this gate.
+INFO: Neon LFC/working-set unavailable because Neon extension is not installed; no production extension was added for this gate.
+INFO: no indexes are removed from the two-client/small-table production workload solely from low scan counts.
+
+Release boundary:
+PASS: this package does not promote the runtime catalog.
+PASS: this package does not modify immutable 1.3.24/1225 release bytes.
+PENDING: canonical GitHub CI on the 1.3.25/1226 source-freeze branch.
+PENDING: record exact resulting 40-character source-freeze commit SHA.
+PENDING: deterministic runtime-input transport 1226.
+PENDING: reproducible build + Ubuntu 26.04 executable-candidate gate + manual approval.
+PENDING: immutable publication and independent store re-read.
+PENDING: only then catalog promotion to 1.3.25/1226 and canonical USB regeneration.
+PENDING: clean physical Ubuntu 26.04 fresh-install acceptance from phase 0.

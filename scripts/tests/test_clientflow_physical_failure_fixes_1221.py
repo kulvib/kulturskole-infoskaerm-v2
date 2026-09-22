@@ -49,22 +49,22 @@ def _method_local_tuple(source: str, class_name: str, method_name: str, name: st
                             return ast.literal_eval(child.value)
     raise AssertionError(f"{class_name}.{method_name} local {name} not found")
 
-def test_promoted_1324_1225_source_identity_matches_catalog():
-    # Immutable 1.3.23/1224 was approved, published and promoted, then failed
-    # physical Ubuntu 26.04 factory-handoff acceptance. The repaired
-    # 1.3.24/1225 release has now crossed reproducibility, executable-candidate,
-    # approval and immutable-publication gates, so runtime selection aligns
-    # with the exact published source/build identity.
-    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.24"
+def test_frozen_1325_1226_source_identity_leads_promoted_catalog():
+    # Immutable 1.3.24/1225 is the currently approved, published and promoted
+    # runtime selector. The completed pre-1226 parity/performance closures are
+    # staged under a new 1.3.25/1226 source identity while runtime selection
+    # deliberately remains on 1.3.24/1225 until the exact 1226 candidate has
+    # crossed reproducibility, executable-candidate, approval and publication.
+    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.25"
     release_input = json.loads(_source(RELEASE_INPUT))
-    assert release_input["release_sequence"] == 1225
+    assert release_input["release_sequence"] == 1226
     assert release_input["minimum_ubuntu_lts"] == "26.04"
     assert release_input["architecture"] == "amd64"
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
     assert catalog["catalog_sequence"] == 1225
-    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
     assert catalog["latest_stable"] == "1.3.24"
     assert catalog["default_install_version"] == "1.3.24"
     selected = catalog["releases"][0]
