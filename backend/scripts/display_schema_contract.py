@@ -1057,3 +1057,12 @@ _enrollment_columns.update(ENROLLMENT_BINDING_COLUMNS)
 EXPECTED_COLUMNS["enrollmenttoken"] = _enrollment_columns
 # Replaced below after deterministic contract fingerprint calculation.
 EXPECTED_FINGERPRINT = "e2f89bed46e20fd2d015f8014a889e73eed3495664595ad2168202a1470a3540"
+
+# Step 56A: lightweight Calendar delivery validator metadata.
+from calendar_delivery_schema_contract import CALENDAR_DELIVERY_COLUMNS
+EXPECTED_HEAD_REVISION = "20260922_56a_calendar_rev"
+_calendar_columns = dict(EXPECTED_COLUMNS["calendarmarking"])
+_calendar_columns.update(CALENDAR_DELIVERY_COLUMNS)
+EXPECTED_COLUMNS["calendarmarking"] = _calendar_columns
+# Replaced below after deterministic contract fingerprint calculation.
+EXPECTED_FINGERPRINT = "b218a48fee5fb31ffb2a0fe1e66df3dcc420c37f50564b2966a9d4eb153e2ad8"

@@ -80,15 +80,18 @@ def test_calendar_hot_path_reuses_authorized_client_and_batches_two_seasons():
     start = router.index("def display_calendar(")
     end = router.index('@router.put("/status-agent', start)
     endpoint = router[start:end]
-    delivery = _function_block(calendar, "build_display_calendar_delivery")
+    delivery = _function_block(calendar, "build_display_calendar_delivery_with_etag", "build_display_calendar_delivery")
 
     assert "authorization_context = require_shared_agent_context(" in endpoint
     assert "authorized_client=authorization_context.client" in endpoint
     assert "requested_seasons = tuple(current_and_next_seasons())" in delivery
     assert "CalendarMarking.season.in_(requested_seasons)" in delivery
-    assert "select(CalendarMarking.season, CalendarMarking.markings)" in delivery
-    assert delivery.count("select(CalendarMarking") == 1
-    assert "if client is None:" in delivery  # safe standalone lifecycle fallback
+    assert "CalendarMarking.markings," in delivery
+    assert "CalendarMarking.updated_at," in delivery
+    assert delivery.count("select(") == 1
+    assert "_validate_authorized_client(" in delivery
+    lifecycle = _function_block(calendar, "_validate_authorized_client", "display_calendar_delivery_etag")
+    assert "if client is None:" in lifecycle  # safe standalone lifecycle fallback
 
 
 def test_empty_shared_command_claim_reads_active_queue_once_and_skips_display_status():

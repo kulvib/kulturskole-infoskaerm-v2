@@ -1,5 +1,5 @@
 from sqlmodel import SQLModel, Field, Column, JSON
-from sqlalchemy import CheckConstraint, Enum as SAEnum, Index, LargeBinary, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, Enum as SAEnum, Index, LargeBinary, Text, UniqueConstraint
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 from enum import Enum
@@ -826,6 +826,13 @@ class CalendarMarking(SQLModel, table=True):
     season: str = Field(sa_column=Column(Text, nullable=False))
     client_id: int = Field(foreign_key="client.id")
     markings: Dict[str, Any] = Field(sa_column=Column(_jsonb_type(), nullable=True))
+    # Lightweight cache validator for the Display calendar delivery path.
+    # ``onupdate`` keeps every ORM update authoritative without coupling the
+    # delivery protocol to any individual calendar write endpoint.
+    updated_at: datetime = Field(
+        default_factory=utcnow,
+        sa_column=Column(DateTime(), nullable=False, default=utcnow, onupdate=utcnow),
+    )
 
 
 

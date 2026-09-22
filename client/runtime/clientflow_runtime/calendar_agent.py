@@ -124,6 +124,7 @@ def _read_cache(*, client_id: int) -> dict[str, Any] | None:
 
 
 def _fetch_plan(transport: DomainTransport) -> dict[str, Any]:
+    """Backward-compatible unconditional Calendar fetch."""
     client_id = transport.credential.client_id
     payload = transport.json_request(
         "GET",
@@ -132,6 +133,42 @@ def _fetch_plan(transport: DomainTransport) -> dict[str, Any]:
     plan = _validate_plan(payload, client_id=client_id)
     atomic_write_json(CACHE_PATH, plan, mode=0o600)
     return plan
+
+
+def _fetch_plan_conditional(
+    transport: DomainTransport,
+    *,
+    current_plan: dict[str, Any] | None,
+    etag: str | None,
+) -> tuple[dict[str, Any], str | None, bool]:
+    """Fetch Calendar bytes only when the backend validator changed.
+
+    A 304 keeps the already validated local plan and avoids reading/transferring
+    CalendarMarking.markings from PostgreSQL.  After restart ``etag`` is empty,
+    so the first request remains a normal full snapshot and re-establishes the
+    validator without weakening the offline cache contract.
+    """
+    client_id = transport.credential.client_id
+    headers = {"If-None-Match": etag} if etag else None
+    response = transport.request(
+        "GET",
+        f"/api/display-agent/clients/{client_id}/calendar",
+        headers=headers,
+        expected=(200, 304),
+    )
+    response_etag = str(response.headers.get("etag") or "").strip() or etag
+    if response.status_code == 304:
+        if current_plan is None:
+            raise CalendarPlanError("Backend returnerede 304 uden en lokal Calendar cache")
+        return current_plan, response_etag, False
+
+    try:
+        payload = response.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise TransportError("Backend returnerede ugyldig Calendar JSON", retryable=False) from exc
+    plan = _validate_plan(payload, client_id=client_id)
+    atomic_write_json(CACHE_PATH, plan, mode=0o600)
+    return plan, response_etag, True
 
 
 def _entry_for_today(plan: dict[str, Any], now: datetime) -> dict[str, str]:
@@ -341,6 +378,7 @@ def main() -> int:
     scheduler = _load_scheduler_state()
     last_fetch_at: float | None = None
     last_transition_at: float | None = None
+    calendar_etag: str | None = None
     next_fetch = 0.0
     fetch_attempt = 0
     service_started_mono = time.monotonic()
@@ -352,8 +390,13 @@ def main() -> int:
         try:
             if now_mono >= next_fetch:
                 try:
-                    plan = _fetch_plan(transport)
-                    _publish_calendar_preview(plan, logger)
+                    plan, calendar_etag, changed = _fetch_plan_conditional(
+                        transport,
+                        current_plan=plan,
+                        etag=calendar_etag,
+                    )
+                    if changed:
+                        _publish_calendar_preview(plan, logger)
                     last_fetch_at = time.time()
                     fetch_attempt = 0
                     next_fetch = now_mono + POLL_SECONDS
