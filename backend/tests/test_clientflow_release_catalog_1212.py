@@ -63,7 +63,7 @@ def test_catalog_1225_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1225_matches_promoted_1324_1225_source_identity() -> None:
+def test_catalog_1225_stays_promoted_1324_while_source_stages_1325_1226() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -73,14 +73,13 @@ def test_catalog_1225_matches_promoted_1324_1225_source_identity() -> None:
     )
     source_sequence = int(release_input["release_sequence"])
 
-    # The exact 1.3.24/1225 approved bytes have crossed reproducibility,
-    # Ubuntu 26.04 executable-candidate, manual approval and immutable
-    # publication/re-read gates. Runtime selection may therefore align with
-    # the same source/build identity.
-    assert source_version == "1.3.24"
-    assert source_sequence == 1225
+    # Source/build identity moves one sequence ahead for the 1.3.25/1226
+    # candidate. Runtime selection must remain on the exact approved/published
+    # 1.3.24/1225 release until 1226 crosses every release gate.
+    assert source_version == "1.3.25"
+    assert source_sequence == 1226
     assert data["catalog_sequence"] == 1225
-    assert source_sequence == data["catalog_sequence"]
+    assert source_sequence == data["catalog_sequence"] + 1
 
     assert data["latest_stable"] == "1.3.24"
     assert data["default_install_version"] == "1.3.24"
