@@ -19,11 +19,13 @@ PAYLOAD_SOURCES = {
         0o444,
     ),
 }
-STATIC_NAMES = (
-    "00_START_HER_KORT.txt",
-    "01_START_CLIENTFLOW_USB.sh",
-    "README_START_HER.txt",
-)
+STATIC_SOURCES = {
+    "00_START_HER_KORT.txt": (USB / "00_START_HER_KORT.txt", 0o444),
+    "01_START_CLIENTFLOW_USB.sh": (USB / "01_START_CLIENTFLOW_USB.sh", 0o755),
+    "README_START_HER.txt": (USB / "README_START_HER.txt", 0o444),
+    "Start ClientFlow.EXE": (USB / "Start ClientFlow.EXE", 0o555),
+    "PlanIQ Flow.png": (USB / "planiq-flow-logo.png", 0o444),
+}
 ZIP_TIME = (2020, 1, 1, 0, 0, 0)
 
 
@@ -42,10 +44,8 @@ def build(output: Path) -> tuple[int, str]:
     if output.exists():
         raise ValueError(f"Output already exists: {output}")
     entries: list[tuple[str, bytes, int]] = []
-    for name in STATIC_NAMES:
-        source = USB / name
+    for name, (source, mode) in STATIC_SOURCES.items():
         data = source.read_bytes()
-        mode = 0o755 if name.endswith(".sh") else 0o444
         entries.append(_entry(name, data, mode))
 
     checksum_lines: list[str] = []

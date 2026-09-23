@@ -1,3 +1,13 @@
-Kør i terminal fra USB-mappen:
+CLIENTFLOW USB · START HER
+
+Dobbeltklik på:
+
+Start ClientFlow.EXE
+
+Der åbnes en terminal, som kører den eksisterende canonical ClientFlow USB-start.
+USB-integriteten verificeres, før sudo og installation anvendes.
+
+Hvis den grafiske launcher mod forventning ikke kan åbnes, er den canonical
+terminalindgang fortsat:
 
 bash 01_START_CLIENTFLOW_USB.sh
