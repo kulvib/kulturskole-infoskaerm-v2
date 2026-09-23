@@ -49,12 +49,10 @@ def _method_local_tuple(source: str, class_name: str, method_name: str, name: st
                             return ast.literal_eval(child.value)
     raise AssertionError(f"{class_name}.{method_name} local {name} not found")
 
-def test_frozen_1325_1226_source_identity_leads_promoted_catalog():
-    # Immutable 1.3.24/1225 is the currently approved, published and promoted
-    # runtime selector. The completed pre-1226 parity/performance closures are
-    # staged under a new 1.3.25/1226 source identity while runtime selection
-    # deliberately remains on 1.3.24/1225 until the exact 1226 candidate has
-    # crossed reproducibility, executable-candidate, approval and publication.
+def test_promoted_1325_1226_source_identity_matches_runtime_catalog():
+    # Exact 1.3.25/1226 crossed reproducibility, Ubuntu 26.04 executable-
+    # candidate, explicit approval and immutable publication before this
+    # selector change. Source/build and runtime-selection identity now align.
     assert VERSION.read_text(encoding="utf-8").strip() == "1.3.25"
     release_input = json.loads(_source(RELEASE_INPUT))
     assert release_input["release_sequence"] == 1226
@@ -63,13 +61,13 @@ def test_frozen_1325_1226_source_identity_leads_promoted_catalog():
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
-    assert catalog["catalog_sequence"] == 1225
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert catalog["latest_stable"] == "1.3.24"
-    assert catalog["default_install_version"] == "1.3.24"
+    assert catalog["catalog_sequence"] == 1226
+    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert catalog["latest_stable"] == "1.3.25"
+    assert catalog["default_install_version"] == "1.3.25"
     selected = catalog["releases"][0]
-    assert selected["release_id"] == "clientflow-1.3.24-seq-1225"
-    assert selected["release_sequence"] == 1225
+    assert selected["release_id"] == "clientflow-1.3.25-seq-1226"
+    assert selected["release_sequence"] == 1226
 
 
 def test_dispatch_uses_staged_immutable_release_cli_not_stable_updater():

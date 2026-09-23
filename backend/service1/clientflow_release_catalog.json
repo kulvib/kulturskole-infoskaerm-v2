@@ -1,20 +1,20 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1225,
-  "latest_stable": "1.3.24",
-  "default_install_version": "1.3.24",
+  "catalog_sequence": 1226,
+  "latest_stable": "1.3.25",
+  "default_install_version": "1.3.25",
   "retention_policy": {
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
   },
-  "created_at": "2026-09-20T13:17:38Z",
+  "created_at": "2026-09-23T10:45:39Z",
   "releases": [
     {
-      "version": "1.3.24",
-      "client_version": "1.3.24",
-      "release_sequence": 1225,
-      "revision": "clientflow-1.3.24-seq-1225",
+      "version": "1.3.25",
+      "client_version": "1.3.25",
+      "release_sequence": 1226,
+      "revision": "clientflow-1.3.25-seq-1226",
       "status": "stable",
       "installable": true,
       "update_allowed": true,
@@ -34,11 +34,11 @@
         "requires_platform_preflight": true
       },
       "notes": [
-        "Canonical ClientFlow 1.3.24 release closing the physical Ubuntu 26.04 factory-handoff defects found after 1.3.23/1224: the temporary customer-activation sudoers capability is sudo-rs-compatible while remaining exact-path and no-arguments-only, the office/factory shipping-network cleanup removes persistent Netplan network definitions and fails closed if they can regenerate, and controlled reboot uses the documented systemd 259 inhibitor-control spelling.",
-        "The release preserves the canonical two-phase 01 Klient klarg\u00f8ring -> 02 Aktiver ClientFlow lifecycle, pending_manual_activation GUI, explicit backend approval and automatic first activation. Fresh install and in-place update remain bounded to the safe ClientFlow 1.3.11 baseline, Ubuntu Desktop 26.04 LTS amd64/Wayland platform preflight remains mandatory, rollback remains disabled and the controlled reboot lifecycle remains required.",
-        "Promoted only after source 929d3eb74334bd8d9177d2792f33f92ac338b5cb passed canonical push CI #779 / run 35511136741, runtime-input transport 1225 was pinned at SHA-256 233e2e36323bcb7c15bf3d44eeb03c46a00edf84746a50598cde18d565976619, release-build run 35511471702 produced byte-identical candidates and passed the Ubuntu 26.04 executable-candidate gate, approval run 35511931903 approved candidate 57d7c3629a70dd2c2a353470707f3eef1dc65cdf5a8305b093e151311a0b9baf, and the exact 223119360-byte approved bundle was immutably published and independently re-read at SHA-256 032d49c9c3db7f88bcb31dac8aeefa24db45684a95344fd38ee64a2572b327ae before this catalog change."
+        "Canonical ClientFlow 1.3.25 release containing the completed pre-1226 legacy 1.1.19 GUI/function parity closure, agent/calendar/update-plane database and request-cost reductions, conditional calendar delivery, terminal-dialog UX closure, and unused-runtime-file hygiene while preserving the existing activation, security and frozen-domain boundaries.",
+        "The release preserves the canonical two-phase 01 Klient klargøring -> 02 Aktiver ClientFlow lifecycle, pending_manual_activation GUI, explicit backend approval and automatic first activation. Fresh install and in-place update remain bounded to the safe ClientFlow 1.3.11 baseline, Ubuntu Desktop 26.04 LTS amd64/Wayland platform preflight remains mandatory, rollback remains disabled and the controlled reboot lifecycle remains required.",
+        "Promoted only after source dd023dda80bac080f6ec5ba87e0d2ce8eb76dbe6 passed canonical push CI #888 / run 35770069127, runtime-input transport #5 / run 35830226298 was pinned at SHA-256 233e2e36323bcb7c15bf3d44eeb03c46a00edf84746a50598cde18d565976619, release-build run 35831098680 produced byte-identical candidates and passed the Ubuntu 26.04 executable-candidate gate, approval run 35833279042 approved candidate e3fa9b8642d3ae74e62ab1f39735e66fabbd3ec301575dd91af23a92d1bb8c89, and the exact 223119360-byte approved bundle was immutably published and independently re-read at SHA-256 03bd9ea2364f1b20916a5fe314cecf5e9d9c4c8b79e94048ca5fe5c5bd5d6992 before this catalog change."
       ],
-      "release_id": "clientflow-1.3.24-seq-1225",
+      "release_id": "clientflow-1.3.25-seq-1226",
       "artifact_type": "runtime_release",
       "install_modes": [
         "fresh_install",
