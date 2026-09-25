@@ -55,9 +55,13 @@ def test_preactivation_service_has_least_privilege_wayland_traversal_and_safe_xd
 
     gui = source[source.index("def _preactivation_gui"):source.index("def _install_preactivation_gui_service")]
     create_child = 'directory.mkdir(parents=True, exist_ok=True, mode=0o700)'
-    transfer_parent = 'for directory in (gui_root, *xdg.values()):'
-    assert gui.index(create_child) < gui.index(transfer_parent)
-    assert gui.index(transfer_parent) < gui.index("os.setuid(account.pw_uid)")
+    reclaim_root = 'for directory in directories:'
+    transfer_parent_last = 'for directory in (*xdg.values(), gui_root):'
+    assert gui.index(create_child) < gui.index(reclaim_root)
+    assert gui.index('os.chown(directory, 0, 0)') < gui.index('os.chmod(directory, 0o700)')
+    assert gui.index('os.chmod(directory, 0o700)') < gui.index(transfer_parent_last)
+    assert gui.index(transfer_parent_last) < gui.index("os.setuid(account.pw_uid)")
+    assert "CAP_FOWNER" not in service
 
 
 def test_bootstrap_only_units_are_never_release_managed_or_runtime_quiesced(tmp_path: Path) -> None:

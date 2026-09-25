@@ -28,6 +28,7 @@ def test_pending_gui_is_a_separate_temporary_service_not_full_runtime() -> None:
     assert 'ProtectHome=' not in source[source.index('def _install_preactivation_gui_service'):source.index('def _ensure_preactivation_gui_started')]
     install_block = source[source.index("def _install_preactivation_gui_service"):source.index("def _ensure_preactivation_gui_started")]
     assert 'CAP_DAC_OVERRIDE' not in install_block
+    assert 'CAP_FOWNER' not in install_block
     assert '"--now"' not in install_block
 
     target = _source(TARGET)
@@ -50,6 +51,11 @@ def test_pending_gui_execs_exact_staged_gui_as_unprivileged_kiosk_user() -> None
     assert '"CLIENTFLOW_GUI_STATUS_PATH": str(gui_root / "local-gui-status.json")' in block
     assert '"CLIENTFLOW_DISPLAY_RUNTIME_SOCKET": str(gui_root / "no-runtime.sock")' in block
     assert 'str(runtime_dir / "clientflow-preactivation' not in block
+    assert 'directories = (gui_root, *xdg.values())' in block
+    assert 'os.chown(directory, 0, 0)' in block
+    assert 'for directory in (*xdg.values(), gui_root):' in block
+    assert block.index('os.chown(directory, 0, 0)') < block.index('os.chmod(directory, 0o700)')
+    assert block.index('os.chmod(directory, 0o700)') < block.index('for directory in (*xdg.values(), gui_root):')
     assert 'os.initgroups(KIOSK_USER, account.pw_gid)' in block
     assert 'os.setgid(account.pw_gid)' in block
     assert 'os.setuid(account.pw_uid)' in block
