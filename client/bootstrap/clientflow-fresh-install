@@ -557,12 +557,16 @@ def _preactivation_gui() -> int:
         directory = gui_root / name
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         xdg[name] = directory
-    # The service deliberately lacks CAP_DAC_OVERRIDE.  Create the complete
-    # root-owned tree before transferring ownership of its 0700 parent;
-    # otherwise root can no longer create children after the chown.
-    for directory in (gui_root, *xdg.values()):
-        os.chown(directory, account.pw_uid, account.pw_gid)
+    # The service deliberately lacks CAP_DAC_OVERRIDE and CAP_FOWNER.  Keep the
+    # whole tree root-owned while normalizing modes, then transfer children and
+    # finally the 0700 parent.  Reclaiming root ownership first also makes this
+    # idempotent after a power-loss/restart that stopped mid-transfer.
+    directories = (gui_root, *xdg.values())
+    for directory in directories:
+        os.chown(directory, 0, 0)
         os.chmod(directory, 0o700)
+    for directory in (*xdg.values(), gui_root):
+        os.chown(directory, account.pw_uid, account.pw_gid)
 
     environment = {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
