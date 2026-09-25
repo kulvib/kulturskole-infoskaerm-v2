@@ -52,6 +52,7 @@ def test_usb_click_launcher_is_only_a_terminal_shim_to_canonical_entrypoint() ->
     assert b"./01_START_CLIENTFLOW_USB.sh\x00" in raw
     assert b"/usr/bin/ptyxis\x00" in raw
     assert b"/usr/bin/bash\x00" in raw
+    assert b"--hold-open\x00" in raw
     assert b"sudo" not in raw
     assert b"curl" not in raw
     assert b"wget" not in raw
@@ -62,6 +63,7 @@ def test_usb_click_launcher_is_only_a_terminal_shim_to_canonical_entrypoint() ->
     assert "bootstrap" in source.lower()
     assert "checksum" in source.lower()
     assert "release-selection" in source.lower()
+    assert "--hold-open" in source
 
 
 def test_usb_flow_branding_is_exact_original_flow_asset() -> None:
@@ -108,3 +110,32 @@ def test_usb_readmes_make_clickable_start_primary_and_keep_terminal_recovery() -
         "bash 01_START_CLIENTFLOW_USB.sh"
     )
     assert "originale, uændrede PlanIQ Flow-logo" in long
+
+
+def test_usb_click_launcher_requests_hold_open_without_changing_manual_recovery() -> None:
+    launcher_source = LAUNCHER_SOURCE.read_text(encoding="utf-8")
+    usb_start = (USB / "01_START_CLIENTFLOW_USB.sh").read_text(encoding="utf-8")
+
+    assert 'hold_open_arg:' in launcher_source
+    assert '.asciz "--hold-open"' in launcher_source
+    for label in (
+        "ptyxis_argv",
+        "x_terminal_argv",
+        "gnome_terminal_argv",
+        "kgx_argv",
+        "xterm_argv",
+    ):
+        vector = launcher_source.split(f"{label}:", 1)[1].split("\n", 2)[1]
+        assert "hold_open_arg" in vector
+
+    assert 'if [[ "${1:-}" == "--hold-open" ]]' in usb_start
+    assert 'trap hold_open_on_exit EXIT' in usb_start
+    assert 'Tryk Enter for at lukke terminalvinduet...' in usb_start
+    assert 'USB-klargøringen stoppede med exit-kode %d' in usb_start
+
+    # Manual recovery remains the same documented canonical entrypoint and does
+    # not request hold-open unless the graphical launcher supplied the flag.
+    short = SHORT_README.read_text(encoding="utf-8")
+    long = LONG_README.read_text(encoding="utf-8")
+    assert "bash 01_START_CLIENTFLOW_USB.sh" in short
+    assert "bash 01_START_CLIENTFLOW_USB.sh" in long

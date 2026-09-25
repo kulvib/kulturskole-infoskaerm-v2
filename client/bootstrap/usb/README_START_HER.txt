@@ -22,6 +22,8 @@ Teknisk:
 - .EXE-suffikset er bevidst for FAT32/vfat showexec-kompatibilitet på Ubuntu.
 - Launcheren indeholder ingen sudo-, release-, download-, checksum- eller
   installationslogik. Den starter kun terminalen med 01_START_CLIENTFLOW_USB.sh.
+- Ved grafisk start holder terminalsessionen resultatet synligt og venter på Enter,
+  så både succes og fejl kan læses, før vinduet lukkes.
 - Hvis den grafiske launcher mod forventning ikke kan åbnes, kan samme canonical
   entrypoint startes manuelt fra USB-mappen med:
 
