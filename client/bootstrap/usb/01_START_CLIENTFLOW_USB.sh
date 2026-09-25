@@ -10,6 +10,32 @@ TARGET="/usr/local/lib/clientflow-bootstrap"
 fail(){ printf '[FEJL] %s\n' "$*" >&2; exit 1; }
 ok(){ printf '[OK] %s\n' "$*"; }
 
+HOLD_OPEN=0
+if [[ "${1:-}" == "--hold-open" ]]; then
+  HOLD_OPEN=1
+  shift
+fi
+[[ "$#" -eq 0 ]] || fail "Ukendt argument til ClientFlow USB-start: $1"
+
+hold_open_on_exit(){
+  local rc=$?
+  trap - EXIT
+  if [[ "$HOLD_OPEN" == "1" ]]; then
+    printf '\n'
+    if [[ "$rc" -ne 0 ]]; then
+      printf '[FEJL] USB-klargøringen stoppede med exit-kode %d. Se fejlen ovenfor.\n' "$rc" >&2
+    fi
+    printf '%s' 'Tryk Enter for at lukke terminalvinduet...'
+    IFS= read -r _ || true
+    printf '\n'
+  fi
+  exit "$rc"
+}
+
+if [[ "$HOLD_OPEN" == "1" ]]; then
+  trap hold_open_on_exit EXIT
+fi
+
 if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
   fail "Start USB-flowet som den normale Ubuntu-installationsbruger, ikke som root. Scriptet bruger selv sudo, når det er nødvendigt."
 fi

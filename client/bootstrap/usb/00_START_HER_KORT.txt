@@ -6,6 +6,7 @@ Start ClientFlow.EXE
 
 Der åbnes en terminal, som kører den eksisterende canonical ClientFlow USB-start.
 USB-integriteten verificeres, før sudo og installation anvendes.
+Terminalen bliver stående efter afslutning, indtil du trykker Enter.
 
 Hvis den grafiske launcher mod forventning ikke kan åbnes, er den canonical
 terminalindgang fortsat:

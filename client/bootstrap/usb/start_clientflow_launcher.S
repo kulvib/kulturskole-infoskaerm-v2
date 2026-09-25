@@ -9,7 +9,8 @@
  * - There is deliberately no bootstrap, checksum, release-selection or sudo
  *   logic here. The only authority remains 01_START_CLIENTFLOW_USB.sh.
  * - No shell command string is constructed. The terminal and bash receive
- *   fixed argv vectors through execve(2).
+ *   fixed argv vectors through execve(2). The launcher passes only the UX-only
+ *   --hold-open flag so the canonical script keeps the terminal visible.
  * - The launcher is libc-free and uses only stable Linux x86-64 syscalls.
  *
  * Canonical regeneration command on Linux amd64 with GNU binutils:
@@ -140,6 +141,8 @@ proc_self_exe:
     .asciz "/proc/self/exe"
 usb_script:
     .asciz "./01_START_CLIENTFLOW_USB.sh"
+hold_open_arg:
+    .asciz "--hold-open"
 bash_path:
     .asciz "/usr/bin/bash"
 title_arg:
@@ -179,15 +182,15 @@ terminal_error_end:
 .section .data.rel.ro
 .align 8
 ptyxis_argv:
-    .quad ptyxis_path, title_arg, separator_arg, bash_path, usb_script, 0
+    .quad ptyxis_path, title_arg, separator_arg, bash_path, usb_script, hold_open_arg, 0
 x_terminal_argv:
-    .quad x_terminal_path, xterm_title_flag, title_value, xterm_exec_flag, bash_path, usb_script, 0
+    .quad x_terminal_path, xterm_title_flag, title_value, xterm_exec_flag, bash_path, usb_script, hold_open_arg, 0
 gnome_terminal_argv:
-    .quad gnome_terminal_path, title_arg, separator_arg, bash_path, usb_script, 0
+    .quad gnome_terminal_path, title_arg, separator_arg, bash_path, usb_script, hold_open_arg, 0
 kgx_argv:
-    .quad kgx_path, title_flag, title_value, separator_arg, bash_path, usb_script, 0
+    .quad kgx_path, title_flag, title_value, separator_arg, bash_path, usb_script, hold_open_arg, 0
 xterm_argv:
-    .quad xterm_path, xterm_title_flag, title_value, xterm_exec_flag, bash_path, usb_script, 0
+    .quad xterm_path, xterm_title_flag, title_value, xterm_exec_flag, bash_path, usb_script, hold_open_arg, 0
 
 .section .bss
 .align 16
