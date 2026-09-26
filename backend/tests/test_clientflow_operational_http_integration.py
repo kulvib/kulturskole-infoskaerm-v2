@@ -961,6 +961,7 @@ def test_kiosk_lockdown_frontend_api_backend_reconcile_agent_broker_and_observed
                 "runtime": {
                     "state": "running",
                     "configuration_revision": 1,
+                    "configuration_schema_version": 2,
                     "browser_pid": 4242,
                 },
             },
@@ -996,6 +997,7 @@ def test_kiosk_lockdown_frontend_api_backend_reconcile_agent_broker_and_observed
                 "runtime": {
                     "state": "running",
                     "configuration_revision": 1,
+                    "configuration_schema_version": 2,
                     "browser_pid": 4242,
                 },
                 "kiosk_lockdown": {

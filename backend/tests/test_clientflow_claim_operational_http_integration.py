@@ -565,9 +565,10 @@ def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed
     assert commissioning is not None
     assert commissioning["command"]["command_type"] == "apply_configuration"
     assert commissioning["command"]["payload"] == {
-        "schema_version": 1,
+        "schema_version": 2,
         "revision": 1,
         "kiosk_url": kiosk_url,
+        "browser_refresh_interval_sec": 900,
     }
     commissioning_complete = http.post(
         f"/api/display-agent/clients/{client_id}/commands/{commissioning['command']['id']}/complete",
