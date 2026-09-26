@@ -576,6 +576,7 @@ export default function ClientInfoPage() {
   const [deletedClients, setDeletedClients] = useState([]);
   const [organizations, setOrganizations] = useState([]);
   const [organizationSelections, setOrganizationSelections] = useState({});
+  const [kioskUrlSelections, setKioskUrlSelections] = useState({});
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [dragClients, setDragClients] = useState([]);
@@ -992,6 +993,7 @@ export default function ClientInfoPage() {
   const handleApproveClient = useCallback(
     async (clientId) => {
       const organizationId = organizationSelections[clientId];
+      const kioskUrl = String(kioskUrlSelections[clientId] || "").trim();
 
       if (!organizationId) {
         showSnackbar("Vælg en organisation først!", "warning");
@@ -1001,10 +1003,15 @@ export default function ClientInfoPage() {
       setApprovingClientId(clientId);
 
       try {
-        await approveClient(clientId, organizationId);
+        await approveClient(clientId, organizationId, kioskUrl || undefined);
         showSnackbar("Klient godkendt!", "success");
 
         setOrganizationSelections((prev) => {
+          const next = { ...prev };
+          delete next[clientId];
+          return next;
+        });
+        setKioskUrlSelections((prev) => {
           const next = { ...prev };
           delete next[clientId];
           return next;
@@ -1020,7 +1027,7 @@ export default function ClientInfoPage() {
         setApprovingClientId(null);
       }
     },
-    [organizationSelections, fetchClients, showSnackbar],
+    [organizationSelections, kioskUrlSelections, fetchClients, showSnackbar],
   );
 
   const getOrganizationName = useCallback(
@@ -1746,6 +1753,7 @@ export default function ClientInfoPage() {
                     <TableCell>MAC-adresser</TableCell>
                     <TableCell>Tilføjet</TableCell>
                     <TableCell>Organisation</TableCell>
+                    <TableCell>Kiosk URL</TableCell>
                     <TableCell sx={{ textAlign: "center" }}>Godkend</TableCell>
                     <TableCell sx={{ textAlign: "center" }}>Fjern</TableCell>
                   </TableRow>
@@ -1753,7 +1761,7 @@ export default function ClientInfoPage() {
                 <TableBody>
                   {unapprovedClients.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} align="center">
+                      <TableCell colSpan={10} align="center">
                         Ingen ikke-godkendte klienter.
                       </TableCell>
                     </TableRow>
@@ -1949,6 +1957,23 @@ export default function ClientInfoPage() {
                                 </MenuItem>
                               ))}
                             </Select>
+                          </TableCell>
+                          <TableCell>
+                            <TextField
+                              size="small"
+                              value={kioskUrlSelections[client.id] || ""}
+                              onChange={(event) =>
+                                setKioskUrlSelections((prev) => ({
+                                  ...prev,
+                                  [client.id]: event.target.value,
+                                }))
+                              }
+                              placeholder="https://…"
+                              label="Kiosk URL (valgfri)"
+                              disabled={isApproving || isRemoving}
+                              inputProps={{ maxLength: 2048 }}
+                              sx={{ minWidth: { xs: 150, sm: 230 } }}
+                            />
                           </TableCell>
                           <TableCell align="center">
                             <Button

@@ -34,6 +34,7 @@ _APPROVAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/@+-]{0,199}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 STATE_SCHEMA = 2
+FIRST_ACTIVATION_GUI_HANDOFF = "/run/clientflow/preactivation-gui-handoff.json"
 
 
 class TransactionError(RuntimeError):
@@ -815,6 +816,61 @@ def _enable_power_lifecycle_reporters(layout: Layout) -> None:
             _run(["/usr/bin/systemctl", "disable", unit], check=False)
 
 
+def _first_activation_gui_handoff_path(layout: Layout) -> Path:
+    return layout.path(FIRST_ACTIVATION_GUI_HANDOFF)
+
+
+def _write_first_activation_gui_handoff(layout: Layout, release_id: str) -> None:
+    """Publish a root-controlled same-window GUI handoff for first activation only."""
+    _validate_release_id(release_id)
+    path = _first_activation_gui_handoff_path(layout)
+    ensure_real_directory(path.parent, mode=0o755)
+    atomic_write_json(
+        path,
+        {
+            "schema_version": 1,
+            "state": "activating",
+            "release_id": release_id,
+            "authorized_at": _now(),
+        },
+        mode=0o644,
+    )
+
+
+def _commit_first_activation_gui_handoff(layout: Layout, release_id: str) -> None:
+    """Mark the root-controlled GUI handoff healthy for the remainder of this boot."""
+    _validate_release_id(release_id)
+    path = _first_activation_gui_handoff_path(layout)
+    ensure_real_directory(path.parent, mode=0o755)
+    atomic_write_json(
+        path,
+        {
+            "schema_version": 1,
+            "state": "committed",
+            "release_id": release_id,
+            "committed_at": _now(),
+        },
+        mode=0o644,
+    )
+
+
+def _remove_first_activation_gui_handoff(layout: Layout) -> None:
+    _first_activation_gui_handoff_path(layout).unlink(missing_ok=True)
+
+
+def _retire_preserved_first_activation_gui_before_update(layout: Layout) -> None:
+    """Do not carry the first-activation GUI process across later in-place updates."""
+    path = _first_activation_gui_handoff_path(layout)
+    if not path.exists():
+        return
+    if layout.root == Path("/"):
+        _run(
+            ["/usr/bin/systemctl", "stop", "clientflow-preactivation-gui.service"],
+            check=False,
+        )
+    path.unlink(missing_ok=True)
+
+
 def _restore_pending_first_activation(layout: Layout, release_root: Path) -> None:
     """Restore the exact pre-activation fresh-install operating state.
 
@@ -981,7 +1037,14 @@ def _activate_release(
     _disable_target(layout)
     _quiesce_runtime(layout)
     _disable_power_lifecycle_reporters(layout)
+    if previous is not None:
+        _retire_preserved_first_activation_gui_before_update(layout)
     try:
+        if previous is None:
+            # Backend approval has been re-proved before _activate_release is entered.
+            # The root-owned marker lets the already visible preactivation GUI move
+            # to canonical active paths without closing/restarting its GTK window.
+            _write_first_activation_gui_handoff(layout, release_id)
         # Re-applying the exact target definitions is deliberate: after a crash we
         # cannot know whether the previous process died before or after the unit
         # swap. The immutable staged release makes this operation idempotent.
@@ -1014,6 +1077,7 @@ def _activate_release(
             # release swap and runtime health; only a healthy first activation
             # may begin polling the canonical update control plane.
             _enable_stable_updater_timer(layout)
+            _commit_first_activation_gui_handoff(layout, release_id)
 
         state["previous_release_id"] = previous
         state["active_release_id"] = release_id
@@ -1029,6 +1093,10 @@ def _activate_release(
         )
         save_state(layout, state)
     except Exception as activation_error:
+        if previous is None:
+            # A failed first activation must immediately return the preserved GUI
+            # to status-only pending mode; never leave an authorization marker.
+            _remove_first_activation_gui_handoff(layout)
         _quiesce_runtime(layout)
         _disable_power_lifecycle_reporters(layout)
         try:

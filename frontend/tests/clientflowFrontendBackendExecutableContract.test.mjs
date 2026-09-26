@@ -139,7 +139,7 @@ const invoke = {
   clientActionReboot: (api) => api.clientAction(42, "reboot"),
   clientActionStopBrowser: (api) => api.clientAction(42, "stop"),
   requestOsUpdate: (api) => api.requestOsUpdate(42),
-  approveClient: (api) => api.approveClient(42, 7),
+  approveClient: (api) => api.approveClient(42, 7, "https://infoskaerm.example.test/client/42"),
   getClientflowReleases: (api) => api.getClientflowReleases(),
   getClientflowDeployments: (api) => api.getClientflowDeployments(42),
   getActiveClientflowDeployment: (api) => api.getActiveClientflowDeployment(42),
@@ -245,6 +245,14 @@ test("ClientFlow frontend API functions execute the shared backend contract", as
     calls.length = 0;
     await invoke.clientActionStopBrowser(api);
     assert.deepEqual(parsedBody(calls[0]), { action: "stop", source: "actionbutton" });
+
+    currentOperation = "approveClient";
+    calls.length = 0;
+    await invoke.approveClient(api);
+    assert.deepEqual(parsedBody(calls[0]), {
+      organization_id: 7,
+      kiosk_url: "https://infoskaerm.example.test/client/42",
+    });
 
     currentOperation = "updateClientKiosk";
     calls.length = 0;
