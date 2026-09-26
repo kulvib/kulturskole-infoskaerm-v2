@@ -173,7 +173,7 @@ class DisplayRuntime:
             # process must not repeat the countdown; a later successful retry marks
             # the boot, while a service restart still sees the boot as unhandled.
             self.boot_start_pending = False
-        result = self.start_browser()
+        result = self.start_browser(source="system_start")
         if self._boot_start_required():
             self._mark_browser_start_this_boot()
         return result
@@ -257,13 +257,13 @@ class DisplayRuntime:
         if changed and kiosk_changed:
             if configuration["kiosk_url"]:
                 self.browser_requested = True
-                self.stop_browser(preserve_request=True)
+                self.stop_browser(preserve_request=True, source="url_change")
                 self._clear_browser_profile(reason="configuration_change")
                 self._countdown("countdown", CONFIGURATION_START_COUNTDOWN_SECONDS, reason="configuration_change")
-                self.start_browser()
+                self.start_browser(source="url_change")
             else:
                 self.browser_requested = False
-                self.stop_browser()
+                self.stop_browser(source="url_change")
         else:
             self._status("running" if self.browser and self.browser.poll() is None else "stopped")
         return {
@@ -557,11 +557,13 @@ class DisplayRuntime:
                 time.sleep(0.2)
         raise RuntimeError(f"Chrome early-protection kunne ikke etableres: {last_error}")
 
-    def start_browser(self) -> dict[str, Any]:
+    def start_browser(self, *, source: str = "runtime") -> dict[str, Any]:
+        source = str(source or "runtime").strip().lower()
         self.browser_requested = True
         if self.browser and self.browser.poll() is None:
-            self._status("running")
+            self._status("running", step="start_chrome", event_source=source)
             return {"started": False, "already_running": True, "pid": self.browser.pid}
+        self._status("starting", step="starting_chrome", event_source=source)
         try:
             command, environment = self._browser_command()
             self.browser = subprocess.Popen(
@@ -602,7 +604,7 @@ class DisplayRuntime:
             raise RuntimeError("Chrome early-protection fejlede") from exc
         PID_PATH.write_text(f"{self.browser.pid}\n", encoding="ascii")
         self.next_start_attempt = 0.0
-        self._status("running")
+        self._status("running", step="start_chrome", event_source=source)
         return {"started": True, "pid": self.browser.pid}
 
     def request_start_browser(self, *, source: str) -> dict[str, Any]:
@@ -610,25 +612,27 @@ class DisplayRuntime:
         if source not in {"backend", "gui", "calendar", "runtime"}:
             raise ValueError("Ukendt browser-startkilde")
         if self.browser and self.browser.poll() is None:
-            return self.start_browser()
+            return self.start_browser(source=source)
         self.browser_requested = True
         # Product contract: explicit backend/local-GUI Start is a clean start.
         # Calendar wake and internal runtime recovery preserve the profile.
         if source in {"backend", "gui"}:
             self._clear_browser_profile(reason=f"{source}_start")
             self._countdown("countdown", MANUAL_START_COUNTDOWN_SECONDS, reason=f"{source}_start")
-        return self.start_browser()
+        return self.start_browser(source=source)
 
-    def stop_browser(self, *, preserve_request: bool = False) -> dict[str, Any]:
+    def stop_browser(self, *, preserve_request: bool = False, source: str = "runtime") -> dict[str, Any]:
         if not preserve_request:
             self.browser_requested = False
         self.next_start_attempt = 0.0
+        source = str(source or "runtime").strip().lower()
         process = self.browser
         self.browser = None
         PID_PATH.unlink(missing_ok=True)
         if process is None or process.poll() is not None:
-            self._status("stopped")
+            self._status("stopped", step="chrome_closed_programmatically", event_source=source)
             return {"stopped": True, "was_running": False}
+        self._status("stopping", step="terminate_chrome", event_source=source)
         try:
             os.killpg(process.pid, signal.SIGTERM)
             process.wait(timeout=10)
@@ -638,21 +642,21 @@ class DisplayRuntime:
             except ProcessLookupError:
                 pass
             process.wait(timeout=5)
-        self._status("stopped")
+        self._status("stopped", step="chrome_closed_programmatically", event_source=source)
         return {"stopped": True, "was_running": True}
 
     def restart_browser(self) -> dict[str, Any]:
         self.browser_requested = True
-        self.stop_browser(preserve_request=True)
-        result = self.start_browser()
+        self.stop_browser(preserve_request=True, source="runtime")
+        result = self.start_browser(source="runtime")
         return {"restarted": True, **result}
 
     def reset_browser(self) -> dict[str, Any]:
         self.browser_requested = True
-        self.stop_browser(preserve_request=True)
+        self.stop_browser(preserve_request=True, source="reset_browser")
         self._clear_browser_profile(reason="reset_browser")
         self._countdown("countdown", RESET_BROWSER_COUNTDOWN_SECONDS, reason="reset_browser")
-        result = self.start_browser()
+        result = self.start_browser(source="reset_browser")
         return {"reset": True, **result}
 
     def display_sleep_countdown(self) -> dict[str, Any]:
@@ -663,11 +667,18 @@ class DisplayRuntime:
         )
         return {"countdown": True, "seconds": DISPLAY_SLEEP_COUNTDOWN_SECONDS}
 
-    def record_system_transition(self, step: str) -> dict[str, Any]:
+    def record_system_transition(self, step: str, *, source: str | None = None) -> dict[str, Any]:
         step = str(step or "").strip().lower()
         if step not in {"shutdown_chrome", "system_rebooting", "system_shutting_down"}:
             raise ValueError("Ugyldigt System transition-step")
-        self._status("stopped", step=step)
+        if step == "system_rebooting":
+            default_source = "pending_reboot"
+        elif step == "system_shutting_down":
+            default_source = "pending_shutdown"
+        else:
+            default_source = "system"
+        event_source = str(source or default_source).strip().lower()
+        self._status("stopped", step=step, event_source=event_source)
         return {"recorded": True, "step": step}
 
     @staticmethod
@@ -994,7 +1005,9 @@ class DisplayRuntime:
             source = str(payload.get("source") or "backend") if isinstance(payload, dict) else "backend"
             return self.request_start_browser(source=source)
         if action == "stop_browser":
-            return self.stop_browser()
+            payload = request.get("payload")
+            source = str(payload.get("source") or "runtime") if isinstance(payload, dict) else "runtime"
+            return self.stop_browser(source=source)
         if action == "reset_browser":
             return self.reset_browser()
         if action == "detect_resolution":
@@ -1020,7 +1033,10 @@ class DisplayRuntime:
             payload = request.get("payload")
             if not isinstance(payload, dict):
                 raise ValueError("payload skal være et objekt")
-            return self.record_system_transition(str(payload.get("step") or ""))
+            return self.record_system_transition(
+                str(payload.get("step") or ""),
+                source=str(payload.get("source") or "") or None,
+            )
         if action == "status":
             return {
                 "state": "running" if self.browser and self.browser.poll() is None else "stopped",

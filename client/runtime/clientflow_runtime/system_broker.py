@@ -339,10 +339,18 @@ def _journal_mark_reboot_requested(
 def _display_transition(action: str) -> None:
     final_step = "system_rebooting" if action == "reboot" else "system_shutting_down"
     try:
-        call(DISPLAY_RUNTIME_SOCKET, {"action": "stop_browser"}, timeout=15.0)
+        transition_source = "pending_reboot" if action == "reboot" else "pending_shutdown"
         call(
             DISPLAY_RUNTIME_SOCKET,
-            {"action": "record_system_transition", "payload": {"step": "shutdown_chrome"}},
+            {"action": "stop_browser", "payload": {"source": transition_source}},
+            timeout=15.0,
+        )
+        call(
+            DISPLAY_RUNTIME_SOCKET,
+            {
+                "action": "record_system_transition",
+                "payload": {"step": "shutdown_chrome", "source": transition_source},
+            },
             timeout=5.0,
         )
     except Exception:
@@ -353,7 +361,10 @@ def _display_transition(action: str) -> None:
     try:
         call(
             DISPLAY_RUNTIME_SOCKET,
-            {"action": "record_system_transition", "payload": {"step": final_step}},
+            {
+                "action": "record_system_transition",
+                "payload": {"step": final_step, "source": transition_source},
+            },
             timeout=5.0,
         )
     except Exception:

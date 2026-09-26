@@ -535,7 +535,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             background-color: {COLOR_BG};
             color: #000000;
             font-family: Arial, sans-serif;
-            font-size: {normal}px;
+            font-size: {normal}pt;
         }}
         .legacy-frame {{
             border: 1px solid #b9b9b9;
@@ -546,7 +546,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         .section-title {{
             background-color: {COLOR_BG};
             font-family: Arial, sans-serif;
-            font-size: {heading}px;
+            font-size: {heading}pt;
             font-weight: bold;
             margin-left: 5px;
             padding: 0 3px;
@@ -554,7 +554,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         .legacy-content {{ padding: {max(2, round(3 * scale))}px; }}
         .field-label, .field-value, .calendar-cell, .copy-ok, .sleep-indicator, .error-label {{
             font-family: Arial, sans-serif;
-            font-size: {normal}px;
+            font-size: {normal}pt;
             min-height: {row_min}px;
             padding: 0;
             margin: 0;
@@ -562,14 +562,14 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         .field-label {{ font-weight: normal; }}
         .calendar-heading {{
             font-family: Arial, sans-serif;
-            font-size: {normal}px;
+            font-size: {normal}pt;
             font-weight: normal;
             min-height: {row_min}px;
         }}
         .start-button, .stop-button {{
             color: white;
             font-family: Arial, sans-serif;
-            font-size: {big}px;
+            font-size: {big}pt;
             font-weight: normal;
             border-radius: 2px;
             min-height: {max(24, round(30 * scale))}px;
@@ -587,7 +587,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             min-height: {row_min}px;
             min-width: 18px;
             font-family: Arial, sans-serif;
-            font-size: {normal}px;
+            font-size: {normal}pt;
             color: #000000;
         }}
         .copy-ok {{ color: {COLOR_GREEN}; }}
@@ -899,8 +899,26 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             if reason.startswith("calendar"):
                 return f"Kiosk browser starter fra kalender om {seconds} sekund{plural}…", COLOR_ORANGE
             return f"Kiosk browser starter om {seconds} sekund{plural}…", COLOR_ORANGE
+        source = str(runtime.get("event_source") or "runtime").strip().lower()
+        if state == "starting":
+            return {
+                "backend": ("Starter kiosk browser fra backend…", COLOR_ORANGE),
+                "gui": ("Starter kiosk browser fra GUI…", COLOR_ORANGE),
+                "calendar": ("Starter kiosk browser fra kalender…", COLOR_ORANGE),
+                "system_start": ("Starter kiosk browser ved systemstart…", COLOR_ORANGE),
+                "url_change": ("Starter kiosk browser ved URL-skift…", COLOR_ORANGE),
+            }.get(source, ("Starter kiosk browser…", COLOR_ORANGE))
+        if state == "stopping":
+            return "Lukker kiosk browser…", COLOR_ORANGE
         if state == "running" and runtime.get("browser_pid"):
-            return "Kiosk browser kører", COLOR_GREEN
+            return {
+                "backend": ("Kiosk browser startet fra backend", COLOR_GREEN),
+                "gui": ("Kiosk browser startet fra GUI på klient", COLOR_GREEN),
+                "calendar": ("Kiosk browser startet fra kalender", COLOR_GREEN),
+                "system_start": ("Kiosk browser startet ved systemstart", COLOR_GREEN),
+                "url_change": ("Kiosk browser startet ved URL-skift", COLOR_GREEN),
+                "reset_browser": ("Kiosk browser startet efter nulstilling", COLOR_GREEN),
+            }.get(source, ("Kiosk browser kører", COLOR_GREEN))
         if state == "resetting":
             return "Nulstiller browserprofil og cookies…", COLOR_ORANGE
         if state == "waiting_session":
@@ -917,9 +935,20 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         if step == "display_wake_complete":
             return "Skærm vækket — klient online", COLOR_GREEN
         if step == "chrome_closed_manual":
-            return "Kiosk browser lukket manuelt", COLOR_RED
+            return "Kiosk browser lukket manuelt", COLOR_GRAY
+        if step == "chrome_closed_programmatically":
+            return {
+                "backend": ("Kiosk browser lukket fra backend", COLOR_GRAY),
+                "gui": ("Kiosk browser lukket fra GUI på klient", COLOR_GRAY),
+                "calendar": ("Kiosk browser lukket fra kalender", COLOR_GRAY),
+                "url_change": ("Kiosk browser lukket ved URL-skift", COLOR_GRAY),
+                "pending_reboot": ("Kiosk browser lukket — klient genstarter", COLOR_ORANGE),
+                "pending_shutdown": ("Kiosk browser lukket — klient lukker ned", COLOR_ORANGE),
+                "display_sleep": ("Kiosk browser lukket — klient i dvale", COLOR_ORANGE),
+                "reset_browser": ("Kiosk browser nulstilles — lukker browser…", COLOR_ORANGE),
+            }.get(source, ("Kiosk browser stoppet", COLOR_GRAY))
         if state == "stopped":
-            return "Kiosk browser stoppet", COLOR_RED
+            return "Kiosk browser stoppet", COLOR_GRAY
         return "Ingen status.", COLOR_GRAY
 
     @staticmethod
@@ -1002,7 +1031,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         def worker() -> None:
             try:
                 payload: dict[str, Any] = {"action": action}
-                if action == "start_browser":
+                if action in {"start_browser", "stop_browser"}:
                     payload["payload"] = {"source": "gui"}
                 _rpc(payload, timeout=25.0)
             except Exception as exc:
@@ -1171,15 +1200,16 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                     label.set_text(value)
 
             state = str(runtime.get("state") or "").lower()
-            busy = state in {"countdown", "resetting", "waiting_session"}
+            busy = state in {"countdown", "resetting", "waiting_session", "starting", "stopping"}
+            system_locked = str(runtime.get("step") or "").lower() in {"shutdown_chrome", "system_rebooting", "system_shutting_down"}
             startup_locked = time.monotonic() < self.startup_disable_until
             power_locked = power_state == "off"
             if PREACTIVATION_MODE:
                 self.start_button.set_sensitive(False)
                 self.stop_button.set_sensitive(False)
             else:
-                self.start_button.set_sensitive(not startup_locked and not busy and not power_locked and not running)
-                self.stop_button.set_sensitive(not startup_locked and not busy and not power_locked and running)
+                self.start_button.set_sensitive(not startup_locked and not busy and not system_locked and not power_locked and not running)
+                self.stop_button.set_sensitive(not startup_locked and not busy and not system_locked and not power_locked and running)
             _write_gui_status("running")
         except Exception as exc:
             self.error_label.set_text(f"GUI refresh-fejl: {str(exc)[:180]}")
