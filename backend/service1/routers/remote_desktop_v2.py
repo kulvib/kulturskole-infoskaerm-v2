@@ -70,6 +70,7 @@ ALLOWED_WS_ORIGINS = [
 ]
 IS_PRODUCTION = os.getenv("ENVIRONMENT", "production") == "production"
 _SAFE_NAME = re.compile(r"^[^/\\\x00-\x1f\x7f]{1,255}$")
+REMOTE_DESKTOP_HOME_PATH = "/home/clientflow-kiosk"
 
 BROWSER_MESSAGE_TYPES = {
     "start_stream", "stop_stream", "mouse", "key", "text", "shout",
@@ -829,7 +830,8 @@ async def _handle_file_agent_message(client_id: int, message: dict[str, Any]) ->
             "type": "file_list_result",
             "ok": True,
             "path": path,
-            "display_path": f"Remote Desktop / {path}" if path else "Remote Desktop",
+            "display_path": f"{REMOTE_DESKTOP_HOME_PATH}/{path}" if path else REMOTE_DESKTOP_HOME_PATH,
+            "home_path": REMOTE_DESKTOP_HOME_PATH,
             "parent_path": _parent_path(path),
             "shortcuts": [],
             "entries": _map_file_entries(message.get("entries"), show_hidden=show_hidden),

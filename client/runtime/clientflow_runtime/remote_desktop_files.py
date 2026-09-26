@@ -57,10 +57,13 @@ class FileArea:
         self.uploads: dict[tuple[str, str], dict[str, Any]] = {}
 
     def _parts(self, raw: object) -> tuple[str, ...]:
-        value = str(raw or "").replace("\\", "/").strip("/")
-        path = PurePosixPath(value)
+        value = str(raw or "").replace("\\", "/")
+        if value.startswith("/"):
+            raise ValueError("Filstien er ugyldig")
+        normalized = value.strip("/")
+        path = PurePosixPath(normalized)
         if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
-            if value:
+            if normalized:
                 raise ValueError("Filstien er ugyldig")
             return ()
         return path.parts
