@@ -617,6 +617,56 @@ def _replace_ini_section_keys(text: str, section: str, replacements: dict[str, s
     return "\n".join(out).rstrip() + "\n"
 
 
+def _accounts_service_system_account_value(user: str) -> str | None:
+    username = validate_local_user(user)
+    path = ACCOUNTS_SERVICE_ROOT / username
+    try:
+        meta = path.lstat()
+    except FileNotFoundError:
+        return None
+    if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode):
+        raise BootstrapError(f"AccountsService-record er ugyldig for {username}: {path}")
+    if meta.st_uid != 0 or stat.S_IMODE(meta.st_mode) != 0o644:
+        raise BootstrapError(f"AccountsService-record har usikker ownership/mode for {username}: {path}")
+    section = None
+    value = None
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line_text = raw_line.strip()
+        if line_text.startswith("[") and line_text.endswith("]"):
+            section = line_text[1:-1].strip()
+            continue
+        if section == "User" and "=" in raw_line and not line_text.startswith(("#", ";")):
+            key, candidate = raw_line.split("=", 1)
+            if key.strip() == "SystemAccount":
+                value = candidate.strip().lower()
+    return value
+
+
+def validate_factory_bootstrap_user_hidden(user: str) -> None:
+    username = validate_local_user(user)
+    if username in {KIOSK_USER, ADMIN_USER}:
+        raise BootstrapError("Factory bootstrap-user må ikke være en canonical ClientFlow-bruger")
+    actual = _accounts_service_system_account_value(username)
+    if actual != "true":
+        raise BootstrapError(
+            f"Factory bootstrap-user er stadig synlig i AccountsService: {username} SystemAccount={actual!r}"
+        )
+
+
+def prepare_factory_bootstrap_user_hidden(user: str) -> None:
+    require_root()
+    username = validate_local_user(user)
+    if username in {KIOSK_USER, ADMIN_USER}:
+        raise BootstrapError("Factory bootstrap-user må ikke være en canonical ClientFlow-bruger")
+    ACCOUNTS_SERVICE_ROOT.mkdir(parents=True, exist_ok=True)
+    path = ACCOUNTS_SERVICE_ROOT / username
+    current = path.read_text(encoding="utf-8") if path.is_file() else "[User]\n"
+    updated = _replace_ini_section_keys(current, "User", {"SystemAccount": "true"})
+    _atomic_root_file(path, updated, mode=0o644)
+    validate_factory_bootstrap_user_hidden(username)
+    ok("Midlertidig Ubuntu-bootstrap-bruger er skjult fra kunde-login indtil aktivering.")
+
+
 def prepare_factory_graphical_login() -> None:
     require_root()
     if not Path("/usr/sbin/gdm3").is_file():
@@ -827,6 +877,7 @@ def validate_factory_handoff(*, client_name: str, operator_user: str) -> None:
         validate_factory_gnome_initial_setup_markers(username)
         validate_factory_popup_autostarts(username)
     validate_factory_kiosk_desktop_settings(KIOSK_USER)
+    validate_factory_bootstrap_user_hidden(operator_user)
     gdm = GDM_CONFIG.read_text(encoding="utf-8") if GDM_CONFIG.is_file() else ""
     if "AutomaticLoginEnable=true" not in gdm or f"AutomaticLogin={KIOSK_USER}" not in gdm or "WaylandEnable=true" not in gdm:
         raise BootstrapError("GDM factory-handoff peger ikke på canonical kiosk-bruger")

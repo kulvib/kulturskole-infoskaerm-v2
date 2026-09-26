@@ -24,6 +24,20 @@ def _load_common():
     return module
 
 
+def _pretend_accountsservice_record_is_root_owned(
+    module, monkeypatch: pytest.MonkeyPatch, record: Path
+) -> None:
+    real_lstat = module.Path.lstat
+
+    def lstat_with_root_owner(path: Path):
+        meta = real_lstat(path)
+        if path == record:
+            return SimpleNamespace(st_mode=meta.st_mode, st_uid=0)
+        return meta
+
+    monkeypatch.setattr(module.Path, "lstat", lstat_with_root_owner)
+
+
 def test_sudo_rs_activation_capability_is_exact_no_args_without_digest() -> None:
     source = COMMON.read_text(encoding="utf-8")
     fn = source[
@@ -249,3 +263,74 @@ def test_factory_kiosk_desktop_validation_fails_closed_if_home_is_still_visible(
 
     with pytest.raises(module.BootstrapError, match="show-home"):
         module.validate_factory_kiosk_desktop_settings(module.KIOSK_USER)
+
+def test_factory_hides_exact_bootstrap_user_before_first_reboot() -> None:
+    common = COMMON.read_text(encoding="utf-8")
+    factory = (ROOT / "client/bootstrap/clientflow-factory-prepare").read_text(encoding="utf-8")
+    handoff = common[common.index("def validate_factory_handoff") : common.index("def load_usb_state")]
+    assert "prepare_factory_bootstrap_user_hidden(operator)" in factory
+    assert "validate_factory_bootstrap_user_hidden(operator_user)" in handoff
+    assert handoff.index("validate_factory_bootstrap_user_hidden(operator_user)") < handoff.index(
+        "write_factory_state(client_name=client_name, operator_user=operator_user, handoff_ready=True)"
+    )
+
+
+def test_factory_bootstrap_user_accountsservice_record_is_hidden_and_preserves_other_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_common()
+    username = "ubuntu-bootstrap"
+    accounts_root = tmp_path / "AccountsService/users"
+    accounts_root.mkdir(parents=True)
+    record = accounts_root / username
+    record.write_text(
+        "[User]\nLanguage=da_DK.UTF-8\nSystemAccount=false\nIcon=/tmp/example.png\n",
+        encoding="utf-8",
+    )
+    record.chmod(0o644)
+
+    monkeypatch.setattr(module, "ACCOUNTS_SERVICE_ROOT", accounts_root)
+    monkeypatch.setattr(module, "require_root", lambda: None)
+    monkeypatch.setattr(module, "validate_local_user", lambda candidate: candidate)
+    monkeypatch.setattr(module.os, "fchown", lambda *_args, **_kwargs: None)
+    _pretend_accountsservice_record_is_root_owned(module, monkeypatch, record)
+
+    module.prepare_factory_bootstrap_user_hidden(username)
+
+    content = record.read_text(encoding="utf-8")
+    assert "SystemAccount=true" in content
+    assert "SystemAccount=false" not in content
+    assert "Language=da_DK.UTF-8" in content
+    assert "Icon=/tmp/example.png" in content
+    module.validate_factory_bootstrap_user_hidden(username)
+
+
+def test_factory_bootstrap_user_validation_fails_closed_if_still_visible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_common()
+    username = "ubuntu-bootstrap"
+    accounts_root = tmp_path / "AccountsService/users"
+    accounts_root.mkdir(parents=True)
+    record = accounts_root / username
+    record.write_text("[User]\nSystemAccount=false\n", encoding="utf-8")
+    record.chmod(0o644)
+
+    monkeypatch.setattr(module, "ACCOUNTS_SERVICE_ROOT", accounts_root)
+    monkeypatch.setattr(module, "validate_local_user", lambda candidate: candidate)
+    _pretend_accountsservice_record_is_root_owned(module, monkeypatch, record)
+
+    with pytest.raises(module.BootstrapError, match="stadig synlig"):
+        module.validate_factory_bootstrap_user_hidden(username)
+
+
+def test_factory_bootstrap_user_hiding_refuses_canonical_clientflow_accounts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_common()
+    monkeypatch.setattr(module, "require_root", lambda: None)
+    monkeypatch.setattr(module, "validate_local_user", lambda candidate: candidate)
+    for username in (module.KIOSK_USER, module.ADMIN_USER):
+        with pytest.raises(module.BootstrapError, match="canonical ClientFlow-bruger"):
+            module.prepare_factory_bootstrap_user_hidden(username)
+

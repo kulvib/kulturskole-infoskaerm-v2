@@ -25,6 +25,7 @@ from clientflow_bootstrap_common import (  # noqa: E402
     load_usb_state,
     ok,
     phase,
+    prepare_factory_bootstrap_user_hidden,
     prepare_factory_graphical_login,
     prompt_client_name_confirmed,
     provision_factory_human_accounts,
@@ -117,6 +118,7 @@ def factory_prepare() -> int:
 
     phase("3/6 · Kiosk-login til kundeoverdragelse")
     prepare_factory_graphical_login()
+    prepare_factory_bootstrap_user_hidden(operator)
 
     phase("4/6 · Skrivebordsikon til kundeaktivering")
     _install_customer_launcher(KIOSK_USER)
