@@ -1,0 +1,23 @@
+Branch: fix/factory-post-reboot-readiness-and-os-update
+Classification: test contract drift; product behavior is correct and fail-closed.
+
+GitHub failure:
+- test_two_fresh_installations_have_disjoint_identities_and_cross_client_auth_fails_closed
+- old test attempted /approve before post-reboot readiness and correctly received HTTP 409.
+
+Fix:
+- Publish readiness for both fresh-install clients using each client's own Status credential before /approve.
+- Add explicit negative assertion that client A's readiness credential cannot mark client B ready (HTTP 401).
+- Product code unchanged.
+
+Changed source file:
+- backend/tests/test_clientflow_claim_operational_http_integration.py
+
+Deleted files:
+- NONE
+
+Local verification:
+- python -m py_compile changed test: PASS
+- scripts/tests: 322 passed
+- backend targeted integration test: NOT EXECUTED locally; module is skipped because backend runtime dependencies are unavailable in this container. GitHub CI remains final gate.
+- SHA256SUMS.txt: unchanged; the changed backend test is not tracked by the source SHA manifest.
