@@ -52,6 +52,9 @@ test("kiosk lockdown is confirmed, asynchronous, and superadmin-write-only", () 
   assert.match(panel, /Deaktivér kiosk lockdown\?/);
   assert.match(panel, /desired state/);
   assert.match(panel, /Afventer klient/);
+  assert.match(panel, /lockdownDrifted/);
+  assert.match(panel, /Drift opdaget/);
+  assert.match(panel, /Aktiv og verificeret på kiosk-brugeren/);
 });
 
 test("organization move has a dedicated confirmation boundary", () => {

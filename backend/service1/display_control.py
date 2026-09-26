@@ -375,7 +375,7 @@ def reconcile_kiosk_lockdown(
     observed_message = str(observed.get("message") or "")[:1000] or None
     observed_desired = observed.get("desired") if isinstance(observed.get("desired"), bool) else None
     previous_status = str(getattr(client, "desktop_lockdown_status", "") or "").strip().lower()
-    if observed_status in {"applied", "disabled", "applying", "rolling_back", "error", "unknown"}:
+    if observed_status in {"applied", "disabled", "applying", "rolling_back", "drifted", "error", "unknown"}:
         client.desktop_lockdown_status = observed_status
         client.desktop_lockdown_message = observed_message
         if observed_status in {"applied", "disabled"} and previous_status != observed_status:
@@ -416,10 +416,16 @@ def reconcile_kiosk_lockdown(
             session.add(row)
 
     client.desktop_lockdown_status = "pending"
-    client.desktop_lockdown_message = (
-        "Afventer klient: kiosk lockdown anvendes på kiosk-brugeren"
-        if desired else "Afventer klient: kiosk lockdown rulles tilbage på kiosk-brugeren"
-    )
+    if observed_status == "drifted":
+        client.desktop_lockdown_message = (
+            "Lockdown-drift opdaget; afventer klient: policy genanvendes"
+            if desired else "Lockdown-rester opdaget; afventer klient: rollback genanvendes"
+        )
+    else:
+        client.desktop_lockdown_message = (
+            "Afventer klient: kiosk lockdown anvendes på kiosk-brugeren"
+            if desired else "Afventer klient: kiosk lockdown rulles tilbage på kiosk-brugeren"
+        )
     session.add(client)
     return queue_display_command(
         session, client_id=client_id, command_type="set_kiosk_lockdown",
