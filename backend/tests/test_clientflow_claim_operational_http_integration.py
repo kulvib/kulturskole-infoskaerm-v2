@@ -467,8 +467,35 @@ def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed
     )
     assert pending_update.status_code == 401, pending_update.text
 
-    # 5. Backend approval enables those exact same six identities; no rotation/reprovisioning occurs.
+    # 5. Fresh V2 enrollment is not approval-eligible until the installed host
+    # has authenticated a post-reboot readiness proof with its pending Status credential.
     kiosk_url = "https://infoskaerm.example.test/client/42"
+    too_early = http.post(
+        f"/api/clients/{client_id}/approve",
+        json={"kiosk_url": kiosk_url},
+    )
+    assert too_early.status_code == 409, too_early.text
+
+    readiness_base = {
+        "client_id": client_id,
+        "credential_id": credential_ids["status"],
+        "client_secret": secrets_by_domain["status"],
+        "preclaim_boot_id": "11111111-1111-4111-8111-111111111111",
+        "boot_id": "11111111-1111-4111-8111-111111111111",
+        "kiosk_session_ready": True,
+        "preactivation_gui_ready": True,
+        "package_manager_healthy": True,
+        "post_reboot_reboot_required": False,
+    }
+    same_boot = http.post("/api/client-auth/approval-readiness", json=readiness_base)
+    assert same_boot.status_code == 409, same_boot.text
+
+    readiness = dict(readiness_base)
+    readiness["boot_id"] = "22222222-2222-4222-8222-222222222222"
+    ready = http.post("/api/client-auth/approval-readiness", json=readiness)
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["approval_ready"] is True
+
     approved = http.post(
         f"/api/clients/{client_id}/approve",
         json={"kiosk_url": kiosk_url},
@@ -772,6 +799,56 @@ def test_two_fresh_installations_have_disjoint_identities_and_cross_client_auth_
     assert claim_a["system_encryption_key_id"] != claim_b["system_encryption_key_id"]
     assert claim_a["update_auth"]["credential_id"] != claim_b["update_auth"]["credential_id"]
     assert claim_a["update_auth"]["key_id"] != claim_b["update_auth"]["key_id"]
+
+    status_secret_a = derive_domain_secret(
+        install_a["seed"],
+        client_id=client_a,
+        credential_id=credentials_a["status"],
+        domain="status",
+    )
+    status_secret_b = derive_domain_secret(
+        install_b["seed"],
+        client_id=client_b,
+        credential_id=credentials_b["status"],
+        domain="status",
+    )
+
+    readiness_a = {
+        "client_id": client_a,
+        "credential_id": credentials_a["status"],
+        "client_secret": status_secret_a,
+        "preclaim_boot_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "boot_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+        "kiosk_session_ready": True,
+        "preactivation_gui_ready": True,
+        "package_manager_healthy": True,
+        "post_reboot_reboot_required": False,
+    }
+    readiness_b = {
+        "client_id": client_b,
+        "credential_id": credentials_b["status"],
+        "client_secret": status_secret_b,
+        "preclaim_boot_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "boot_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbc",
+        "kiosk_session_ready": True,
+        "preactivation_gui_ready": True,
+        "package_manager_healthy": True,
+        "post_reboot_reboot_required": False,
+    }
+
+    # Readiness is bound to the exact claimed client identity. Client A's
+    # credential must not be usable to make client B approval-eligible.
+    cross_client_readiness = dict(readiness_a)
+    cross_client_readiness["client_id"] = client_b
+    cross_ready = http.post("/api/client-auth/approval-readiness", json=cross_client_readiness)
+    assert cross_ready.status_code == 401, cross_ready.text
+
+    ready_a = http.post("/api/client-auth/approval-readiness", json=readiness_a)
+    ready_b = http.post("/api/client-auth/approval-readiness", json=readiness_b)
+    assert ready_a.status_code == 200, ready_a.text
+    assert ready_b.status_code == 200, ready_b.text
+    assert ready_a.json()["approval_ready"] is True
+    assert ready_b.json()["approval_ready"] is True
 
     approved_a = http.post(f"/api/clients/{client_a}/approve")
     approved_b = http.post(f"/api/clients/{client_b}/approve")

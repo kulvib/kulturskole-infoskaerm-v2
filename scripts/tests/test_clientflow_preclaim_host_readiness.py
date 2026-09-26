@@ -62,15 +62,64 @@ def test_preclaim_readiness_repairs_apt_before_curl(monkeypatch, tmp_path: Path)
         "_recover_apt_from_bundle",
         lambda *_args, **_kwargs: calls.append("apt-recovered"),
     )
+    monkeypatch.setattr(
+        host_bootstrap,
+        "_apply_controlled_ubuntu_updates",
+        lambda: calls.append("ubuntu-updated") or {
+            "package_index_refreshed": True,
+            "package_upgrade_completed": True,
+            "dpkg_audit_clean": True,
+            "apt_check_clean": True,
+            "reboot_required": True,
+        },
+    )
     monkeypatch.setattr(host_bootstrap, "_ensure_curl", lambda: calls.append("curl-ready"))
+    monkeypatch.setattr(host_bootstrap, "_validate_package_manager_health", lambda: calls.append("package-health"))
 
     result = host_bootstrap.ensure_preclaim_host_readiness(
         tmp_path / "approved.tar",
         expected_bundle_sha256="a" * 64,
     )
 
-    assert calls == ["target-host", "apt-recovered", "curl-ready"]
-    assert result == {"apt": "recovered_from_approved_bundle", "curl": "ready"}
+    assert calls == [
+        "target-host",
+        "apt-recovered",
+        "ubuntu-updated",
+        "curl-ready",
+        "package-health",
+    ]
+    assert result == {
+        "apt": "recovered_from_approved_bundle",
+        "curl": "ready",
+        "package_index_refreshed": True,
+        "package_upgrade_completed": True,
+        "dpkg_audit_clean": True,
+        "apt_check_clean": True,
+        "reboot_required": True,
+    }
+
+
+def test_controlled_ubuntu_update_refreshes_and_upgrades_without_full_upgrade(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    reboot_marker = tmp_path / "reboot-required"
+    reboot_marker.write_text("restart required", encoding="utf-8")
+    monkeypatch.setattr(host_bootstrap, "REBOOT_REQUIRED", reboot_marker)
+    monkeypatch.setattr(
+        host_bootstrap,
+        "_run",
+        lambda command, **_kwargs: calls.append(command) or SimpleNamespace(stdout=""),
+    )
+    monkeypatch.setattr(host_bootstrap, "_validate_package_manager_health", lambda: None)
+
+    result = host_bootstrap._apply_controlled_ubuntu_updates()
+
+    assert calls[0][-1] == "update"
+    assert calls[1][-2:] == ["--with-new-pkgs", "upgrade"]
+    combined = " ".join(part for call in calls for part in call)
+    assert "dist-upgrade" not in combined
+    assert "full-upgrade" not in combined
+    assert result["reboot_required"] is True
+    assert result["package_upgrade_completed"] is True
 
 
 def test_preclaim_readiness_failure_happens_before_authority_read_or_state_mutation() -> None:

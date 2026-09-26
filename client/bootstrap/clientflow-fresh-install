@@ -69,6 +69,12 @@ PREACTIVATION_GUI_UNIT = Path("/etc/systemd/system/clientflow-preactivation-gui.
 PREACTIVATION_GUI_SERVICE = "clientflow-preactivation-gui.service"
 SYSTEM_PYTHON = Path("/usr/bin/python3")
 FIRST_CLAIM_REJECTED_EXIT = 20
+APPROVAL_READINESS_ENDPOINT = "/api/client-auth/approval-readiness"
+STATUS_CREDENTIAL = Path("/etc/clientflow/credentials/status.json")
+BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
+REBOOT_REQUIRED_PATH = Path("/var/run/reboot-required")
+APT_GET = Path("/usr/bin/apt-get")
+DPKG = Path("/usr/bin/dpkg")
 BOOTSTRAP_LAUNCHERS = (
     Path("/usr/local/bin/clientflow-open-factory-prepare"),
     Path("/usr/local/bin/clientflow-open-customer-activation"),
@@ -896,6 +902,120 @@ def _cleanup_completed_bootstrap() -> None:
             # Never broaden cleanup to unknown files/directories.
             pass
 
+
+def _secure_root_json(path: Path, *, max_bytes: int = MAX_JSON_BYTES) -> dict[str, object]:
+    try:
+        meta = path.lstat()
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Canonical root-state mangler: {path}") from exc
+    if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode):
+        raise RuntimeError(f"Canonical root-state er ikke en reel fil: {path}")
+    if meta.st_uid != 0 or (meta.st_mode & 0o077):
+        raise RuntimeError(f"Canonical root-state har usikre ownership/permissions: {path}")
+    raw = path.read_bytes()
+    if len(raw) > max_bytes:
+        raise RuntimeError(f"Canonical root-state er for stor: {path}")
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Canonical root-state er ugyldig JSON: {path}") from exc
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Canonical root-state skal være et JSON-objekt: {path}")
+    return value
+
+
+def _current_boot_id() -> str:
+    try:
+        value = BOOT_ID_PATH.read_text(encoding="ascii").strip()
+    except OSError as exc:
+        raise RuntimeError("Kan ikke læse kernel boot-id") from exc
+    if not re.fullmatch(r"[0-9a-f-]{36}", value):
+        raise RuntimeError("Kernel boot-id har ugyldigt format")
+    return value
+
+
+def _post_reboot_package_manager_healthy() -> bool:
+    if REBOOT_REQUIRED_PATH.exists():
+        return False
+    audit = subprocess.run(
+        [str(DPKG), "--audit"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=120,
+        check=False,
+    )
+    if audit.returncode != 0 or (audit.stdout or "").strip():
+        return False
+    check = subprocess.run(
+        [str(APT_GET), "-o", "DPkg::Lock::Timeout=120", "check"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=180,
+        check=False,
+    )
+    return check.returncode == 0
+
+
+def _preactivation_gui_active() -> bool:
+    result = subprocess.run(
+        [str(SYSTEMCTL), "is-active", PREACTIVATION_GUI_SERVICE],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "active"
+
+
+def _publish_post_reboot_approval_readiness(state: dict[str, object]) -> None:
+    preclaim_boot_id = str(state.get("preclaim_boot_id") or "").strip()
+    preclaim = state.get("preclaim_host_readiness")
+    if not re.fullmatch(r"[0-9a-f-]{36}", preclaim_boot_id):
+        raise RuntimeError("Pending install-state mangler gyldigt preclaim boot-id")
+    if not isinstance(preclaim, dict):
+        raise RuntimeError("Pending install-state mangler preclaim host-readiness")
+    required_preclaim = (
+        "package_index_refreshed",
+        "package_upgrade_completed",
+        "dpkg_audit_clean",
+        "apt_check_clean",
+    )
+    if any(preclaim.get(key) is not True for key in required_preclaim):
+        raise RuntimeError("Preclaim Ubuntu update/readiness er ikke dokumenteret som gennemført")
+
+    boot_id = _current_boot_id()
+    if boot_id == preclaim_boot_id:
+        raise RuntimeError("Post-reboot approval-readiness afventer den kontrollerede reboot")
+    if _canonical_kiosk_session() is None:
+        raise RuntimeError("Post-reboot approval-readiness afventer canonical kiosk Wayland-session")
+    if not _preactivation_gui_active():
+        raise RuntimeError("Post-reboot approval-readiness afventer synlig preactivation-GUI")
+    if not _post_reboot_package_manager_healthy():
+        raise RuntimeError("Post-reboot Ubuntu package-state er ikke klar eller kræver endnu en reboot")
+
+    credential = _secure_root_json(STATUS_CREDENTIAL)
+    if credential.get("schema_version") != 1 or credential.get("domain") != "status":
+        raise RuntimeError("Status credential kan ikke bruges til approval-readiness")
+    body = {
+        "client_id": int(credential.get("client_id") or 0),
+        "credential_id": str(credential.get("credential_id") or ""),
+        "client_secret": str(credential.get("client_secret") or ""),
+        "preclaim_boot_id": preclaim_boot_id,
+        "boot_id": boot_id,
+        "kiosk_session_ready": True,
+        "preactivation_gui_ready": True,
+        "package_manager_healthy": True,
+        "post_reboot_reboot_required": False,
+    }
+    with _post_json(APPROVAL_READINESS_ENDPOINT, body, timeout=30) as response:
+        result = _read_json_response(response)
+    if result.get("approval_ready") is not True or int(result.get("client_id") or 0) != body["client_id"]:
+        raise RuntimeError("Backend kvitterede ikke gyldigt for post-reboot approval-readiness")
+
+
 def _activation_wait() -> int:
     require_root()
     print("ClientFlow afventer backend-godkendelse og aktiverer automatisk, når approval-proof er gyldigt.")
@@ -922,6 +1042,13 @@ def _activation_wait() -> int:
             return 1
         if _canonical_kiosk_session() is None:
             print("ClientFlow afventer canonical clientflow-kiosk Wayland-session.")
+            time.sleep(10)
+            continue
+        try:
+            _publish_post_reboot_approval_readiness(state)
+        except Exception as exc:
+            _ensure_preactivation_gui_started()
+            print(f"ClientFlow afventer post-reboot approval-readiness: {exc}", file=sys.stderr)
             time.sleep(10)
             continue
         try:

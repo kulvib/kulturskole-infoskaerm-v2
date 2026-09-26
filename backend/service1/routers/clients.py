@@ -45,6 +45,7 @@ from ..system_control import (
 )
 from ..terminal_v2_models import TerminalClient, TerminalCredential
 from ..remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
+from ..client_domain_models import ClientDomainStatus
 from ..season_service import (
     SeasonValidationError,
     apply_standard_times_to_existing_markings,
@@ -1200,6 +1201,34 @@ def _apply_system_projection_for_read(
         _set_runtime_read_attr(client, target_key, local.get(source_key))
 
 
+def _approval_readiness_from_status_row(status_row) -> tuple[Optional[datetime], Optional[str]]:
+    if status_row is None or str(getattr(status_row, "observed_state", "") or "") != "approval_ready":
+        return None, None
+    payload = getattr(status_row, "status_payload", None)
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        return None, None
+    required = (
+        "kiosk_session_ready",
+        "preactivation_gui_ready",
+        "package_manager_healthy",
+    )
+    if any(payload.get(key) is not True for key in required):
+        return None, None
+    if payload.get("post_reboot_reboot_required") is not False:
+        return None, None
+    boot_id = str(payload.get("boot_id") or "").strip()
+    preclaim_boot_id = str(payload.get("preclaim_boot_id") or "").strip()
+    if not boot_id or not preclaim_boot_id or boot_id == preclaim_boot_id:
+        return None, None
+    return getattr(status_row, "reported_at", None), boot_id
+
+
+def _apply_approval_readiness_projection(client: Client, status_row) -> None:
+    ready_at, boot_id = _approval_readiness_from_status_row(status_row)
+    _set_runtime_read_attr(client, "approval_ready_at", ready_at)
+    _set_runtime_read_attr(client, "approval_ready_boot_id", boot_id)
+
+
 def _prepare_single_client_read_from_loaded_presence(
     session,
     client: Client,
@@ -1215,6 +1244,7 @@ def _prepare_single_client_read_from_loaded_presence(
     if client.id is None:
         return client
     client_id = int(client.id)
+    _apply_approval_readiness_projection(client, status_rows.get((client_id, "status")))
     display_projection = display_read_projections(
         session,
         [client_id],
@@ -1278,6 +1308,7 @@ def _prepare_clients_read(session, clients: List[Client]) -> List[Client]:
             continue
         client_id = int(client.id)
         presence = presences[client_id]
+        _apply_approval_readiness_projection(client, status_rows.get((client_id, "status")))
         _apply_display_projection_for_read(
             session,
             client,
@@ -2699,6 +2730,23 @@ async def approve_client(
         raise HTTPException(status_code=404, detail="Client not found")
     if _client_is_deleted(client):
         raise HTTPException(status_code=400, detail="Klienten ligger i papirkurven og skal gendannes før godkendelse")
+    # Fresh V2 enrollments are not approval-eligible until the installed host
+    # has rebooted into the canonical kiosk session and authenticated its
+    # post-reboot readiness proof. Legacy/non-enrollment rows keep their
+    # existing administrative lifecycle for backwards compatibility.
+    if str(client.status or "").lower() != "approved" and client.enrollment_token_id is not None:
+        readiness_row = session.exec(
+            select(ClientDomainStatus).where(
+                ClientDomainStatus.client_id == id,
+                ClientDomainStatus.domain == "status",
+            )
+        ).one_or_none()
+        ready_at, _ready_boot_id = _approval_readiness_from_status_row(readiness_row)
+        if ready_at is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Klienten afventer post-reboot readiness og kan ikke godkendes endnu",
+            )
 
     status_before = client.status
     organization_before = client.organization_id

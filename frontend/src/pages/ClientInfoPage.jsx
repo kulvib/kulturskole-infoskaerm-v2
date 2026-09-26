@@ -1772,6 +1772,7 @@ export default function ClientInfoPage() {
                       );
                       const isApproving = approvingClientId === client.id;
                       const isRemoving = removingClientId === client.id;
+                      const isApprovalReady = Boolean(client.approval_ready_at);
 
                       return (
                         <TableRow key={client.id} hover>
@@ -1988,13 +1989,22 @@ export default function ClientInfoPage() {
                                 )
                               }
                               onClick={() => handleApproveClient(client.id)}
-                              disabled={isApproving || isRemoving}
+                              disabled={isApproving || isRemoving || !isApprovalReady}
+                              title={
+                                isApprovalReady
+                                  ? "Godkend klient"
+                                  : "Afventer post-reboot readiness fra klienten"
+                              }
                               sx={{
                                 minWidth: 44,
                                 fontSize: { xs: "0.97em", sm: "0.875rem" },
                               }}
                             >
-                              {isApproving ? "Godkender..." : "Godkend"}
+                              {isApproving
+                                ? "Godkender..."
+                                : isApprovalReady
+                                  ? "Godkend"
+                                  : "Afventer reboot"}
                             </Button>
                           </TableCell>
                           <TableCell align="center">
