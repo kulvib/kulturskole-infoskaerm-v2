@@ -154,11 +154,165 @@ systemctl --no-pager --full status \
   2>/dev/null || true
 CLIENTFLOW_CMD`;
 
+const DISPLAY_BROWSER_DIAGNOSTICS_COMMAND = `cat <<'CLIENTFLOW_CMD' | sudo bash
+set -u
+
+echo "== Display/browser services =="
+systemctl --no-pager --full status \
+  clientflow-display-agent.service \
+  clientflow-display-runtime.service \
+  clientflow-browser-guard.service \
+  2>/dev/null || true
+
+echo
+echo "== Canonical Display state =="
+for f in \
+  /var/lib/clientflow/display-runtime/configuration.json \
+  /var/lib/clientflow/display-runtime/runtime-status.json \
+  /var/lib/clientflow/display-runtime/local-gui-status.json; do
+  echo "--- $f"
+  if [[ -r "$f" ]]; then
+    python3 -m json.tool "$f" 2>/dev/null || cat "$f" 2>/dev/null || true
+  else
+    echo "Ikke tilgængelig"
+  fi
+done
+
+echo
+echo "== Installeret browser =="
+if command -v google-chrome-stable >/dev/null 2>&1; then
+  google-chrome-stable --version || true
+elif command -v google-chrome >/dev/null 2>&1; then
+  google-chrome --version || true
+elif command -v chromium >/dev/null 2>&1; then
+  chromium --version || true
+else
+  echo "Ingen understøttet Chrome/Chromium-binær fundet i PATH"
+fi
+
+echo
+echo "== Browserprocesser =="
+pgrep -af 'google-chrome|chrome|chromium' || echo "Ingen browserprocesser fundet"
+CLIENTFLOW_CMD`;
+
+const RELEASE_UPDATER_DIAGNOSTICS_COMMAND = `cat <<'CLIENTFLOW_CMD' | sudo bash
+set -u
+
+echo "== Aktiv ClientFlow-release =="
+readlink -f /opt/clientflow/active 2>/dev/null || true
+cat /opt/clientflow/active/VERSION 2>/dev/null || true
+
+echo
+echo "== Updater =="
+systemctl is-enabled clientflow-updater.timer 2>/dev/null || true
+systemctl is-active clientflow-updater.timer 2>/dev/null || true
+systemctl --no-pager --full status clientflow-updater.timer clientflow-updater.service 2>/dev/null || true
+
+echo
+echo "== Seneste updater-log =="
+journalctl -u clientflow-updater.service -n 120 --no-pager -l 2>/dev/null || true
+CLIENTFLOW_CMD`;
+
+const UBUNTU_APT_HEALTH_COMMAND = `cat <<'CLIENTFLOW_CMD' | sudo bash
+set -u
+
+echo "== Ubuntu / APT health =="
+if [[ -r /etc/os-release ]]; then
+  . /etc/os-release
+  echo "OS: \${PRETTY_NAME:-ukendt}"
+fi
+uname -r
+
+echo
+echo "== dpkg audit =="
+dpkg --audit || true
+
+echo
+echo "== apt check =="
+apt-get -o Debug::NoLocking=1 check || true
+
+echo
+echo "== Reboot required =="
+if [[ -e /var/run/reboot-required ]]; then
+  echo "JA"
+  cat /var/run/reboot-required 2>/dev/null || true
+  if [[ -r /var/run/reboot-required.pkgs ]]; then
+    echo "Pakker:"
+    cat /var/run/reboot-required.pkgs || true
+  fi
+else
+  echo "NEJ"
+fi
+
+echo
+echo "== APT/dpkg processer =="
+ps -eo pid,comm,args | awk '$2 ~ /^(apt|apt-get|dpkg|unattended-upgrade)$/ {print}' || true
+CLIENTFLOW_CMD`;
+
+const SYSTEM_RESOURCES_DIAGNOSTICS_COMMAND = `cat <<'CLIENTFLOW_CMD'
+echo "== Disk =="
+df -hT
+
+echo
+echo "== RAM =="
+free -h
+
+echo
+echo "== Oppetid / load =="
+uptime
+CLIENTFLOW_CMD`;
+
+const NETWORK_TIME_DIAGNOSTICS_COMMAND = `cat <<'CLIENTFLOW_CMD' | sudo bash
+set -u
+
+echo "== Netværk =="
+nmcli device status 2>/dev/null || true
+ip -br addr || true
+ip route || true
+
+echo
+echo "== DNS =="
+resolvectl status 2>/dev/null || true
+
+echo
+echo "== Tid / NTP =="
+timedatectl status 2>/dev/null || true
+systemctl is-active systemd-timesyncd.service 2>/dev/null || true
+
+echo
+echo "== Backend reachability =="
+if [[ -r /etc/clientflow/clientflow.env ]]; then
+  set -a
+  . /etc/clientflow/clientflow.env
+  set +a
+fi
+python3 - <<'PY'
+import os
+from urllib.parse import urlparse
+url = os.environ.get("CLIENTFLOW_BASE_URL", "")
+host = urlparse(url).hostname or ""
+print("Backend URL:", url or "ikke konfigureret")
+print("Backend host:", host or "ikke konfigureret")
+if host:
+    import socket
+    try:
+        addresses = sorted({item[4][0] for item in socket.getaddrinfo(host, None)})
+        print("DNS adresser:", ", ".join(addresses))
+    except Exception as exc:
+        print("DNS opslag fejlede:", exc)
+PY
+if [[ -n "\${CLIENTFLOW_BASE_URL:-}" ]]; then
+  curl -fsS -m 10 "\${CLIENTFLOW_BASE_URL%/}/health" 2>/dev/null || echo "Backend /health svarer ikke"
+fi
+CLIENTFLOW_CMD`;
+
 const SUPPORT_COMMAND_GROUPS = [
   {
     title: "Canonical runtime",
     commands: [
       { label: "ClientFlow samlet status", command: CLIENTFLOW_CANONICAL_STATUS_COMMAND, adminOnly: true },
+      { label: "Display / kiosk browser", command: DISPLAY_BROWSER_DIAGNOSTICS_COMMAND, adminOnly: true },
+      { label: "Aktiv release / updater", command: RELEASE_UPDATER_DIAGNOSTICS_COMMAND, adminOnly: true },
       { label: "Livestream v2 status", command: LIVESTREAM_CANONICAL_STATUS_COMMAND, adminOnly: true },
       { label: "Terminal status", command: TERMINAL_CANONICAL_STATUS_COMMAND, adminOnly: true },
       { label: "Remote Desktop status", command: REMOTE_DESKTOP_CANONICAL_STATUS_COMMAND, adminOnly: true },
@@ -166,12 +320,21 @@ const SUPPORT_COMMAND_GROUPS = [
     ],
   },
   {
+    title: "Ubuntu og host",
+    commands: [
+      { label: "Ubuntu / APT health", command: UBUNTU_APT_HEALTH_COMMAND, adminOnly: true },
+      { label: "Disk, RAM og oppetid", command: SYSTEM_RESOURCES_DIAGNOSTICS_COMMAND },
+      { label: "Netværk, DNS, tid og backend", command: NETWORK_TIME_DIAGNOSTICS_COMMAND, adminOnly: true },
+    ],
+  },
+  {
     title: "Logs",
     commands: [
-      { label: "Status/System logs", command: "journalctl -u clientflow-status-agent.service -u clientflow-system-agent.service -n 220 --no-pager -l" },
-      { label: "Livestream logs", command: "journalctl -u clientflow-livestream-agent.service -u clientflow-livestream-broker.service -u clientflow-livestream-producer.service -u clientflow-livestream-uploader.service -n 240 --no-pager -l" },
-      { label: "Terminal logs", command: "journalctl -u clientflow-terminal-agent.service -u clientflow-standard-terminal-broker.service -u clientflow-root-terminal-broker.service -n 220 --no-pager -l" },
-      { label: "Remote Desktop logs", command: "journalctl -u clientflow-remote-desktop-agent.service -u clientflow-remote-desktop-capture.service -u clientflow-remote-desktop-input-broker.service -n 220 --no-pager -l" },
+      { label: "Display/browser logs", command: "journalctl -u clientflow-display-agent.service -u clientflow-display-runtime.service -u clientflow-browser-guard.service -n 240 --no-pager -l", adminOnly: true },
+      { label: "Status/System logs", command: "journalctl -u clientflow-status-agent.service -u clientflow-system-agent.service -n 220 --no-pager -l", adminOnly: true },
+      { label: "Livestream logs", command: "journalctl -u clientflow-livestream-agent.service -u clientflow-livestream-broker.service -u clientflow-livestream-producer.service -u clientflow-livestream-uploader.service -n 240 --no-pager -l", adminOnly: true },
+      { label: "Terminal logs", command: "journalctl -u clientflow-terminal-agent.service -u clientflow-standard-terminal-broker.service -u clientflow-root-terminal-broker.service -n 220 --no-pager -l", adminOnly: true },
+      { label: "Remote Desktop logs", command: "journalctl -u clientflow-remote-desktop-agent.service -u clientflow-remote-desktop-capture.service -u clientflow-remote-desktop-input-broker.service -n 220 --no-pager -l", adminOnly: true },
     ],
   },
 ];
@@ -744,6 +907,13 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
     openPtyRef.current?.();
   }, []);
 
+  const adminOpenDisabled = !connected || !agentConnected || ptyReady || (!adminStepUpReady && !adminPassword);
+  const handleAdminPasswordKeyDown = React.useCallback((event) => {
+    if (event.key !== "Enter" || event.isComposing || adminOpenDisabled) return;
+    event.preventDefault();
+    openAdminTerminal();
+  }, [adminOpenDisabled, openAdminTerminal]);
+
   const isAdminMode = mode === "admin";
   const terminalDisabled = !connected || !agentConnected || !ptyReady;
   const clientName = client?.name || client?.client_name || client?.hostname || client?.display_name || client?.id || "Ukendt klient";
@@ -945,6 +1115,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
                       autoComplete="current-password"
                       value={adminPassword}
                       onChange={handleAdminPasswordChange}
+                      onKeyDown={handleAdminPasswordKeyDown}
                       label="Bekræft din adgangskode"
                       helperText="Kræves ved første Admin-terminal og igen efter 10 minutter. Gemmes ikke."
                       inputProps={{ maxLength: 512 }}
@@ -958,7 +1129,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
                   <Button
                     variant="contained"
                     onClick={openAdminTerminal}
-                    disabled={!connected || !agentConnected || ptyReady || (!adminStepUpReady && !adminPassword)}
+                    disabled={adminOpenDisabled}
                     sx={{ minWidth: { md: 190 }, whiteSpace: "nowrap", alignSelf: { md: "flex-start" } }}
                   >
                     Åbn Admin-terminal
