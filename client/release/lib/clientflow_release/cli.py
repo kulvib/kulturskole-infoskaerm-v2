@@ -798,12 +798,20 @@ def install_fresh(args: argparse.Namespace) -> dict:
     # one-time enrollment authorities are read. The network preflight is
     # read-only except for the separately completed host prerequisite repair.
     bootstrap_network_connection = stored_bootstrap_network
+    preclaim_host_readiness: dict[str, object] | None = None
+    preclaim_boot_id: str | None = None
     if layout.root == Path("/"):
         print("[INSTALL] Preclaim host-readiness...", flush=True)
-        ensure_preclaim_host_readiness(
+        preclaim_host_readiness = ensure_preclaim_host_readiness(
             args.bundle,
             expected_bundle_sha256=approved_bundle_sha256,
         )
+        try:
+            preclaim_boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+        except OSError as exc:
+            raise RuntimeError("Fresh install kan ikke læse kernel boot-id før reboot") from exc
+        if not re.fullmatch(r"[0-9a-f-]{36}", preclaim_boot_id):
+            raise RuntimeError("Fresh install modtog ugyldigt kernel boot-id før reboot")
         print("[INSTALL] Kontrollerer netværk og ClientFlow-backend...", flush=True)
         network_preflight = ensure_preclaim_network_readiness(
             backend_url,
@@ -822,6 +830,10 @@ def install_fresh(args: argparse.Namespace) -> dict:
 
     if not new_install:
         assert install_state is not None
+        if layout.root == Path("/") and preclaim_host_readiness is not None and preclaim_boot_id is not None:
+            install_state["preclaim_host_readiness"] = preclaim_host_readiness
+            install_state.setdefault("preclaim_boot_id", preclaim_boot_id)
+            atomic_write_json(state_path, install_state, mode=0o600)
         # Fresh-install resume owns only the pre-activation lifecycle.  The
         # durable release transaction + active symlink become authoritative as
         # soon as local activation starts.  Reject that state before
@@ -876,6 +888,8 @@ def install_fresh(args: argparse.Namespace) -> dict:
             "client_name": client_name,
             "locality": locality,
             "bootstrap_network_connection": bootstrap_network_connection,
+            "preclaim_boot_id": preclaim_boot_id,
+            "preclaim_host_readiness": preclaim_host_readiness,
             # Exact pre-ClientFlow Ubuntu user.  This is lifecycle metadata, not
             # a credential, and is removed only after healthy first activation.
             "bootstrap_user": (

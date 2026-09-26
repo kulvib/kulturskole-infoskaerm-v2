@@ -26,6 +26,7 @@ APT_GET = Path("/usr/bin/apt-get")
 CURL = Path("/usr/bin/curl")
 DPKG = Path("/usr/bin/dpkg")
 DPKG_DEB = Path("/usr/bin/dpkg-deb")
+REBOOT_REQUIRED = Path("/var/run/reboot-required")
 
 
 def _run(
@@ -324,6 +325,75 @@ def _recover_apt_from_bundle(bundle: Path, *, expected_bundle_sha256: str) -> No
         handle.close()
 
 
+def _validate_package_manager_health() -> None:
+    audit = subprocess.run(
+        [str(DPKG), "--audit"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=120,
+        check=False,
+        env={
+            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "LANG": "C.UTF-8",
+            "DEBIAN_FRONTEND": "noninteractive",
+        },
+    )
+    if audit.returncode != 0 or (audit.stdout or "").strip():
+        raise HostBootstrapError(
+            "dpkg --audit rapporterer en ufuldstændig package-state:\n"
+            + (audit.stdout or "")[-4000:]
+        )
+    _run(
+        [str(APT_GET), "-o", "DPkg::Lock::Timeout=120", "check"],
+        timeout=180,
+        visible=False,
+    )
+
+
+def _apply_controlled_ubuntu_updates() -> dict[str, object]:
+    """Bring the supported Ubuntu host current without allowing removals.
+
+    Fresh ClientFlow releases remain immutable; this step owns only the Ubuntu
+    package layer.  ``upgrade --with-new-pkgs`` may install dependencies needed
+    by security updates but does not use dist/full-upgrade semantics that can
+    remove packages.
+    """
+    print("[INSTALL] Opdaterer Ubuntu package-index...", flush=True)
+    _run(
+        [str(APT_GET), "-o", "DPkg::Lock::Timeout=120", "update"],
+        timeout=600,
+        visible=True,
+    )
+    print("[INSTALL] Installerer tilgængelige Ubuntu-opdateringer uden package-removal...", flush=True)
+    _run(
+        [
+            str(APT_GET),
+            "-o",
+            "DPkg::Lock::Timeout=120",
+            "-y",
+            "--with-new-pkgs",
+            "upgrade",
+        ],
+        timeout=1800,
+        visible=True,
+    )
+    _validate_package_manager_health()
+    reboot_required = REBOOT_REQUIRED.is_file()
+    print(
+        "[OK] Ubuntu package-state er sund"
+        + ("; reboot-required håndteres af den kontrollerede ClientFlow-reboot." if reboot_required else "."),
+        flush=True,
+    )
+    return {
+        "package_index_refreshed": True,
+        "package_upgrade_completed": True,
+        "dpkg_audit_clean": True,
+        "apt_check_clean": True,
+        "reboot_required": reboot_required,
+    }
+
+
 def _ensure_curl() -> None:
     if _binary_works(CURL, "--version"):
         return
@@ -348,7 +418,7 @@ def _ensure_curl() -> None:
         raise HostBootstrapError("curl kunne ikke etableres automatisk via canonical Ubuntu APT")
 
 
-def ensure_preclaim_host_readiness(bundle: Path, *, expected_bundle_sha256: str) -> dict[str, str]:
+def ensure_preclaim_host_readiness(bundle: Path, *, expected_bundle_sha256: str) -> dict[str, object]:
     """Establish the non-ClientFlow host prerequisites before enrollment can be consumed."""
     if os.geteuid() != 0:
         raise HostBootstrapError("Preclaim host-bootstrap kræver root")
@@ -359,10 +429,12 @@ def ensure_preclaim_host_readiness(bundle: Path, *, expected_bundle_sha256: str)
         print("[INSTALL] APT kræver recovery; installer-output vises direkte nedenfor.", flush=True)
         _recover_apt_from_bundle(bundle, expected_bundle_sha256=expected_bundle_sha256)
         apt_state = "recovered_from_approved_bundle"
+    update_state = _apply_controlled_ubuntu_updates()
     if not _binary_works(CURL, "--version"):
         print("[INSTALL] curl mangler; almindelig apt-output vises under installationen.", flush=True)
     _ensure_curl()
+    _validate_package_manager_health()
     if not _binary_works(APT_GET, "--version") or not _binary_works(CURL, "--version"):
         raise HostBootstrapError("Preclaim host-readiness kunne ikke bevises fail-closed")
     print(f"[OK] Host-prerequisites er klar (apt={apt_state}, curl=ready).", flush=True)
-    return {"apt": apt_state, "curl": "ready"}
+    return {"apt": apt_state, "curl": "ready", **update_state}

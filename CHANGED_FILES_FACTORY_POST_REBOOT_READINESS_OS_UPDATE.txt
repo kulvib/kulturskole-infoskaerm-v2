@@ -1,0 +1,14 @@
+SHA256SUMS.txt
+FACTORY_POST_REBOOT_READINESS_OS_UPDATE_CLOSURE.md
+CHANGED_FILES_FACTORY_POST_REBOOT_READINESS_OS_UPDATE.txt
+DELETE_FILES_FACTORY_POST_REBOOT_READINESS_OS_UPDATE.txt
+backend/service1/models.py
+backend/service1/routers/client_auth_compat.py
+backend/service1/routers/clients.py
+backend/tests/test_clientflow_claim_operational_http_integration.py
+client/bootstrap/clientflow-fresh-install
+client/release/lib/clientflow_release/cli.py
+client/release/lib/clientflow_release/host_bootstrap.py
+frontend/src/pages/ClientInfoPage.jsx
+scripts/tests/test_clientflow_preclaim_host_readiness.py
+scripts/tests/test_clientflow_post_reboot_approval_readiness.py

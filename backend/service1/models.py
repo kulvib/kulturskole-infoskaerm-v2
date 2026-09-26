@@ -400,6 +400,8 @@ class ClientControlRoomListRead(ClientBase):
     presence: ClientPresenceRead = Field(default_factory=ClientPresenceRead)
     sort_order: Optional[int] = None
     created_at: Optional[datetime] = None
+    approval_ready_at: Optional[datetime] = None
+    approval_ready_boot_id: Optional[str] = None
     chrome_step: Optional[str] = None
     display_power: Optional[str] = None
     pending_chrome_action: Optional[ChromeAction] = ChromeAction.NONE
@@ -441,6 +443,8 @@ class ClientRead(ClientBase):
     ubuntu_version: Optional[str] = None
     uptime: Optional[str] = None
     created_at: Optional[datetime] = None
+    approval_ready_at: Optional[datetime] = None
+    approval_ready_boot_id: Optional[str] = None
     chrome_status: Optional[str] = "unknown"
     chrome_last_updated: Optional[datetime] = None
     pending_reboot: Optional[bool] = False

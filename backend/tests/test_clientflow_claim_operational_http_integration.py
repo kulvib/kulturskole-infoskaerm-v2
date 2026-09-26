@@ -467,8 +467,35 @@ def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed
     )
     assert pending_update.status_code == 401, pending_update.text
 
-    # 5. Backend approval enables those exact same six identities; no rotation/reprovisioning occurs.
+    # 5. Fresh V2 enrollment is not approval-eligible until the installed host
+    # has authenticated a post-reboot readiness proof with its pending Status credential.
     kiosk_url = "https://infoskaerm.example.test/client/42"
+    too_early = http.post(
+        f"/api/clients/{client_id}/approve",
+        json={"kiosk_url": kiosk_url},
+    )
+    assert too_early.status_code == 409, too_early.text
+
+    readiness_base = {
+        "client_id": client_id,
+        "credential_id": credential_ids["status"],
+        "client_secret": secrets_by_domain["status"],
+        "preclaim_boot_id": "11111111-1111-4111-8111-111111111111",
+        "boot_id": "11111111-1111-4111-8111-111111111111",
+        "kiosk_session_ready": True,
+        "preactivation_gui_ready": True,
+        "package_manager_healthy": True,
+        "post_reboot_reboot_required": False,
+    }
+    same_boot = http.post("/api/client-auth/approval-readiness", json=readiness_base)
+    assert same_boot.status_code == 409, same_boot.text
+
+    readiness = dict(readiness_base)
+    readiness["boot_id"] = "22222222-2222-4222-8222-222222222222"
+    ready = http.post("/api/client-auth/approval-readiness", json=readiness)
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["approval_ready"] is True
+
     approved = http.post(
         f"/api/clients/{client_id}/approve",
         json={"kiosk_url": kiosk_url},
