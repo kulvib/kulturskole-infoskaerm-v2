@@ -24,6 +24,20 @@ def _load_common():
     return module
 
 
+def _pretend_accountsservice_record_is_root_owned(
+    module, monkeypatch: pytest.MonkeyPatch, record: Path
+) -> None:
+    real_lstat = module.Path.lstat
+
+    def lstat_with_root_owner(path: Path):
+        meta = real_lstat(path)
+        if path == record:
+            return SimpleNamespace(st_mode=meta.st_mode, st_uid=0)
+        return meta
+
+    monkeypatch.setattr(module.Path, "lstat", lstat_with_root_owner)
+
+
 def test_sudo_rs_activation_capability_is_exact_no_args_without_digest() -> None:
     source = COMMON.read_text(encoding="utf-8")
     fn = source[
@@ -279,6 +293,7 @@ def test_factory_bootstrap_user_accountsservice_record_is_hidden_and_preserves_o
     monkeypatch.setattr(module, "require_root", lambda: None)
     monkeypatch.setattr(module, "validate_local_user", lambda candidate: candidate)
     monkeypatch.setattr(module.os, "fchown", lambda *_args, **_kwargs: None)
+    _pretend_accountsservice_record_is_root_owned(module, monkeypatch, record)
 
     module.prepare_factory_bootstrap_user_hidden(username)
 
@@ -303,6 +318,7 @@ def test_factory_bootstrap_user_validation_fails_closed_if_still_visible(
 
     monkeypatch.setattr(module, "ACCOUNTS_SERVICE_ROOT", accounts_root)
     monkeypatch.setattr(module, "validate_local_user", lambda candidate: candidate)
+    _pretend_accountsservice_record_is_root_owned(module, monkeypatch, record)
 
     with pytest.raises(module.BootstrapError, match="stadig synlig"):
         module.validate_factory_bootstrap_user_hidden(username)
