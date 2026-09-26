@@ -1765,25 +1765,21 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
   const { user } = useAuth();
   const role = user?.role || "";
   const isSuperadmin = role === "superadmin";
-  const isAdministrator = role === "admin";
-  const isBruger = role === "bruger";
-  const isViewer = role === "viewer";
   const canEditKioskUrlAndLocality = ["superadmin", "admin", "bruger"].includes(role);
   const canEditBrowserMaintenance = canEditKioskUrlAndLocality;
   const canEditClientName = isSuperadmin;
   const canChangeOrganization = isSuperadmin;
-  const canViewSecuritySection = isSuperadmin || isViewer;
-  const canViewLocalManagementSection = isSuperadmin || isViewer;
+  const canViewSecuritySection = ["superadmin", "admin", "viewer"].includes(role);
+  const canViewLocalManagementSection = isSuperadmin || role === "viewer";
   const { organizations, loading, error } = useOrganizationsList(canChangeOrganization);
 
-  const initialForm = React.useMemo(
-    () => getConfigFormFromClient(client),
-    [client]
-  );
+  const initialForm = React.useMemo(() => getConfigFormFromClient(client), [client]);
   const [form, setForm] = React.useState(initialForm);
-  const [saving, setSaving] = React.useState(false);
+  const [savingDomain, setSavingDomain] = React.useState("");
   const [resetConfirmOpen, setResetConfirmOpen] = React.useState(false);
   const [resettingBrowser, setResettingBrowser] = React.useState(false);
+  const [organizationConfirmOpen, setOrganizationConfirmOpen] = React.useState(false);
+  const [lockdownConfirmTarget, setLockdownConfirmTarget] = React.useState(null);
   const [cfadminPassword, setCfadminPassword] = React.useState("");
   const [cfadminPasswordRepeat, setCfadminPasswordRepeat] = React.useState("");
   const [savingCfadminPassword, setSavingCfadminPassword] = React.useState(false);
@@ -1793,6 +1789,8 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     setLocalManagementSnapshot((prev) => ({ ...prev, ...pickLocalManagementFields(client) }));
   }, [client]);
 
+  // Local-management lifecycle now arrives on the shared /chrome-status hot read.
+  // The explicit endpoint below is only used by the operator-triggered status refresh.
   const refreshLocalManagement = React.useCallback(async () => {
     if (!client?.id) return null;
     const data = await apiGetClientLocalManagement(client.id);
@@ -1801,163 +1799,164 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     return next;
   }, [client?.id]);
 
-  // Local-management lifecycle now arrives on the shared /chrome-status hot
-  // read. The manual refresh endpoint remains available, but there is no
-  // second 2-second DB polling loop while a local operation is active.
+  const localityDirty = String(form.locality || "").trim() !== String(initialForm.locality || "").trim();
+  const identityDirty = String(form.name || "").trim() !== String(initialForm.name || "").trim();
+  const kioskDirty = (
+    String(form.kiosk_url || "").trim() !== String(initialForm.kiosk_url || "").trim() ||
+    String(form.browser_refresh_interval_sec ?? "").trim() !== String(initialForm.browser_refresh_interval_sec ?? "").trim()
+  );
+  const organizationDirty = String(form.organization_id || "") !== String(initialForm.organization_id || "");
+  const hasDraftChanges = localityDirty || identityDirty || kioskDirty || organizationDirty;
+  const saving = Boolean(savingDomain);
 
-  const rawFormDirty = React.useMemo(() => (
-    form.name !== initialForm.name ||
-    form.locality !== initialForm.locality ||
-    form.kiosk_url !== initialForm.kiosk_url ||
-    String(form.browser_refresh_interval_sec || "") !== String(initialForm.browser_refresh_interval_sec || "") ||
-    form.desktop_lockdown_enabled !== initialForm.desktop_lockdown_enabled ||
-    String(form.organization_id || "") !== String(initialForm.organization_id || "")
-  ), [form, initialForm]);
-
-  // Silent refresh må gerne opdatere statusfelter i Konfiguration, men må ikke
-  // overskrive en bruger, som er i gang med at redigere formularen.
+  // Silent refresh may update runtime/status fields, but must never overwrite an
+  // operator's in-progress draft in one of the explicit configuration domains.
   React.useEffect(() => {
-    if (!rawFormDirty && !saving) {
-      setForm(initialForm);
-    }
-  }, [initialForm, rawFormDirty, saving]);
+    if (!hasDraftChanges && !saving) setForm(initialForm);
+  }, [initialForm, hasDraftChanges, saving]);
 
   const setField = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
   };
-  const setBooleanField = (field) => (event) => {
-    setForm((prev) => ({ ...prev, [field]: event.target.checked }));
-  };
 
-  const getChangedPayload = React.useCallback(() => {
-    const payload = {};
-
-    const nextLocality = String(form.locality || "").trim();
-    const nextKioskUrl = String(form.kiosk_url || "").trim();
-    const refreshRaw = String(form.browser_refresh_interval_sec ?? "").trim();
-
-    if (canEditClientName) {
-      const nextName = String(form.name || "").trim();
-      if (nextName !== initialForm.name) {
-        if (!nextName) throw new Error("Klientnavn må ikke være tomt");
-        payload.name = nextName;
-      }
-    }
-
-    if (canEditKioskUrlAndLocality) {
-      if (nextLocality !== initialForm.locality) payload.locality = nextLocality;
-      if (nextKioskUrl !== initialForm.kiosk_url) {
-        if (!isCanonicalKioskUrl(nextKioskUrl)) {
-          throw new Error("Kiosk URL skal bruge HTTPS. HTTP er kun tilladt til localhost eller 127.0.0.1.");
-        }
-        payload.kiosk_url = nextKioskUrl;
-      }
-      if (refreshRaw !== String(initialForm.browser_refresh_interval_sec ?? "")) {
-        if (!/^\d+$/.test(refreshRaw)) {
-          throw new Error("Browser refresh-interval skal være et helt antal sekunder.");
-        }
-        const refreshSeconds = Number(refreshRaw);
-        if (refreshSeconds !== 0 && (refreshSeconds < 60 || refreshSeconds > 86400)) {
-          throw new Error("Browser refresh-interval skal være 0 eller mellem 60 og 86400 sekunder.");
-        }
-        payload.browser_refresh_interval_sec = refreshSeconds;
-      }
-    }
-
-
-    if (isSuperadmin && form.desktop_lockdown_enabled !== initialForm.desktop_lockdown_enabled) {
-      payload.desktop_lockdown_enabled = !!form.desktop_lockdown_enabled;
-    }
-
-    if (canChangeOrganization && String(form.organization_id || "") !== String(initialForm.organization_id || "")) {
-      const nextOrganizationId = form.organization_id || null;
-      payload.organization_id = nextOrganizationId && /^\d+$/.test(String(nextOrganizationId))
-        ? Number(nextOrganizationId)
-        : nextOrganizationId;
-    }
-
-
-    return payload;
-  }, [form, initialForm, canEditClientName, canEditKioskUrlAndLocality, canChangeOrganization, isSuperadmin]);
-
-  const hasChanges = React.useMemo(() => {
+  const notifySaved = React.useCallback(async (payload) => {
     try {
-      return Object.keys(getChangedPayload()).length > 0;
+      await onSaved?.(payload);
     } catch {
-      return true;
+      // The domain mutation has already succeeded. A refresh failure must not
+      // be reported as if the write itself failed. Header/manual refresh can retry.
     }
-  }, [getChangedPayload]);
+  }, [onSaved]);
 
-  const saveConfigPayload = async (payload, { applyOrganizationStandardTimes = true } = {}) => {
-    if (!client?.id || saving) return;
-
-    const { organization_id: nextOrganizationId, name: nextName, ...regularPayload } = payload;
-    const organizationChanged = Object.prototype.hasOwnProperty.call(payload, "organization_id");
-    const nameChanged = Object.prototype.hasOwnProperty.call(payload, "name");
-
-    setSaving(true);
+  const saveLocality = async () => {
+    if (!client?.id || saving || !localityDirty || !canEditKioskUrlAndLocality) return;
+    const locality = String(form.locality || "").trim();
+    setSavingDomain("locality");
     try {
-      if (nameChanged) {
-        const response = await apiRequestLocalHostnameChange(client.id, nextName);
-        setLocalManagementSnapshot(pickLocalManagementFields(response));
-      }
-
-      if (Object.keys(regularPayload).length > 0) {
-        await apiUpdateClient(client.id, regularPayload);
-      }
-
-      if (organizationChanged) {
-        await apiChangeClientOrganization(client.id, {
-          organization_id: nextOrganizationId,
-          apply_organization_standard_times: applyOrganizationStandardTimes,
-          preserve_manual_times: true,
-        });
-      }
-
-      const message = organizationChanged && applyOrganizationStandardTimes
-        ? "Konfiguration gemt. Organisationens standardtider er anvendt på eksisterende tændte dage."
-        : nameChanged
-          ? "Konfiguration gemt. Lokalt klientnavn sendes til klienten."
-          : "Konfiguration gemt";
-
-      showSnackbar?.({ message, severity: "success" });
-      await onSaved?.(organizationChanged ? { ...payload, organization_id: nextOrganizationId } : payload);
+      await apiUpdateClient(client.id, { locality });
+      showSnackbar?.({ message: "Lokation gemt", severity: "success" });
+      await notifySaved({ locality });
     } catch (err) {
-      showSnackbar?.({ message: `Fejl: ${err?.message || "Kunne ikke gemme konfiguration"}`, severity: "error" });
+      showSnackbar?.({ message: `Fejl: ${err?.message || "Kunne ikke gemme lokation"}`, severity: "error" });
     } finally {
-      setSaving(false);
+      setSavingDomain("");
     }
   };
 
-  const save = async () => {
-    if (!client?.id || saving) return;
-    let payload = {};
+  const saveClientIdentity = async () => {
+    if (!client?.id || saving || !identityDirty || !canEditClientName) return;
+    const name = String(form.name || "").trim();
+    if (!name) {
+      showSnackbar?.({ message: "Fejl: Klientnavn må ikke være tomt", severity: "error" });
+      return;
+    }
+    setSavingDomain("identity");
     try {
-      payload = getChangedPayload();
+      const response = await apiRequestLocalHostnameChange(client.id, name);
+      setLocalManagementSnapshot(pickLocalManagementFields(response));
+      showSnackbar?.({ message: "Nyt klientnavn er sendt til klienten", severity: "success" });
+      await notifySaved({ name });
     } catch (err) {
-      showSnackbar?.({ message: `Fejl: ${err?.message || "Ugyldigt interval"}`, severity: "error" });
-      return;
+      showSnackbar?.({ message: `Fejl: ${err?.message || "Kunne ikke ændre klientnavn"}`, severity: "error" });
+    } finally {
+      setSavingDomain("");
     }
-    if (Object.keys(payload).length === 0) {
-      showSnackbar?.({ message: "Ingen ændringer at gemme", severity: "info" });
-      return;
-    }
-
-    const organizationChanged = Object.prototype.hasOwnProperty.call(payload, "organization_id");
-    await saveConfigPayload(payload, { applyOrganizationStandardTimes: organizationChanged });
   };
 
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    await save();
+  const buildKioskPayload = () => {
+    const kioskUrl = String(form.kiosk_url || "").trim();
+    const refreshRaw = String(form.browser_refresh_interval_sec ?? "").trim();
+    if (!isCanonicalKioskUrl(kioskUrl)) {
+      throw new Error("Kiosk URL skal bruge HTTPS. HTTP er kun tilladt til localhost eller 127.0.0.1.");
+    }
+    if (!/^\d+$/.test(refreshRaw)) {
+      throw new Error("Browser refresh-interval skal være et helt antal sekunder.");
+    }
+    const refreshSeconds = Number(refreshRaw);
+    if (refreshSeconds !== 0 && (refreshSeconds < 60 || refreshSeconds > 86400)) {
+      throw new Error("Browser refresh-interval skal være 0 eller mellem 60 og 86400 sekunder.");
+    }
+    return { kiosk_url: kioskUrl, browser_refresh_interval_sec: refreshSeconds };
   };
 
-  const canResetBrowser = canEditBrowserMaintenance && !!handleClientAction && clientOnline === true && !resettingBrowser;
+  const saveKioskDisplay = async () => {
+    if (!client?.id || saving || !kioskDirty || !canEditKioskUrlAndLocality) return;
+    let payload;
+    try {
+      payload = buildKioskPayload();
+    } catch (err) {
+      showSnackbar?.({ message: `Fejl: ${err?.message || "Ugyldig kioskvisning"}`, severity: "error" });
+      return;
+    }
+    setSavingDomain("kiosk");
+    try {
+      await apiUpdateClient(client.id, payload);
+      showSnackbar?.({ message: "Kioskvisning gemt", severity: "success" });
+      await notifySaved(payload);
+    } catch (err) {
+      showSnackbar?.({ message: `Fejl: ${err?.message || "Kunne ikke gemme kioskvisning"}`, severity: "error" });
+    } finally {
+      setSavingDomain("");
+    }
+  };
+
+  const requestOrganizationChange = () => {
+    if (!client?.id || saving || !organizationDirty || !canChangeOrganization) return;
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    setOrganizationConfirmOpen(true);
+  };
+
+  const confirmOrganizationChange = async () => {
+    if (!client?.id || saving || !organizationDirty || !canChangeOrganization) return;
+    const raw = form.organization_id || null;
+    const organizationId = raw && /^\d+$/.test(String(raw)) ? Number(raw) : raw;
+    setSavingDomain("organization");
+    try {
+      await apiChangeClientOrganization(client.id, {
+        organization_id: organizationId,
+        apply_organization_standard_times: true,
+        preserve_manual_times: true,
+      });
+      setOrganizationConfirmOpen(false);
+      showSnackbar?.({ message: "Klienten er flyttet. Organisationens standardtider er anvendt på eksisterende tændte dage.", severity: "success" });
+      await notifySaved({ organization_id: organizationId });
+    } catch (err) {
+      showSnackbar?.({ message: `Fejl: ${err?.message || "Kunne ikke flytte klienten"}`, severity: "error" });
+    } finally {
+      setSavingDomain("");
+    }
+  };
+
+  const requestLockdownChange = (event) => {
+    if (!isSuperadmin || saving) return;
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    setLockdownConfirmTarget(Boolean(event.target.checked));
+  };
+
+  const confirmLockdownChange = async () => {
+    if (!client?.id || saving || !isSuperadmin || lockdownConfirmTarget === null) return;
+    const desktopLockdownEnabled = Boolean(lockdownConfirmTarget);
+    setSavingDomain("lockdown");
+    try {
+      await apiUpdateClient(client.id, { desktop_lockdown_enabled: desktopLockdownEnabled });
+      setForm((prev) => ({ ...prev, desktop_lockdown_enabled: desktopLockdownEnabled }));
+      setLockdownConfirmTarget(null);
+      showSnackbar?.({
+        message: desktopLockdownEnabled ? "Kiosk lockdown er bestilt og afventer klienten" : "Deaktivering af kiosk lockdown er bestilt og afventer klienten",
+        severity: "success",
+      });
+      await notifySaved({ desktop_lockdown_enabled: desktopLockdownEnabled });
+    } catch (err) {
+      showSnackbar?.({ message: `Fejl: ${err?.message || "Kunne ikke ændre kiosk lockdown"}`, severity: "error" });
+    } finally {
+      setSavingDomain("");
+    }
+  };
+
+  const canResetBrowser = canEditBrowserMaintenance && !!handleClientAction && clientOnline === true && !resettingBrowser && !saving;
 
   const openResetBrowserDialog = () => {
-    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) document.activeElement.blur();
     setResetConfirmOpen(true);
   };
 
@@ -2003,16 +2002,20 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
   };
 
   const refreshConfigNow = async () => {
-    if (typeof onRefresh !== "function" || saving || hasChanges) return;
+    if (typeof onRefresh !== "function" || saving || hasDraftChanges) return;
     try {
       await onRefresh();
     } catch {
-      // Ignorer stille refresh-fejl. Manuel header-refresh kan stadig bruges.
+      // Manual header refresh remains available if a silent refresh fails.
     }
   };
 
-  const resetForm = () => {
-    setForm(initialForm);
+  const resetDomain = (fields) => {
+    setForm((prev) => {
+      const next = { ...prev };
+      fields.forEach((field) => { next[field] = initialForm[field]; });
+      return next;
+    });
   };
 
   const localManagementStatus = normalizeLocalManagementStatus(localManagementSnapshot.status);
@@ -2023,399 +2026,187 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
   const localManagementFlow = buildLocalManagementFlow(localManagementSnapshot);
   const localManagementProgress = getLocalManagementProgress(localManagementStatus);
   const cfadminPasswordsMismatch = !!cfadminPasswordRepeat && cfadminPassword !== cfadminPasswordRepeat;
+  const lockdownStatus = String(client?.desktop_lockdown_status || "").toLowerCase();
+  const lockdownDesired = client?.desktop_lockdown_enabled === true;
+  const lockdownPending = lockdownStatus === "pending" || lockdownStatus === "applying";
 
   const textFieldSx = {
-    "& .MuiInputBase-root": {
-      color: TEXT,
-      background: FIELD_BG,
-      borderRadius: 2,
-    },
+    "& .MuiInputBase-root": { color: TEXT, background: FIELD_BG, borderRadius: 2 },
     "& .MuiInputLabel-root": { color: MUTED },
     "& .MuiOutlinedInput-notchedOutline": { borderColor: BORDER },
     "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: "rgba(125,211,252,0.42)" },
     "& .MuiSelect-icon": { color: MUTED },
   };
+  const sectionSx = { p: 1.35, borderRadius: 2, background: "rgba(15,23,42,0.28)", border: `1px solid ${BORDER}` };
+  const actionRowSx = { mt: 1.15, display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" };
 
   return (
     <>
       <DataPanel
         title="Konfiguration"
-        description="Stamdata, kioskvisning og lokale klientindstillinger samlet i færre sektioner."
+        description="Indstillinger er opdelt efter ansvar og konsekvens. Hver sektion gemmes eller udføres uafhængigt."
         action={onRefresh ? (
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={refreshConfigNow}
-            disabled={saving || hasChanges}
-            sx={{ borderRadius: 999, color: TEXT, borderColor: BORDER }}
-          >
+          <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={refreshConfigNow} disabled={saving || hasDraftChanges} sx={{ borderRadius: 999, color: TEXT, borderColor: BORDER }}>
             Opdater
           </Button>
         ) : null}
       >
-        <Box component="form" onSubmit={handleSubmit}>
-          {error && <Alert severity="warning" sx={{ mb: 1.5 }}>{error}</Alert>}
+        {error && <Alert severity="warning" sx={{ mb: 1.5 }}>{error}</Alert>}
+        <Stack spacing={1.6}>
+          <Box sx={sectionSx}>
+            <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Stamdata</Typography>
+            <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>
+              Lokation er almindelig metadata og gemmes uafhængigt af klientens lokale identitet og kioskopsætning.
+            </Typography>
+            <TextField fullWidth label="Lokation" value={form.locality} onChange={setField("locality")} disabled={saving || !canEditKioskUrlAndLocality} helperText="Valgfri tekst, fx lokale, afdeling eller adresse." sx={textFieldSx} />
+            {canEditKioskUrlAndLocality && (
+              <Box sx={actionRowSx}>
+                <Button variant="contained" type="button" onClick={saveLocality} disabled={saving || !localityDirty} startIcon={savingDomain === "locality" ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900 }}>
+                  {savingDomain === "locality" ? "Gemmer…" : "Gem stamdata"}
+                </Button>
+                {localityDirty && <Button variant="outlined" type="button" onClick={() => resetDomain(["locality"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
+              </Box>
+            )}
+          </Box>
 
-          <Stack spacing={1.6}>
-            <Box sx={{ p: 1.35, borderRadius: 2, background: "rgba(15,23,42,0.28)", border: `1px solid ${BORDER}` }}>
-              <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>
-                Stamdata
-              </Typography>
-              <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>
-                Klientnavnet gemmes i backend og lokalt på Ubuntu-klienten. Linux-hostname dannes automatisk uden mellemrum. Lokation er valgfri og kan beskrive placering hos kunden.
-              </Typography>
-              <Grid container spacing={1.25}>
-                <Grid
-                  size={{
-                    xs: 12,
-                    md: 6
-                  }}>
-                  <TextField
-                    fullWidth
-                    label="Klientnavn"
-                    value={form.name}
-                    onChange={setField("name")}
-                    disabled={saving || !canEditClientName || localManagementBusy}
-                    helperText={canEditClientName ? "Mellemrum er tilladt. Linux-hostname dannes automatisk og sendes som lokal klientstyring." : "Kun superadministrator kan ændre klientnavn"}
-                    sx={textFieldSx}
-                  />
-                </Grid>
-                <Grid
-                  size={{
-                    xs: 12,
-                    md: 6
-                  }}>
-                  <TextField
-                    fullWidth
-                    label="Lokation"
-                    value={form.locality}
-                    onChange={setField("locality")}
-                    disabled={saving || !canEditKioskUrlAndLocality}
-                    helperText="Valgfri tekst, fx lokale, afdeling eller adresse."
-                    sx={textFieldSx}
-                  />
-                </Grid>
-                {canChangeOrganization && (
-                  <Grid
-                    size={{
-                      xs: 12,
-                      md: 6
-                    }}>
-                    <TextField
-                      select
-                      fullWidth
-                      label="Organisation"
-                      value={form.organization_id || ""}
-                      onChange={setField("organization_id")}
-                      disabled={loading || saving}
-                      helperText="Flyt kun klienten, hvis den reelt hører til en anden organisation."
-                      sx={textFieldSx}
-                    >
-                      <MenuItem value=""><em>Ingen organisation</em></MenuItem>
-                      {loading && (
-                        <MenuItem value="" disabled>Henter organisationer…</MenuItem>
-                      )}
-                      {organizations.map((organization) => (
-                        <MenuItem key={organization.id} value={String(organization.id)}>{organization.name}</MenuItem>
-                      ))}
-                    </TextField>
-                  </Grid>
-                )}
+          <Box sx={sectionSx}>
+            <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Klientidentitet</Typography>
+            <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>
+              Klientnavnet er en lokal klienthandling. Linux-hostname dannes automatisk og anvendes først, når klienten har gennemført handlingen.
+            </Typography>
+            <TextField fullWidth label="Klientnavn" value={form.name} onChange={setField("name")} disabled={saving || !canEditClientName || localManagementBusy} helperText={canEditClientName ? "Mellemrum er tilladt. Linux-hostname dannes automatisk." : "Kun superadministrator kan ændre klientnavn"} sx={textFieldSx} />
+            {canEditClientName && (
+              <Box sx={actionRowSx}>
+                <Button variant="contained" type="button" onClick={saveClientIdentity} disabled={saving || localManagementBusy || !identityDirty} startIcon={savingDomain === "identity" ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900 }}>
+                  {savingDomain === "identity" ? "Sender…" : "Skift klientnavn"}
+                </Button>
+                {identityDirty && <Button variant="outlined" type="button" onClick={() => resetDomain(["name"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
+              </Box>
+            )}
+          </Box>
+
+          <Box sx={sectionSx}>
+            <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Kioskvisning</Typography>
+            <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>URL og browser-refresh udgør én display-konfiguration og gemmes samlet.</Typography>
+            <Grid container spacing={1.25}>
+              <Grid size={12}>
+                <TextField fullWidth label="Kiosk URL" value={form.kiosk_url} onChange={setField("kiosk_url")} disabled={saving || !canEditKioskUrlAndLocality} helperText={canEditKioskUrlAndLocality ? "Domæne uden scheme normaliseres til HTTPS. HTTP er kun tilladt til localhost eller 127.0.0.1." : "Du har kun læseadgang til kiosk URL"} sx={textFieldSx} />
               </Grid>
-            </Box>
-
-            <Box sx={{ p: 1.35, borderRadius: 2, background: "rgba(15,23,42,0.28)", border: `1px solid ${BORDER}` }}>
-              <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>
-                Kioskvisning
-              </Typography>
-              <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>
-                Her styres den URL og browseradfærd, som infoskærmen viser.
-              </Typography>
-              <Grid container spacing={1.25}>
-                <Grid size={12}>
-                  <TextField
-                    fullWidth
-                    label="Kiosk URL"
-                    value={form.kiosk_url}
-                    onChange={setField("kiosk_url")}
-                    disabled={saving || !canEditKioskUrlAndLocality}
-                    helperText={canEditKioskUrlAndLocality ? "Domæne uden scheme normaliseres til HTTPS. HTTP er kun tilladt til localhost eller 127.0.0.1." : "Du har kun læseadgang til kiosk URL"}
-                    sx={textFieldSx}
-                  />
-                </Grid>
-                <Grid size={{ xs: 12, md: 6 }}>
-                  <TextField
-                    fullWidth
-                    type="number"
-                    label="Automatisk browser refresh (sek.)"
-                    value={form.browser_refresh_interval_sec}
-                    onChange={setField("browser_refresh_interval_sec")}
-                    disabled={saving || !canEditBrowserMaintenance}
-                    inputProps={{ min: 0, max: 86400, step: 1 }}
-                    helperText={canEditBrowserMaintenance ? "0 = slået fra. Ellers 60–86400 sekunder." : "Du har kun læseadgang til browser refresh"}
-                    sx={textFieldSx}
-                  />
-                </Grid>
-                <Grid
-                  size={{
-                    xs: 12,
-                    md: 6
-                  }}>
-                  <Box sx={{ height: "100%", p: 1.25, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
-                    <Stack
-                      direction={{ xs: "column", sm: "row" }}
-                      spacing={1}
-                      sx={{
-                        alignItems: { xs: "stretch", sm: "center" },
-                        justifyContent: "space-between"
-                      }}>
-                      <Box sx={{
-                        minWidth: 0
-                      }}>
-                        <Typography variant="caption" sx={{ color: MUTED, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.45 }}>
-                          Browser vedligeholdelse
-                        </Typography>
-                        <Typography variant="body2" sx={{ color: MUTED, mt: 0.25 }}>
-                          Ryd profil, cookies og cache, når kiosksiden hænger eller login er gået i stykker.
-                        </Typography>
-                      </Box>
-                      <Button
-                        variant="outlined"
-                        color="warning"
-                        startIcon={resettingBrowser ? <CircularProgress size={16} color="inherit" /> : <DeleteSweepIcon />}
-                        type="button"
-                        onClick={openResetBrowserDialog}
-                        disabled={!canResetBrowser}
-                        sx={{ borderRadius: 2, fontWeight: 900, flexShrink: 0 }}
-                      >
-                        {resettingBrowser ? "Nulstiller…" : "Nulstil browser"}
-                      </Button>
-                    </Stack>
-                    {!canResetBrowser && (
-                      <Typography variant="caption" sx={{ display: "block", mt: 0.75, color: MUTED }}>
-                        Kræver online klient og ingen anden aktiv handling.
-                      </Typography>
-                    )}
-                  </Box>
-                </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField fullWidth type="number" label="Automatisk browser refresh (sek.)" value={form.browser_refresh_interval_sec} onChange={setField("browser_refresh_interval_sec")} disabled={saving || !canEditBrowserMaintenance} inputProps={{ min: 0, max: 86400, step: 1 }} helperText={canEditBrowserMaintenance ? "0 = slået fra. Ellers 60–86400 sekunder." : "Du har kun læseadgang til browser refresh"} sx={textFieldSx} />
               </Grid>
-            </Box>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <Box sx={{ height: "100%", p: 1.25, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="caption" sx={{ color: MUTED, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.45 }}>Browser vedligeholdelse</Typography>
+                      <Typography variant="body2" sx={{ color: MUTED, mt: 0.25 }}>Ryd profil, cookies og cache, når kiosksiden hænger eller login er gået i stykker.</Typography>
+                    </Box>
+                    <Button variant="outlined" color="warning" startIcon={resettingBrowser ? <CircularProgress size={16} color="inherit" /> : <DeleteSweepIcon />} type="button" onClick={openResetBrowserDialog} disabled={!canResetBrowser} sx={{ borderRadius: 2, fontWeight: 900, flexShrink: 0 }}>
+                      {resettingBrowser ? "Nulstiller…" : "Nulstil browser"}
+                    </Button>
+                  </Stack>
+                  {!canResetBrowser && <Typography variant="caption" sx={{ display: "block", mt: 0.75, color: MUTED }}>Kræver online klient og ingen anden aktiv handling.</Typography>}
+                </Box>
+              </Grid>
+            </Grid>
+            {canEditKioskUrlAndLocality && (
+              <Box sx={actionRowSx}>
+                <Button variant="contained" type="button" onClick={saveKioskDisplay} disabled={saving || !kioskDirty} startIcon={savingDomain === "kiosk" ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900 }}>
+                  {savingDomain === "kiosk" ? "Gemmer…" : "Gem kioskvisning"}
+                </Button>
+                {kioskDirty && <Button variant="outlined" type="button" onClick={() => resetDomain(["kiosk_url", "browser_refresh_interval_sec"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
+              </Box>
+            )}
+          </Box>
 
-            {canViewSecuritySection && (
-            <Box sx={{ p: 1.35, borderRadius: 2, background: "rgba(15,23,42,0.28)", border: `1px solid ${BORDER}` }}>
-              <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>
-                Sikkerhed på klienten
-              </Typography>
+          {canChangeOrganization && (
+            <Box sx={sectionSx}>
+              <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Organisation</Typography>
               <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>
-                Administrative handlinger på den lokale Ubuntu-klient. Kiosk-brugeren får ikke sudo/administrator-rettigheder.
+                Flytning er en særskilt domænehandling, fordi organisationens standardtider kan blive anvendt på eksisterende tændte dage.
               </Typography>
-              <Grid container spacing={1.25}>
-                <Grid size={12}>
-                  <Box sx={{ p: 1.2, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={!!form.desktop_lockdown_enabled}
-                          onChange={setBooleanField("desktop_lockdown_enabled")}
-                          disabled={saving || !isSuperadmin}
-                        />
-                      }
-                      label="Kiosk lockdown"
-                      sx={{ color: TEXT, m: 0 }}
-                    />
+              <TextField select fullWidth label="Organisation" value={form.organization_id || ""} onChange={setField("organization_id")} disabled={loading || saving} helperText="Flyt kun klienten, hvis den reelt hører til en anden organisation." sx={textFieldSx}>
+                <MenuItem value=""><em>Ingen organisation</em></MenuItem>
+                {loading && <MenuItem value="" disabled>Henter organisationer…</MenuItem>}
+                {organizations.map((organization) => <MenuItem key={organization.id} value={String(organization.id)}>{organization.name}</MenuItem>)}
+              </TextField>
+              <Box sx={actionRowSx}>
+                <Button variant="contained" type="button" onClick={requestOrganizationChange} disabled={saving || loading || !organizationDirty} sx={{ borderRadius: 2, fontWeight: 900 }}>Flyt organisation</Button>
+                {organizationDirty && <Button variant="outlined" type="button" onClick={() => resetDomain(["organization_id"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
+              </Box>
+            </Box>
+          )}
+
+          {canViewSecuritySection && (
+            <Box sx={sectionSx}>
+              <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Sikkerhed på klienten</Typography>
+              <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>
+                Kiosk lockdown er en asynkron desired-state handling. Status kan ses her; kun superadministrator kan ændre den.
+              </Typography>
+              <Box sx={{ p: 1.2, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2} sx={{ alignItems: { xs: "flex-start", sm: "center" }, justifyContent: "space-between" }}>
+                  <Box>
+                    <FormControlLabel control={<Switch checked={lockdownDesired} onChange={requestLockdownChange} disabled={saving || !isSuperadmin || lockdownPending} />} label="Kiosk lockdown" sx={{ color: TEXT, m: 0 }} />
                     <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.4 }}>
-                      {client?.desktop_lockdown_status === "applied"
+                      {lockdownStatus === "applied"
                         ? "Aktiv på kiosk-brugeren"
-                        : client?.desktop_lockdown_status === "error"
+                        : lockdownStatus === "error"
                           ? `Fejl: ${client?.desktop_lockdown_message || "ukendt fejl"}`
-                          : form.desktop_lockdown_enabled
-                            ? "Ønsket Til – afventer eller anvendes af klienten"
-                            : "Fra – lokal admin/cfadmin påvirkes ikke"}
+                          : lockdownPending
+                            ? `${lockdownDesired ? "Aktivering" : "Deaktivering"} afventer eller anvendes af klienten`
+                            : lockdownDesired
+                              ? "Ønsket Til – afventer klientstatus"
+                              : "Fra – cfadmin påvirkes ikke"}
                     </Typography>
                   </Box>
-                </Grid>
-                {isSuperadmin && (
-                  <>
-                    <Grid size={12}>
-                      <Divider sx={{ borderColor: BORDER, my: 0.2 }} />
-                      <Typography sx={{ color: TEXT, fontWeight: 950, mt: 0.4 }}>
-                        Skift cfadmin-adgangskode
-                      </Typography>
-                    </Grid>
-                    <Grid
-                      size={{
-                        xs: 12,
-                        md: 5
-                      }}>
-                      <TextField
-                        fullWidth
-                        label="Ny cfadmin-adgangskode"
-                        type="password"
-                        value={cfadminPassword}
-                        onChange={(event) => setCfadminPassword(event.target.value)}
-                        disabled={savingCfadminPassword || localManagementBusy}
-                        autoComplete="new-password"
-                        helperText="Min. 8 tegn med stort bogstav, lille bogstav og tal"
-                        sx={textFieldSx}
-                      />
-                    </Grid>
-                    <Grid
-                      size={{
-                        xs: 12,
-                        md: 5
-                      }}>
-                      <TextField
-                        fullWidth
-                        label="Gentag adgangskode"
-                        type="password"
-                        value={cfadminPasswordRepeat}
-                        onChange={(event) => setCfadminPasswordRepeat(event.target.value)}
-                        disabled={savingCfadminPassword || localManagementBusy}
-                        error={cfadminPasswordsMismatch}
-                        autoComplete="new-password"
-                        helperText={cfadminPasswordsMismatch ? "Adgangskoderne matcher ikke" : " "}
-                        sx={textFieldSx}
-                      />
-                    </Grid>
-                    <Grid
-                      sx={{ display: "flex", alignItems: "flex-start" }}
-                      size={{
-                        xs: 12,
-                        md: 2
-                      }}>
-                      <Button
-                        fullWidth
-                        variant="contained"
-                        type="button"
-                        onClick={saveCfadminPassword}
-                        disabled={savingCfadminPassword || localManagementBusy || !cfadminPassword || cfadminPasswordsMismatch}
-                        startIcon={savingCfadminPassword ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />}
-                        sx={{ borderRadius: 2, fontWeight: 900, minHeight: 54 }}
-                      >
-                        {savingCfadminPassword ? "Sender…" : "Skift"}
-                      </Button>
-                    </Grid>
-                  </>
-                )}
-              </Grid>
-            </Box>
-            )}
+                  <Chip size="small" label={lockdownStatus === "error" ? "Fejl" : lockdownPending ? "Afventer klient" : lockdownDesired ? "Aktiv" : "Fra"} sx={compactDarkChipSx(lockdownStatus === "error" ? "error" : lockdownPending ? "warning" : lockdownDesired ? "success" : "neutral")} />
+                </Stack>
+              </Box>
 
-            {canViewLocalManagementSection && (
+              {isSuperadmin && (
+                <Grid container spacing={1.25} sx={{ mt: 0.2 }}>
+                  <Grid size={12}><Divider sx={{ borderColor: BORDER, my: 0.2 }} /><Typography sx={{ color: TEXT, fontWeight: 950, mt: 0.4 }}>Skift cfadmin-adgangskode</Typography></Grid>
+                  <Grid size={{ xs: 12, md: 5 }}><TextField fullWidth label="Ny cfadmin-adgangskode" type="password" value={cfadminPassword} onChange={(event) => setCfadminPassword(event.target.value)} disabled={savingCfadminPassword || localManagementBusy} autoComplete="new-password" helperText="Min. 8 tegn med stort bogstav, lille bogstav og tal" sx={textFieldSx} /></Grid>
+                  <Grid size={{ xs: 12, md: 5 }}><TextField fullWidth label="Gentag adgangskode" type="password" value={cfadminPasswordRepeat} onChange={(event) => setCfadminPasswordRepeat(event.target.value)} disabled={savingCfadminPassword || localManagementBusy} error={cfadminPasswordsMismatch} autoComplete="new-password" helperText={cfadminPasswordsMismatch ? "Adgangskoderne matcher ikke" : " "} sx={textFieldSx} /></Grid>
+                  <Grid sx={{ display: "flex", alignItems: "flex-start" }} size={{ xs: 12, md: 2 }}>
+                    <Button fullWidth variant="contained" type="button" onClick={saveCfadminPassword} disabled={savingCfadminPassword || localManagementBusy || !cfadminPassword || cfadminPasswordsMismatch} startIcon={savingCfadminPassword ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900, minHeight: 54 }}>
+                      {savingCfadminPassword ? "Sender…" : "Skift"}
+                    </Button>
+                  </Grid>
+                </Grid>
+              )}
+            </Box>
+          )}
+
+          {canViewLocalManagementSection && (
             <Box sx={{ p: 1.25, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
-              <Stack
-                direction="row"
-                spacing={1}
-                useFlexGap
-                sx={{
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  flexWrap: "wrap"
-                }}>
-                <Box sx={{
-                  minWidth: 0
-                }}>
-                  <Typography variant="caption" sx={{ color: MUTED, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.45 }}>
-                    Seneste lokale klienthandling
-                  </Typography>
-                  <Typography sx={{ color: TEXT, fontWeight: 950, lineHeight: 1.2 }}>
-                    {localManagementActionLabel}
-                  </Typography>
+              <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="caption" sx={{ color: MUTED, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.45 }}>Seneste lokale klienthandling</Typography>
+                  <Typography sx={{ color: TEXT, fontWeight: 950, lineHeight: 1.2 }}>{localManagementActionLabel}</Typography>
                 </Box>
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  useFlexGap
-                  sx={{
-                    alignItems: "center",
-                    flexWrap: "wrap"
-                  }}>
-                  <Chip
-                    size="small"
-                    label={localManagementMeta.label}
-                    sx={compactDarkChipSx(localManagementMeta.color)}
-                  />
+                <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: "center", flexWrap: "wrap" }}>
+                  <Chip size="small" label={localManagementMeta.label} sx={compactDarkChipSx(localManagementMeta.color)} />
                   {localManagementBusy && <CircularProgress size={18} />}
-                  <Button
-                    size="small"
-                    type="button"
-                    variant="outlined"
-                    onClick={refreshLocalManagement}
-                    disabled={!client?.id}
-                    sx={{ borderRadius: 999, color: TEXT, borderColor: BORDER, fontWeight: 900 }}
-                  >
-                    Opdater status
-                  </Button>
+                  <Button size="small" type="button" variant="outlined" onClick={refreshLocalManagement} disabled={!client?.id} sx={{ borderRadius: 999, color: TEXT, borderColor: BORDER, fontWeight: 900 }}>Opdater status</Button>
                 </Stack>
               </Stack>
-
               {(localManagementBusy || localManagementStatus === "success" || localManagementStatus === "error") && (
                 <Box sx={{ mt: 1.1 }}>
-                  <LinearProgress
-                    variant="determinate"
-                    value={localManagementProgress}
-                    color={localManagementStatus === "error" ? "error" : localManagementStatus === "success" ? "success" : "primary"}
-                    sx={{ height: 8, borderRadius: 999, backgroundColor: "rgba(148,163,184,0.16)" }}
-                  />
-                  <Stack
-                    direction={{ xs: "column", md: "row" }}
-                    spacing={0.75}
-                    useFlexGap
-                    sx={{
-                      flexWrap: "wrap",
-                      mt: 1
-                    }}>
+                  <LinearProgress variant="determinate" value={localManagementProgress} color={localManagementStatus === "error" ? "error" : localManagementStatus === "success" ? "success" : "primary"} sx={{ height: 8, borderRadius: 999, backgroundColor: "rgba(148,163,184,0.16)" }} />
+                  <Stack direction={{ xs: "column", md: "row" }} spacing={0.75} useFlexGap sx={{ flexWrap: "wrap", mt: 1 }}>
                     {localManagementFlow.map((step, index) => (
-                      <Box
-                        key={step.key}
-                        sx={{
-                          flex: 1,
-                          minWidth: 150,
-                          p: 0.85,
-                          borderRadius: 2,
-                          border: `1px solid ${
-                            step.error
-                              ? "rgba(248,113,113,0.45)"
-                              : step.success
-                                ? "rgba(34,197,94,0.55)"
-                                : step.active
-                                  ? "rgba(56,189,248,0.42)"
-                                  : step.done
-                                    ? "rgba(34,197,94,0.35)"
-                                    : BORDER
-                          }`,
-                          background: step.error
-                            ? "rgba(127,29,29,0.24)"
-                            : step.success
-                              ? "rgba(22,101,52,0.24)"
-                              : step.active
-                                ? "rgba(14,165,233,0.18)"
-                                : step.done
-                                  ? "rgba(34,197,94,0.12)"
-                                  : "rgba(15,23,42,0.34)",
-                        }}
-                      >
-                        <Typography variant="caption" sx={{ color: MUTED, fontWeight: 900 }}>
-                          {index + 1}. trin
-                        </Typography>
-                        <Typography sx={{ color: TEXT, fontWeight: 950, fontSize: 13 }}>
-                          {step.label}
-                        </Typography>
+                      <Box key={step.key} sx={{ flex: 1, minWidth: 150, p: 0.85, borderRadius: 2, border: `1px solid ${step.error ? "rgba(248,113,113,0.45)" : step.success ? "rgba(34,197,94,0.55)" : step.active ? "rgba(56,189,248,0.42)" : step.done ? "rgba(34,197,94,0.35)" : BORDER}`, background: step.error ? "rgba(127,29,29,0.24)" : step.success ? "rgba(22,101,52,0.24)" : step.active ? "rgba(14,165,233,0.18)" : step.done ? "rgba(34,197,94,0.12)" : "rgba(15,23,42,0.34)" }}>
+                        <Typography variant="caption" sx={{ color: MUTED, fontWeight: 900 }}>{index + 1}. trin</Typography>
+                        <Typography sx={{ color: TEXT, fontWeight: 950, fontSize: 13 }}>{step.label}</Typography>
                       </Box>
                     ))}
                   </Stack>
                 </Box>
               )}
-
-              <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.9 }}>
-                {localManagementMessage}
-              </Typography>
-              {localManagementSnapshot.desired_hostname && (
-                <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.35 }}>
-                  Nyt klientnavn/hostname: {localManagementSnapshot.desired_hostname}
-                </Typography>
-              )}
+              <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.9 }}>{localManagementMessage}</Typography>
+              {localManagementSnapshot.desired_hostname && <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.35 }}>Nyt klientnavn/hostname: {localManagementSnapshot.desired_hostname}</Typography>}
               {(localManagementSnapshot.requested_at || localManagementSnapshot.started_at || localManagementSnapshot.finished_at) && (
                 <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.35 }}>
                   {localManagementSnapshot.requested_at ? `Sendt: ${formatDateTime(localManagementSnapshot.requested_at, true)}` : ""}
@@ -2424,64 +2215,54 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                 </Typography>
               )}
             </Box>
-            )}
-
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{
-              alignItems: { xs: "stretch", sm: "center" }
-            }}>
-              <Button
-                variant="contained"
-                startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />}
-                type="submit"
-                disabled={saving || !hasChanges}
-                sx={{ borderRadius: 2, fontWeight: 900 }}
-              >
-                {saving ? "Gemmer…" : "Gem konfiguration"}
-              </Button>
-              {hasChanges && (
-                <Button
-                  variant="outlined"
-                  type="button"
-                  onClick={resetForm}
-                  disabled={saving}
-                  sx={{ borderRadius: 2, fontWeight: 900 }}
-                >
-                  Fortryd ændringer
-                </Button>
-              )}
-            </Stack>
-          </Stack>
-        </Box>
+          )}
+        </Stack>
       </DataPanel>
-      <Dialog
-        open={resetConfirmOpen}
-        onClose={() => !resettingBrowser && setResetConfirmOpen(false)}
-        maxWidth="xs"
-        fullWidth
-        disableRestoreFocus
-      >
+
+      <Dialog open={organizationConfirmOpen} onClose={() => !saving && setOrganizationConfirmOpen(false)} maxWidth="xs" fullWidth disableRestoreFocus>
+        <DialogTitle>Flyt klient til anden organisation?</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 1.5 }}>Organisationens standardtider anvendes på eksisterende tændte dage. Manuelle tider bevares.</Alert>
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>Denne handling gemmes separat fra øvrig klientkonfiguration.</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOrganizationConfirmOpen(false)} disabled={saving}>Annullér</Button>
+          <Button onClick={confirmOrganizationChange} variant="contained" disabled={saving || !organizationDirty}>{savingDomain === "organization" ? "Flytter…" : "Ja, flyt klient"}</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={lockdownConfirmTarget !== null} onClose={() => !saving && setLockdownConfirmTarget(null)} maxWidth="xs" fullWidth disableRestoreFocus>
+        <DialogTitle>{lockdownConfirmTarget ? "Aktivér kiosk lockdown?" : "Deaktivér kiosk lockdown?"}</DialogTitle>
+        <DialogContent>
+          <Alert severity={lockdownConfirmTarget ? "warning" : "info"} sx={{ mb: 1.5 }}>
+            {lockdownConfirmTarget
+              ? "Dette begrænser lokale system- og administrationsfunktioner for kioskbrugeren. cfadmin påvirkes ikke."
+              : "Dette fjerner kioskbrugerens lockdown-begrænsninger. cfadmin påvirkes ikke."}
+          </Alert>
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>Ændringen sendes som desired state og vises som afventende, indtil klienten har anvendt den.</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setLockdownConfirmTarget(null)} disabled={saving}>Annullér</Button>
+          <Button onClick={confirmLockdownChange} color={lockdownConfirmTarget ? "warning" : "primary"} variant="contained" disabled={saving}>
+            {savingDomain === "lockdown" ? "Sender…" : lockdownConfirmTarget ? "Ja, aktivér" : "Ja, deaktivér"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={resetConfirmOpen} onClose={() => !resettingBrowser && setResetConfirmOpen(false)} maxWidth="xs" fullWidth disableRestoreFocus>
         <DialogTitle>Nulstil kiosk-browser?</DialogTitle>
         <DialogContent>
-          <Alert severity="warning" sx={{ mb: 1.5 }}>
-            Chrome lukkes, browserprofil/cookies/cache ryddes, og kiosk-browseren startes igen efter countdown.
-          </Alert>
-          <Typography variant="body2" sx={{
-            color: "text.secondary"
-          }}>
-            Brug handlingen når siden hænger, login/cookies er gået i stykker, eller browseren skal starte helt rent.
-          </Typography>
+          <Alert severity="warning" sx={{ mb: 1.5 }}>Chrome lukkes, browserprofil/cookies/cache ryddes, og kiosk-browseren startes igen efter countdown.</Alert>
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>Brug handlingen når siden hænger, login/cookies er gået i stykker, eller browseren skal starte helt rent.</Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setResetConfirmOpen(false)} disabled={resettingBrowser}>Annullér</Button>
-          <Button onClick={resetBrowser} color="warning" variant="contained" disabled={!canResetBrowser}>
-            {resettingBrowser ? "Nulstiller…" : "Ja, nulstil browser"}
-          </Button>
+          <Button onClick={resetBrowser} color="warning" variant="contained" disabled={!canResetBrowser}>{resettingBrowser ? "Nulstiller…" : "Ja, nulstil browser"}</Button>
         </DialogActions>
       </Dialog>
     </>
   );
 }
-
 
 function DiagnosticsPanel({ client, onRefresh }) {
   const hasDiagnosticValue = (value) => value !== null && value !== undefined && String(value).trim() !== "";

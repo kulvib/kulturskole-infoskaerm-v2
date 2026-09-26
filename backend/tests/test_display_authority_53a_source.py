@@ -122,9 +122,13 @@ def test_frontend_has_single_transaction_kiosk_and_display_refresh_write():
     assert "isCanonicalKioskUrl" in frontend
     assert 'raw.length > 2048' in frontend
     assert '["localhost", "127.0.0.1"].includes(parsed.hostname.toLowerCase())' in frontend
-    assert "payload.kiosk_url = nextKioskUrl" in frontend
-    # The mixed client update remains one apiUpdateClient request; kiosk URL is
-    # not split into a second frontend transaction.
+
+    # Kiosk URL and refresh remain one Display desired-state transaction even
+    # though Control Room now has explicit per-domain save actions.
+    assert "const buildKioskPayload = () =>" in frontend
+    assert "return { kiosk_url: kioskUrl, browser_refresh_interval_sec: refreshSeconds };" in frontend
+    assert "payload = buildKioskPayload();" in frontend
+    assert "await apiUpdateClient(client.id, payload);" in frontend
     assert "apiUpdateKioskUrl" not in frontend
 
 
