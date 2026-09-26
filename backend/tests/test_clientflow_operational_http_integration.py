@@ -1034,36 +1034,55 @@ def test_kiosk_lockdown_frontend_api_backend_reconcile_agent_broker_and_observed
     )
     monkeypatch.setattr(kiosk_lockdown, "STATE_PATH", tmp_path / "kiosk-lockdown-state.json")
     local_effects: list[tuple[str, bool | None]] = []
+    fake_enforcement = {
+        "launchers": False,
+        "acl": False,
+        "polkit": False,
+        "gsettings": False,
+        "quick_guard": False,
+    }
+
+    def set_enforcement(name: str, value: bool) -> None:
+        fake_enforcement[name] = value
+        local_effects.append((name, value))
+
     monkeypatch.setattr(
         kiosk_lockdown,
         "_hide_launchers",
-        lambda _home, _record: local_effects.append(("launchers", True)),
+        lambda _home, _record: set_enforcement("launchers", True),
     )
     monkeypatch.setattr(
         kiosk_lockdown,
         "_restore_launchers",
-        lambda _home, _record: local_effects.append(("launchers", False)),
+        lambda _home, _record: set_enforcement("launchers", False),
     )
     monkeypatch.setattr(
         kiosk_lockdown,
         "_apply_acl",
-        lambda _user, value: local_effects.append(("acl", value)),
+        lambda _user, value: set_enforcement("acl", value),
     )
     monkeypatch.setattr(
         kiosk_lockdown,
         "_apply_polkit",
-        lambda _user, value: local_effects.append(("polkit", value)),
+        lambda _user, value: set_enforcement("polkit", value),
     )
     monkeypatch.setattr(
         kiosk_lockdown,
         "_apply_gsettings",
-        lambda _user, _record, value: local_effects.append(("gsettings", value)),
+        lambda _user, _record, value: set_enforcement("gsettings", value),
     )
     monkeypatch.setattr(
         kiosk_lockdown,
         "_set_quick_guard_running",
-        lambda value: local_effects.append(("quick_guard", value)),
+        lambda value: set_enforcement("quick_guard", value),
     )
+
+    def verify_fake_enforcement(_user, _record, _home, *, enabled: bool):
+        checks = {name: value is enabled for name, value in fake_enforcement.items()}
+        drift = [name for name, ok in checks.items() if not ok]
+        return {"ok": all(checks.values()), "checks": checks, "drift": drift}
+
+    monkeypatch.setattr(kiosk_lockdown, "_verify", verify_fake_enforcement)
     monkeypatch.setattr(display_agent, "display_control_lock", lambda: nullcontext())
     monkeypatch.setattr(
         display_agent,
