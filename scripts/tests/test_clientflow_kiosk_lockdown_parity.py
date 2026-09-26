@@ -114,10 +114,13 @@ def test_optional_lockdown_restores_legacy_two_second_quicksettings_guard_contra
     assert "clientflow-kiosk-quicksettings-guard.service" in target
 
 
-def test_lockdown_applied_state_is_published_only_after_quick_guard_starts():
+def test_lockdown_applied_state_is_published_only_after_quick_guard_and_verification():
     source = (ROOT / "client/runtime/clientflow_runtime/kiosk_lockdown.py").read_text(encoding="utf-8")
     apply_source = source[source.index("def apply()") : source.index("def rollback()") ]
-    assert apply_source.index("_set_quick_guard_running(True)") < apply_source.index("Kiosk lockdown aktiv på kiosk-brugeren")
+    guard = apply_source.index("_set_quick_guard_running(True)")
+    verify = apply_source.index("_verify(kiosk_user, record, home, enabled=True)")
+    publish = apply_source.index('True, "applied", "Kiosk lockdown aktiv og verificeret')
+    assert guard < verify < publish
 
 
 def test_backend_last_applied_timestamp_is_not_refreshed_by_every_heartbeat() -> None:

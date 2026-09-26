@@ -2028,7 +2028,8 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
   const cfadminPasswordsMismatch = !!cfadminPasswordRepeat && cfadminPassword !== cfadminPasswordRepeat;
   const lockdownStatus = String(client?.desktop_lockdown_status || "").toLowerCase();
   const lockdownDesired = client?.desktop_lockdown_enabled === true;
-  const lockdownPending = lockdownStatus === "pending" || lockdownStatus === "applying";
+  const lockdownPending = ["pending", "applying", "rolling_back"].includes(lockdownStatus);
+  const lockdownDrifted = lockdownStatus === "drifted";
 
   const textFieldSx = {
     "& .MuiInputBase-root": { color: TEXT, background: FIELD_BG, borderRadius: 2 },
@@ -2150,7 +2151,9 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                     <FormControlLabel control={<Switch checked={lockdownDesired} onChange={requestLockdownChange} disabled={saving || !isSuperadmin || lockdownPending} />} label="Kiosk lockdown" sx={{ color: TEXT, m: 0 }} />
                     <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.4 }}>
                       {lockdownStatus === "applied"
-                        ? "Aktiv på kiosk-brugeren"
+                        ? "Aktiv og verificeret på kiosk-brugeren"
+                        : lockdownDrifted
+                          ? `Policy-drift opdaget: ${client?.desktop_lockdown_message || "klienten genanvender lockdown"}`
                         : lockdownStatus === "error"
                           ? `Fejl: ${client?.desktop_lockdown_message || "ukendt fejl"}`
                           : lockdownPending
@@ -2160,7 +2163,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                               : "Fra – cfadmin påvirkes ikke"}
                     </Typography>
                   </Box>
-                  <Chip size="small" label={lockdownStatus === "error" ? "Fejl" : lockdownPending ? "Afventer klient" : lockdownDesired ? "Aktiv" : "Fra"} sx={compactDarkChipSx(lockdownStatus === "error" ? "error" : lockdownPending ? "warning" : lockdownDesired ? "success" : "neutral")} />
+                  <Chip size="small" label={lockdownStatus === "error" ? "Fejl" : lockdownDrifted ? "Drift opdaget" : lockdownPending ? "Afventer klient" : lockdownDesired ? "Aktiv" : "Fra"} sx={compactDarkChipSx(lockdownStatus === "error" ? "error" : (lockdownPending || lockdownDrifted) ? "warning" : lockdownDesired ? "success" : "neutral")} />
                 </Stack>
               </Box>
 

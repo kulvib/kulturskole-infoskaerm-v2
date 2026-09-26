@@ -55,6 +55,14 @@ DENIED_EXACT = (
     "org.freedesktop.login1.reboot", "org.freedesktop.login1.reboot-multiple-sessions",
     "org.freedesktop.login1.suspend", "org.freedesktop.login1.hibernate",
 )
+# GNOME documents system dconf locks as the strongest setting enforcement. ClientFlow
+# cannot use a global local.d lock here because optional lockdown is kiosk-user-only
+# and cfadmin must remain unaffected. These security-critical kiosk values are therefore
+# actively verified and reconciled through the fixed-function broker.
+ENFORCED_GSETTINGS = (
+    ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
+    ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
+)
 OPTIONAL_GSETTINGS = (
     ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
     ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
@@ -113,11 +121,20 @@ def _allowed(desktop_id: str) -> bool:
     return "clientflow" in value or "aktiver-clientflow" in value or "activate-clientflow" in value
 
 
-def _write_state(desired: bool, status_value: str, message: str, kiosk_user: str) -> dict[str, Any]:
+def _write_state(
+    desired: bool,
+    status_value: str,
+    message: str,
+    kiosk_user: str,
+    *,
+    enforcement: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     payload = {
         "schema_version": 1, "desired": desired, "status": status_value, "message": message,
         "kiosk_user": kiosk_user, "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    if enforcement is not None:
+        payload["enforcement"] = enforcement
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = STATE_PATH.with_name(f".{STATE_PATH.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
@@ -126,15 +143,185 @@ def _write_state(desired: bool, status_value: str, message: str, kiosk_user: str
     return payload
 
 
-def status() -> dict[str, Any]:
+def _saved_state() -> dict[str, Any] | None:
     try:
         value = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-        if isinstance(value, dict):
-            return value
     except (OSError, json.JSONDecodeError):
-        pass
-    kiosk_user, _, _ = _account()
-    return {"schema_version": 1, "desired": False, "status": "disabled", "message": "Kiosk lockdown er ikke anvendt", "kiosk_user": kiosk_user, "updated_at": None}
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _expected_desktop_ids() -> set[str]:
+    desktop_ids = set(EXTRA_DESKTOP_IDS)
+    for source in SOURCE_DESKTOP_DIRS:
+        if source.is_dir():
+            desktop_ids.update(path.name for path in source.glob("*.desktop"))
+    return {value for value in desktop_ids if not _allowed(value)}
+
+
+def _polkit_path(kiosk_user: str) -> Path:
+    safe = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in kiosk_user)
+    return POLKIT_ROOT / f"49-clientflow-kiosk-lockdown-{safe}.rules"
+
+
+def _polkit_text(kiosk_user: str) -> str:
+    user_literal = json.dumps(kiosk_user)
+    prefixes = json.dumps(list(DENIED_PREFIXES))
+    exact = json.dumps(list(DENIED_EXACT))
+    return (
+        "// ClientFlow optional kiosk lockdown. Generated; remove via rollback.\n"
+        "polkit.addRule(function(action, subject) {\n"
+        f"  if (subject.user !== {user_literal}) return polkit.Result.NOT_HANDLED;\n"
+        f"  var id=action.id||\"\"; var prefixes={prefixes}; var exact={exact};\n"
+        "  for (var i=0;i<prefixes.length;i++) if (id.indexOf(prefixes[i])===0) return polkit.Result.NO;\n"
+        "  for (var j=0;j<exact.length;j++) if (id===exact[j]) return polkit.Result.NO;\n"
+        "  if (id.indexOf(\"package\")!==-1 || id.indexOf(\"software\")!==-1 || id.indexOf(\"update\")!==-1) return polkit.Result.NO;\n"
+        "  return polkit.Result.NOT_HANDLED;\n});\n"
+    )
+
+
+def _acl_entries(kiosk_uid: int) -> tuple[set[str], list[str]]:
+    existing = [raw for raw in TARGET_BINARIES if Path(raw).exists()]
+    if not existing:
+        return set(), []
+    getfacl = Path("/usr/bin/getfacl")
+    if not getfacl.is_file():
+        return set(), existing
+    completed = _run([str(getfacl), "-pn", "--", *existing], timeout=30, required=False)
+    if completed.returncode != 0:
+        return set(), existing
+    found: set[str] = set()
+    current: str | None = None
+    wanted = f"user:{kiosk_uid}:---"
+    for line in (completed.stdout or "").splitlines():
+        if line.startswith("# file: "):
+            current = line[8:].strip()
+        elif current and line.strip() == wanted:
+            found.add(current)
+    return found, existing
+
+
+def _gsettings_value(kiosk_user: str, record, schema: str, key: str) -> str | None:
+    command = [
+        "/usr/sbin/runuser", "-u", kiosk_user, "--", "env", f"HOME={record.pw_dir}",
+        f"XDG_RUNTIME_DIR=/run/user/{record.pw_uid}", f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{record.pw_uid}/bus",
+        "/usr/bin/gsettings", "get", schema, key,
+    ]
+    completed = _run(command, required=False)
+    return (completed.stdout or "").strip() if completed.returncode == 0 else None
+
+
+def _verify(kiosk_user: str, record, home: Path, *, enabled: bool) -> dict[str, Any]:
+    drift: list[str] = []
+    checks: dict[str, bool] = {}
+
+    app_dir, _, _, _ = _paths(home)
+    if enabled:
+        missing_launchers: list[str] = []
+        for desktop_id in sorted(_expected_desktop_ids()):
+            target = app_dir / desktop_id
+            try:
+                locked = target.is_file() and "X-ClientFlow-Lockdown=true" in target.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                locked = False
+            if not locked:
+                missing_launchers.append(desktop_id)
+        checks["launchers"] = not missing_launchers
+        if missing_launchers:
+            drift.append(f"launchers:{','.join(missing_launchers[:5])}")
+    else:
+        residual_launchers: list[str] = []
+        if app_dir.is_dir():
+            for target in app_dir.glob("*.desktop"):
+                try:
+                    if "X-ClientFlow-Lockdown=true" in target.read_text(encoding="utf-8", errors="ignore"):
+                        residual_launchers.append(target.name)
+                except OSError:
+                    continue
+        checks["launchers"] = not residual_launchers
+        if residual_launchers:
+            drift.append(f"launchers-residual:{','.join(residual_launchers[:5])}")
+
+    acl_found, acl_expected = _acl_entries(record.pw_uid)
+    if enabled:
+        missing_acl = sorted(set(acl_expected) - acl_found)
+        checks["acl"] = not missing_acl
+        if missing_acl:
+            drift.append(f"acl:{','.join(missing_acl[:5])}")
+    else:
+        checks["acl"] = not acl_found
+        if acl_found:
+            drift.append(f"acl-residual:{','.join(sorted(acl_found)[:5])}")
+
+    polkit_path = _polkit_path(kiosk_user)
+    if enabled:
+        try:
+            polkit_ok = (
+                polkit_path.is_file()
+                and polkit_path.read_text(encoding="utf-8") == _polkit_text(kiosk_user)
+                and polkit_path.stat().st_uid == 0
+                and (polkit_path.stat().st_mode & 0o777) == 0o644
+            )
+        except OSError:
+            polkit_ok = False
+        checks["polkit"] = polkit_ok
+        if not polkit_ok:
+            drift.append("polkit")
+    else:
+        checks["polkit"] = not polkit_path.exists()
+        if polkit_path.exists():
+            drift.append("polkit-residual")
+
+    if enabled:
+        gsettings_ok = True
+        for schema, key, expected in ENFORCED_GSETTINGS:
+            if _gsettings_value(kiosk_user, record, schema, key) != expected:
+                gsettings_ok = False
+                drift.append(f"gsettings:{schema}/{key}")
+        checks["gsettings"] = gsettings_ok
+    else:
+        checks["gsettings"] = True
+
+    active = False
+    if SYSTEMCTL.is_file():
+        active = _run([str(SYSTEMCTL), "is-active", "--quiet", QUICK_GUARD_UNIT], required=False).returncode == 0
+    checks["quick_guard"] = active if enabled else not active
+    if checks["quick_guard"] is False:
+        drift.append("quick-guard" if enabled else "quick-guard-residual")
+
+    return {"ok": all(checks.values()), "checks": checks, "drift": drift}
+
+
+def status() -> dict[str, Any]:
+    kiosk_user, record, home = _account()
+    saved = _saved_state()
+    desired = bool(saved.get("desired")) if isinstance(saved, dict) and isinstance(saved.get("desired"), bool) else False
+    verification = _verify(kiosk_user, record, home, enabled=desired)
+    if not verification["ok"]:
+        return {
+            "schema_version": 1,
+            "desired": desired,
+            "status": "drifted",
+            "message": "Kiosk lockdown drift opdaget: " + "; ".join(verification["drift"][:6]),
+            "kiosk_user": kiosk_user,
+            "updated_at": saved.get("updated_at") if isinstance(saved, dict) else None,
+            "enforcement": verification,
+        }
+    if isinstance(saved, dict):
+        value = dict(saved)
+        value["enforcement"] = verification
+        if desired and value.get("status") not in {"applying", "applied"}:
+            value["status"] = "applied"
+            value["message"] = "Kiosk lockdown er verificeret aktiv på kiosk-brugeren"
+        elif not desired and value.get("status") not in {"rolling_back", "disabled"}:
+            value["status"] = "disabled"
+            value["message"] = "Kiosk lockdown er verificeret slået fra på kiosk-brugeren"
+        return value
+    return {
+        "schema_version": 1, "desired": False, "status": "disabled",
+        "message": "Kiosk lockdown er ikke anvendt", "kiosk_user": kiosk_user,
+        "updated_at": None, "enforcement": verification,
+    }
 
 
 def _write_blocked(app_dir: Path, backup_dir: Path, desktop_id: str, uid: int, gid: int) -> None:
@@ -215,26 +402,12 @@ def _apply_acl(kiosk_user: str, enabled: bool) -> None:
 
 
 def _apply_polkit(kiosk_user: str, enabled: bool) -> None:
-    safe = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in kiosk_user)
-    path = POLKIT_ROOT / f"49-clientflow-kiosk-lockdown-{safe}.rules"
+    path = _polkit_path(kiosk_user)
     if not enabled:
         path.unlink(missing_ok=True)
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    user_literal = json.dumps(kiosk_user)
-    prefixes = json.dumps(list(DENIED_PREFIXES))
-    exact = json.dumps(list(DENIED_EXACT))
-    text = (
-        "// ClientFlow optional kiosk lockdown. Generated; remove via rollback.\n"
-        "polkit.addRule(function(action, subject) {\n"
-        f"  if (subject.user !== {user_literal}) return polkit.Result.NOT_HANDLED;\n"
-        f"  var id=action.id||\"\"; var prefixes={prefixes}; var exact={exact};\n"
-        "  for (var i=0;i<prefixes.length;i++) if (id.indexOf(prefixes[i])===0) return polkit.Result.NO;\n"
-        "  for (var j=0;j<exact.length;j++) if (id===exact[j]) return polkit.Result.NO;\n"
-        "  if (id.indexOf(\"package\")!==-1 || id.indexOf(\"software\")!==-1 || id.indexOf(\"update\")!==-1) return polkit.Result.NO;\n"
-        "  return polkit.Result.NOT_HANDLED;\n});\n"
-    )
-    path.write_text(text, encoding="utf-8")
+    path.write_text(_polkit_text(kiosk_user), encoding="utf-8")
     os.chmod(path, 0o644)
 
 
@@ -266,7 +439,14 @@ def apply() -> dict[str, Any]:
     # The optional quick-settings guard is part of the applied contract.
     # Do not publish terminal applied state until systemd accepted the guard.
     _set_quick_guard_running(True)
-    return _write_state(True, "applied", "Kiosk lockdown aktiv på kiosk-brugeren", kiosk_user)
+    verification = _verify(kiosk_user, record, home, enabled=True)
+    if not verification["ok"]:
+        _write_state(True, "error", "Kiosk lockdown kunne ikke verificeres efter apply", kiosk_user, enforcement=verification)
+        raise KioskLockdownError("Kiosk lockdown apply gav uverificeret enforcement: " + "; ".join(verification["drift"][:6]))
+    return _write_state(
+        True, "applied", "Kiosk lockdown aktiv og verificeret på kiosk-brugeren", kiosk_user,
+        enforcement=verification,
+    )
 
 
 def rollback() -> dict[str, Any]:
@@ -277,7 +457,14 @@ def rollback() -> dict[str, Any]:
     _apply_acl(kiosk_user, False)
     _apply_polkit(kiosk_user, False)
     _apply_gsettings(kiosk_user, record, False)
-    return _write_state(False, "disabled", "Kiosk lockdown slået fra på kiosk-brugeren", kiosk_user)
+    verification = _verify(kiosk_user, record, home, enabled=False)
+    if not verification["ok"]:
+        _write_state(False, "error", "Kiosk lockdown rollback kunne ikke verificeres", kiosk_user, enforcement=verification)
+        raise KioskLockdownError("Kiosk lockdown rollback efterlod enforcement: " + "; ".join(verification["drift"][:6]))
+    return _write_state(
+        False, "disabled", "Kiosk lockdown slået fra og verificeret på kiosk-brugeren", kiosk_user,
+        enforcement=verification,
+    )
 
 
 def main() -> int:
