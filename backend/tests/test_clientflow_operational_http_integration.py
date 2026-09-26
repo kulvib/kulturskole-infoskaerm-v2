@@ -1099,6 +1099,12 @@ def test_kiosk_lockdown_frontend_api_backend_reconcile_agent_broker_and_observed
     monkeypatch.setattr(display_agent, "POWER_STATE_PATH", tmp_path / "missing-power-state.json")
     monkeypatch.setattr(display_agent, "CALENDAR_STATUS_PATH", tmp_path / "missing-calendar-status.json")
     applied_status_payload = display_agent._status()
+    applied_status_payload["runtime"] = {
+        "state": "running",
+        "configuration_revision": 1,
+        "configuration_schema_version": 2,
+        "browser_pid": 4242,
+    }
     assert applied_status_payload["kiosk_lockdown"]["desired"] is True
     assert applied_status_payload["kiosk_lockdown"]["status"] == "applied"
 
@@ -1174,6 +1180,12 @@ def test_kiosk_lockdown_frontend_api_backend_reconcile_agent_broker_and_observed
     assert completed_disable.status_code == 200, completed_disable.text
 
     disabled_status_payload = display_agent._status()
+    disabled_status_payload["runtime"] = {
+        "state": "running",
+        "configuration_revision": 1,
+        "configuration_schema_version": 2,
+        "browser_pid": 4242,
+    }
     observed_disabled = http.put(
         f"/api/display-agent/clients/{CLIENT_ID}/status",
         headers={"Authorization": f"Bearer {display_token}"},
