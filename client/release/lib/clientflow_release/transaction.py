@@ -719,11 +719,40 @@ def _run(command: list[str], *, timeout: int = 180, check: bool = True) -> subpr
     return result
 
 
+def _prepare_remote_desktop_home_access(layout: Layout, kiosk_user: str = "clientflow-kiosk") -> None:
+    """Grant only the isolated RD agent ACL access to the canonical kiosk home."""
+    if layout.root != Path("/"):
+        return
+    if kiosk_user != "clientflow-kiosk":
+        raise TransactionError("Remote Desktop filadgang kræver canonical kiosk-user")
+    home = Path(f"/home/{kiosk_user}")
+    try:
+        metadata = home.lstat()
+    except FileNotFoundError as exc:
+        raise TransactionError("Remote Desktop kiosk-home mangler") from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise TransactionError("Remote Desktop kiosk-home er ikke en almindelig mappe")
+    resolved = home.resolve(strict=True)
+    if resolved != home:
+        raise TransactionError("Remote Desktop kiosk-home må ikke være et symlink")
+
+    agent = "clientflow-remote-desktop-agent"
+    # -P is deliberately physical: ACL provisioning must never follow symlinks
+    # out of /home/clientflow-kiosk. rwX grants write to files and traverse/write
+    # to directories while preserving the agent's non-root identity.
+    _run(["/usr/bin/setfacl", "-P", "-R", "-m", f"u:{agent}:rwX", str(home)], timeout=600)
+    _run([
+        "/usr/bin/find", str(home), "-xdev", "-type", "d", "-exec",
+        "/usr/bin/setfacl", "-m", f"d:u:{agent}:rwx", "{}", "+",
+    ], timeout=600)
+
+
 def _systemd_prepare(layout: Layout) -> None:
     if layout.root != Path("/"):
         return
     _run(["/usr/bin/systemd-sysusers", str(layout.sysusers_file)])
     _run(["/usr/bin/systemd-tmpfiles", "--create", str(layout.tmpfiles_file)])
+    _prepare_remote_desktop_home_access(layout)
     _run(["/usr/bin/systemctl", "daemon-reload"])
 
 
@@ -1302,6 +1331,7 @@ def install_staged_definitions(
         if layout.root == Path("/"):
             _run(["/usr/bin/systemd-sysusers", str(layout.sysusers_file)])
             _run(["/usr/bin/systemd-tmpfiles", "--create", str(layout.tmpfiles_file)])
+            _prepare_remote_desktop_home_access(layout, _definition_kiosk_user(layout, kiosk_user))
             _run(["/usr/bin/systemctl", "daemon-reload"])
             _quiesce_runtime(layout)
             _disable_target(layout)

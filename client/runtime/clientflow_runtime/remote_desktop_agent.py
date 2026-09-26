@@ -23,7 +23,10 @@ from .unix_rpc import RpcError, call
 
 CAPTURE_SOCKET = os.getenv("CLIENTFLOW_RD_CAPTURE_SOCKET", "/run/clientflow/remote-desktop-capture.sock")
 INPUT_SOCKET = os.getenv("CLIENTFLOW_RD_INPUT_SOCKET", "/run/clientflow/remote-desktop-input.sock")
-FILE_ROOT = Path(os.getenv("CLIENTFLOW_RD_FILE_ROOT", "/var/lib/clientflow/remote-desktop/files"))
+FILE_ROOT = Path(os.getenv("CLIENTFLOW_RD_FILE_ROOT", "/home/clientflow-kiosk"))
+FILE_STAGING_ROOT = Path(
+    os.getenv("CLIENTFLOW_RD_STAGING_ROOT", "/var/lib/clientflow/remote-desktop/uploads")
+)
 FPS = min(12.0, max(0.5, float(os.getenv("CLIENTFLOW_RD_FPS", "6"))))
 
 
@@ -32,7 +35,7 @@ class RemoteDesktopAgent:
         self.logger = configure_logging("clientflow.remote-desktop")
         self.credential = DomainCredential.load(Domain.REMOTE_DESKTOP)
         self.transport = DomainTransport(self.credential)
-        self.file_area = FileArea(FILE_ROOT)
+        self.file_area = FileArea(FILE_ROOT, FILE_STAGING_ROOT)
         self.stream_tasks: dict[str, asyncio.Task[None]] = {}
         self.stream_options: dict[str, dict[str, int]] = {}
         self.control_ws: Any = None
