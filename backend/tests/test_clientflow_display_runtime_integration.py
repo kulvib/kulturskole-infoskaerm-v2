@@ -233,7 +233,7 @@ def test_reset_browser_clears_profile_then_runs_ten_second_countdown(monkeypatch
     seen = []
     monkeypatch.setattr(runtime, "_status", lambda state_name, **details: seen.append((state_name, details)))
     monkeypatch.setattr(runtime, "_countdown", lambda step, seconds, **kwargs: seen.append((step, {"seconds": seconds, **kwargs})))
-    monkeypatch.setattr(runtime, "start_browser", lambda: {"started": True, "pid": 44})
+    monkeypatch.setattr(runtime, "start_browser", lambda **_kwargs: {"started": True, "pid": 44})
 
     result = runtime.reset_browser()
 
@@ -267,7 +267,7 @@ def test_backend_and_gui_start_clear_profile_and_count_down_ten_seconds(monkeypa
     seen = []
     monkeypatch.setattr(runtime, "_status", lambda state_name, **details: seen.append((state_name, details)))
     monkeypatch.setattr(runtime, "_countdown", lambda step, seconds, **kwargs: seen.append((step, {"seconds": seconds, **kwargs})))
-    monkeypatch.setattr(runtime, "start_browser", lambda: {"started": True, "pid": 77})
+    monkeypatch.setattr(runtime, "start_browser", lambda **_kwargs: {"started": True, "pid": 77})
 
     result = runtime.request_start_browser(source="backend")
     assert result["started"] is True
@@ -291,7 +291,7 @@ def test_calendar_wake_preserves_profile_without_start_countdown(monkeypatch, tm
     cookie.write_text("preserve-me", encoding="utf-8")
     runtime = runtime_module.DisplayRuntime()
     runtime.configuration = {"schema_version": 1, "revision": 1, "kiosk_url": "https://example.test"}
-    monkeypatch.setattr(runtime, "start_browser", lambda: {"started": True, "pid": 88})
+    monkeypatch.setattr(runtime, "start_browser", lambda **_kwargs: {"started": True, "pid": 88})
     monkeypatch.setattr(runtime, "_countdown", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("calendar wake must not count down")))
 
     result = runtime.request_start_browser(source="calendar")
@@ -308,7 +308,7 @@ def test_url_change_clears_profile_and_counts_down_ten_seconds(monkeypatch, tmp_
     runtime.configuration = {"schema_version": 1, "revision": 1, "kiosk_url": "https://old.example.test"}
     runtime.browser_requested = True
     monkeypatch.setattr(runtime, "stop_browser", lambda **_kwargs: {"stopped": True})
-    monkeypatch.setattr(runtime, "start_browser", lambda: {"started": True, "pid": 99})
+    monkeypatch.setattr(runtime, "start_browser", lambda **_kwargs: {"started": True, "pid": 99})
     seen = []
     monkeypatch.setattr(runtime, "_status", lambda state_name, **details: seen.append((state_name, details)))
     monkeypatch.setattr(runtime, "_countdown", lambda step, seconds, **kwargs: seen.append((step, {"seconds": seconds, **kwargs})))
@@ -401,7 +401,7 @@ def test_boot_marker_is_persisted_only_after_successful_browser_start(monkeypatc
 
     attempts = iter((RuntimeError("first start failed"), {"started": True, "pid": 6001}))
 
-    def fake_start_browser():
+    def fake_start_browser(**_kwargs):
         result = next(attempts)
         if isinstance(result, Exception):
             raise result
