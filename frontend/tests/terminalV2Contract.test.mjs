@@ -86,3 +86,46 @@ test("Terminal browser websocket reconnecter med frisk ticket efter backend rest
   assert.match(source, /createTerminalBrowserWsTicket/);
   assert.match(source, /Genopretter/);
 });
+
+test("Admin-password kan åbne Admin-terminal med Enter via samme gate som knappen", () => {
+  assert.match(source, /const adminOpenDisabled = !connected \|\| !agentConnected \|\| ptyReady \|\| \(!adminStepUpReady && !adminPassword\);/);
+  assert.match(source, /const handleAdminPasswordKeyDown = React\.useCallback/);
+  assert.match(source, /event\.key !== "Enter" \|\| event\.isComposing \|\| adminOpenDisabled/);
+  assert.match(source, /event\.preventDefault\(\);[\s\S]*?openAdminTerminal\(\);/);
+  assert.match(source, /onKeyDown=\{handleAdminPasswordKeyDown\}/);
+  assert.match(source, /disabled=\{adminOpenDisabled\}/);
+});
+
+test("Supportkommandoer dækker canonical V2 host/display/update-diagnostik", () => {
+  for (const token of [
+    "clientflow-display-agent.service",
+    "clientflow-display-runtime.service",
+    "clientflow-browser-guard.service",
+    "/var/lib/clientflow/display-runtime/configuration.json",
+    "/var/lib/clientflow/display-runtime/runtime-status.json",
+    "google-chrome-stable --version",
+    "clientflow-updater.timer",
+    "dpkg --audit",
+    "apt-get -o Debug::NoLocking=1 check",
+    "/var/run/reboot-required",
+    "timedatectl status",
+    "resolvectl status",
+    "Backend /health svarer ikke",
+  ]) {
+    assert.match(source, new RegExp(token.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")));
+  }
+});
+
+test("Supportkataloget genintroducerer ikke legacy repair-workarounds", () => {
+  for (const forbidden of [
+    "Reinstaller Python deps",
+    "Reset installer-cache",
+    "Reset stale apt-locks",
+    "Kør desktop installer",
+    "clientflow_service.service",
+    "client_remote_desktop_agent.service",
+    "clientflow_livestream.service",
+  ]) {
+    assert.doesNotMatch(source, new RegExp(forbidden.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")));
+  }
+});
