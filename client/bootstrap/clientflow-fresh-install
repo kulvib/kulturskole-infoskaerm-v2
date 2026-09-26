@@ -583,7 +583,6 @@ def _preactivation_gui() -> int:
         "XDG_CONFIG_HOME": str(xdg["config"]),
         "XDG_DATA_HOME": str(xdg["data"]),
         "CLIENTFLOW_GUI_MODE": "preactivation",
-        "CLIENTFLOW_GUI_HANDOFF": "1",
         "CLIENTFLOW_VERSION_PATH": str(version_path),
         "CLIENTFLOW_GUI_STATUS_PATH": str(gui_root / "local-gui-status.json"),
         "CLIENTFLOW_DISPLAY_RUNTIME_SOCKET": str(gui_root / "no-runtime.sock"),
@@ -661,9 +660,17 @@ def _ensure_preactivation_gui_started() -> None:
     )
 
 
-def _disable_preactivation_gui(*, remove_unit: bool = False) -> None:
+def _disable_preactivation_gui(
+    *,
+    remove_unit: bool = False,
+    preserve_running: bool = False,
+) -> None:
+    command = [str(SYSTEMCTL), "disable"]
+    if not preserve_running:
+        command.append("--now")
+    command.append(PREACTIVATION_GUI_SERVICE)
     subprocess.run(
-        [str(SYSTEMCTL), "disable", "--now", PREACTIVATION_GUI_SERVICE],
+        command,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
@@ -674,6 +681,13 @@ def _disable_preactivation_gui(*, remove_unit: bool = False) -> None:
             PREACTIVATION_GUI_UNIT.unlink()
         except FileNotFoundError:
             pass
+        if preserve_running:
+            # The service process has exec'd the staged local-gui.  Keep its
+            # current XDG/state tree alive until the graphical session ends; the
+            # unit file is already gone, so it cannot start on the next boot.
+            # Do not daemon-reload here: the loaded running service is deliberately
+            # retained in systemd memory for this boot only.
+            return
         shutil.rmtree(Path("/var/lib/clientflow/preactivation-gui"), ignore_errors=True)
         subprocess.run(
             [str(SYSTEMCTL), "daemon-reload"],
@@ -682,34 +696,6 @@ def _disable_preactivation_gui(*, remove_unit: bool = False) -> None:
             check=False,
             timeout=10,
         )
-
-
-def _retire_preactivation_gui_for_handoff() -> None:
-    """Retire the boot unit without terminating the visible GUI process.
-
-    After a healthy first activation the already-visible local GUI is allowed to
-    adopt the active Display runtime in-place.  The unit is disabled and removed
-    so it cannot return on the next boot, but the current process is deliberately
-    not stopped; the kiosk session owns its remaining lifetime.
-    """
-    subprocess.run(
-        [str(SYSTEMCTL), "disable", PREACTIVATION_GUI_SERVICE],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        timeout=10,
-    )
-    try:
-        PREACTIVATION_GUI_UNIT.unlink()
-    except FileNotFoundError:
-        pass
-    subprocess.run(
-        [str(SYSTEMCTL), "daemon-reload"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        timeout=10,
-    )
 
 
 def _canonical_staged_activation(release_id: str, approval: str) -> int:
@@ -887,7 +873,7 @@ def _disable_activation_waiter(*, remove_unit: bool = False) -> None:
 def _cleanup_completed_bootstrap() -> None:
     """Remove only exact bootstrap artifacts after healthy canonical activation."""
     _disable_activation_waiter(remove_unit=True)
-    _retire_preactivation_gui_for_handoff()
+    _disable_preactivation_gui(remove_unit=True, preserve_running=True)
     for path in (*BOOTSTRAP_LAUNCHERS, FACTORY_STATE, USB_STATE, PENDING_BUNDLE):
         try:
             path.unlink()

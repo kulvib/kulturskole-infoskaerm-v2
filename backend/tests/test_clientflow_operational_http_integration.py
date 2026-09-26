@@ -309,7 +309,11 @@ def test_pending_approval_runtime_protocol_presence_reconnect_and_command_roundt
     pending = _token(http, "status")
     assert pending.status_code == 401
 
-    approved = http.post(f"/api/clients/{CLIENT_ID}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
+    kiosk_url = "https://infoskaerm.example.test/client/42"
+    approved = http.post(
+        f"/api/clients/{CLIENT_ID}/approve",
+        json={"kiosk_url": kiosk_url},
+    )
     assert approved.status_code == 200, approved.text
 
     tokens = {}
@@ -335,6 +339,33 @@ def test_pending_approval_runtime_protocol_presence_reconnect_and_command_roundt
     assert presence_payload["display"]["boot_id"] == "boot-a"
     assert presence_payload["system"]["boot_id"] == "boot-a"
 
+    # Approval now durably commissions Display. Consume that earlier canonical
+    # command before this test starts asserting its own generic command roundtrip.
+    commissioning_claim = http.post(
+        f"/api/display-agent/clients/{CLIENT_ID}/commands/claim",
+        headers={"Authorization": f"Bearer {tokens['display']}"},
+        json={"lease_seconds": 60},
+    )
+    assert commissioning_claim.status_code == 200, commissioning_claim.text
+    commissioning = commissioning_claim.json()["claimed"]
+    assert commissioning is not None
+    assert commissioning["command"]["command_type"] == "apply_configuration"
+    assert commissioning["command"]["payload"] == {
+        "schema_version": 1,
+        "revision": 1,
+        "kiosk_url": kiosk_url,
+    }
+    commissioning_complete = http.post(
+        f"/api/display-agent/clients/{CLIENT_ID}/commands/{commissioning['command']['id']}/complete",
+        headers={"Authorization": f"Bearer {tokens['display']}"},
+        json={
+            "claim_token": commissioning["claim_token"],
+            "result": {"applied": True, "revision": 1},
+        },
+    )
+    assert commissioning_complete.status_code == 200, commissioning_complete.text
+    assert commissioning_complete.json()["completed"] is True
+
     now = utcnow()
     with Session(engine) as session:
         for domain in ("display", "system"):
@@ -359,7 +390,10 @@ def test_pending_approval_runtime_protocol_presence_reconnect_and_command_roundt
         command_ids = {
             row.domain: row.id
             for row in session.exec(
-                select(ClientCommand).where(ClientCommand.client_id == CLIENT_ID)
+                select(ClientCommand).where(
+                    ClientCommand.client_id == CLIENT_ID,
+                    ClientCommand.command_type == "integration_probe",
+                )
             ).all()
         }
 
@@ -413,7 +447,7 @@ def test_system_reboot_roundtrip_uses_real_route_agent_broker_and_boot_evidence(
 ):
     http, engine = operational_http
 
-    approved = http.post(f"/api/clients/{CLIENT_ID}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
     assert approved.status_code == 200, approved.text
 
     tokens: dict[str, str] = {}
@@ -538,7 +572,7 @@ def test_os_update_reboot_reconnect_reclaims_exact_same_command(operational_http
     first_boot = "11111111-1111-4111-8111-111111111111"
     second_boot = "22222222-2222-4222-8222-222222222222"
 
-    approved = http.post(f"/api/clients/{CLIENT_ID}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
     assert approved.status_code == 200, approved.text
 
     status_token_response = _token(http, "status")
@@ -627,22 +661,30 @@ def test_os_update_reboot_reconnect_reclaims_exact_same_command(operational_http
 def test_display_commissioning_uses_canonical_desired_state_and_real_apply_configuration(operational_http):
     http, engine = operational_http
 
-    approved = http.post(f"/api/clients/{CLIENT_ID}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
+    invalid = http.post(
+        f"/api/clients/{CLIENT_ID}/approve",
+        json={"kiosk_url": "http://infoskaerm.example.test/client/4242"},
+    )
+    assert invalid.status_code == 400, invalid.text
+    with Session(engine) as session:
+        client = session.get(Client, CLIENT_ID)
+        assert client is not None and client.status == "pending"
+        assert session.get(DisplayDesiredConfiguration, CLIENT_ID) is None
+
+    kiosk_url = "https://infoskaerm.example.test/client/4242"
+    approved = http.post(
+        f"/api/clients/{CLIENT_ID}/approve",
+        json={"kiosk_url": kiosk_url},
+    )
     assert approved.status_code == 200, approved.text
 
     display_token_response = _token(http, "display")
     assert display_token_response.status_code == 200, display_token_response.text
     display_token = display_token_response.json()["access_token"]
 
-    kiosk_url = "https://infoskaerm.example.test/client/4242"
-    configured = http.put(
-        f"/api/clients/{CLIENT_ID}/update",
-        json={"kiosk_url": kiosk_url},
-    )
-    assert configured.status_code == 200, configured.text
-
-    # A capable Display agent reports no applied configuration yet. The canonical
-    # backend must reconcile durable desired state into a real apply_configuration
+    # Approval itself durably carries the requested kiosk URL. A capable Display
+    # agent reports no applied configuration yet, and the canonical backend must
+    # reconcile that desired state into a real apply_configuration
     # command instead of relying on a synthetic transport probe.
     status = http.put(
         f"/api/display-agent/clients/{CLIENT_ID}/status",
@@ -743,7 +785,7 @@ def test_calendar_backend_route_agent_transition_broker_and_observed_status_roun
 ):
     http, engine = operational_http
 
-    approved = http.post(f"/api/clients/{CLIENT_ID}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
     assert approved.status_code == 200, approved.text
     display_token_response = _token(http, "display")
     assert display_token_response.status_code == 200, display_token_response.text
@@ -896,7 +938,11 @@ def test_kiosk_lockdown_frontend_api_backend_reconcile_agent_broker_and_observed
 ):
     http, engine = operational_http
 
-    approved = http.post(f"/api/clients/{CLIENT_ID}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
+    kiosk_url = "https://infoskaerm.example.test/client/42"
+    approved = http.post(
+        f"/api/clients/{CLIENT_ID}/approve",
+        json={"kiosk_url": kiosk_url},
+    )
     assert approved.status_code == 200, approved.text
     display_token_response = _token(http, "display")
     assert display_token_response.status_code == 200, display_token_response.text
@@ -910,7 +956,14 @@ def test_kiosk_lockdown_frontend_api_backend_reconcile_agent_broker_and_observed
         json={
             "schema_version": 1,
             "observed_state": "online",
-            "status_payload": {"integration": True},
+            "status_payload": {
+                "integration": True,
+                "runtime": {
+                    "state": "running",
+                    "configuration_revision": 1,
+                    "browser_pid": 4242,
+                },
+            },
             "agent_version": "1.3.18",
             "boot_id": "lockdown-boot-a",
         },
@@ -940,12 +993,17 @@ def test_kiosk_lockdown_frontend_api_backend_reconcile_agent_broker_and_observed
             "schema_version": 1,
             "observed_state": "online",
             "status_payload": {
+                "runtime": {
+                    "state": "running",
+                    "configuration_revision": 1,
+                    "browser_pid": 4242,
+                },
                 "kiosk_lockdown": {
                     "schema_version": 1,
                     "desired": False,
                     "status": "disabled",
                     "message": "Kiosk lockdown er ikke anvendt",
-                }
+                },
             },
             "agent_version": "1.3.18",
             "boot_id": "lockdown-boot-a",

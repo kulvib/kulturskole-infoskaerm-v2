@@ -468,7 +468,11 @@ def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed
     assert pending_update.status_code == 401, pending_update.text
 
     # 5. Backend approval enables those exact same six identities; no rotation/reprovisioning occurs.
-    approved = http.post(f"/api/clients/{client_id}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
+    kiosk_url = "https://infoskaerm.example.test/client/42"
+    approved = http.post(
+        f"/api/clients/{client_id}/approve",
+        json={"kiosk_url": kiosk_url},
+    )
     assert approved.status_code == 200, approved.text
 
     tokens: dict[str, str] = {}
@@ -549,6 +553,33 @@ def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed
     assert presence_payload["display"]["boot_id"] == "claim-boot-a"
     assert presence_payload["system"]["boot_id"] == "claim-boot-a"
 
+    # Approval now durably commissions Display. Consume that canonical command
+    # before asserting the unrelated generic Display/System probe roundtrip.
+    commissioning_claim = http.post(
+        f"/api/display-agent/clients/{client_id}/commands/claim",
+        headers={"Authorization": f"Bearer {tokens['display']}"},
+        json={"lease_seconds": 60},
+    )
+    assert commissioning_claim.status_code == 200, commissioning_claim.text
+    commissioning = commissioning_claim.json()["claimed"]
+    assert commissioning is not None
+    assert commissioning["command"]["command_type"] == "apply_configuration"
+    assert commissioning["command"]["payload"] == {
+        "schema_version": 1,
+        "revision": 1,
+        "kiosk_url": kiosk_url,
+    }
+    commissioning_complete = http.post(
+        f"/api/display-agent/clients/{client_id}/commands/{commissioning['command']['id']}/complete",
+        headers={"Authorization": f"Bearer {tokens['display']}"},
+        json={
+            "claim_token": commissioning["claim_token"],
+            "result": {"applied": True, "revision": 1},
+        },
+    )
+    assert commissioning_complete.status_code == 200, commissioning_complete.text
+    assert commissioning_complete.json()["completed"] is True
+
     # 7. Display/System command lease + completion roundtrip is bound to those same claim credentials.
     from service1.shared_domain import utcnow
     from datetime import timedelta
@@ -576,7 +607,12 @@ def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed
         session.commit()
         command_ids = {
             row.domain: row.id
-            for row in session.exec(select(ClientCommand).where(ClientCommand.client_id == client_id)).all()
+            for row in session.exec(
+                select(ClientCommand).where(
+                    ClientCommand.client_id == client_id,
+                    ClientCommand.command_type == "claim_integration_probe",
+                )
+            ).all()
         }
 
     for domain in ("display", "system"):
@@ -736,8 +772,8 @@ def test_two_fresh_installations_have_disjoint_identities_and_cross_client_auth_
     assert claim_a["update_auth"]["credential_id"] != claim_b["update_auth"]["credential_id"]
     assert claim_a["update_auth"]["key_id"] != claim_b["update_auth"]["key_id"]
 
-    approved_a = http.post(f"/api/clients/{client_a}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
-    approved_b = http.post(f"/api/clients/{client_b}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
+    approved_a = http.post(f"/api/clients/{client_a}/approve")
+    approved_b = http.post(f"/api/clients/{client_b}/approve")
     assert approved_a.status_code == 200, approved_a.text
     assert approved_b.status_code == 200, approved_b.text
 

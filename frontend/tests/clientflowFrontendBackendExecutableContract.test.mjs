@@ -246,11 +246,6 @@ test("ClientFlow frontend API functions execute the shared backend contract", as
     await invoke.clientActionStopBrowser(api);
     assert.deepEqual(parsedBody(calls[0]), { action: "stop", source: "actionbutton" });
 
-    currentOperation = "updateClientKiosk";
-    calls.length = 0;
-    await invoke.updateClientKiosk(api);
-    assert.deepEqual(parsedBody(calls[0]), { kiosk_url: "https://infoskaerm.example.test/client/42" });
-
     currentOperation = "approveClient";
     calls.length = 0;
     await invoke.approveClient(api);
@@ -258,6 +253,11 @@ test("ClientFlow frontend API functions execute the shared backend contract", as
       organization_id: 7,
       kiosk_url: "https://infoskaerm.example.test/client/42",
     });
+
+    currentOperation = "updateClientKiosk";
+    calls.length = 0;
+    await invoke.updateClientKiosk(api);
+    assert.deepEqual(parsedBody(calls[0]), { kiosk_url: "https://infoskaerm.example.test/client/42" });
 
     currentOperation = "updateClientLockdown";
     calls.length = 0;
