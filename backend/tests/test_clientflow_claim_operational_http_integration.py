@@ -468,7 +468,7 @@ def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed
     assert pending_update.status_code == 401, pending_update.text
 
     # 5. Backend approval enables those exact same six identities; no rotation/reprovisioning occurs.
-    approved = http.post(f"/api/clients/{client_id}/approve")
+    approved = http.post(f"/api/clients/{client_id}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
     assert approved.status_code == 200, approved.text
 
     tokens: dict[str, str] = {}
@@ -736,8 +736,8 @@ def test_two_fresh_installations_have_disjoint_identities_and_cross_client_auth_
     assert claim_a["update_auth"]["credential_id"] != claim_b["update_auth"]["credential_id"]
     assert claim_a["update_auth"]["key_id"] != claim_b["update_auth"]["key_id"]
 
-    approved_a = http.post(f"/api/clients/{client_a}/approve")
-    approved_b = http.post(f"/api/clients/{client_b}/approve")
+    approved_a = http.post(f"/api/clients/{client_a}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
+    approved_b = http.post(f"/api/clients/{client_b}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
     assert approved_a.status_code == 200, approved_a.text
     assert approved_b.status_code == 200, approved_b.text
 

@@ -237,7 +237,7 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
                 await approve_client(
                     _request("POST", f"/api/clients/{client_id}/approve"),
                     client_id,
-                    ClientApprovalRequest(organization_id=self.organization.id),
+                    ClientApprovalRequest(organization_id=self.organization.id, kiosk_url="https://infoskaerm.example.test/client/42"),
                     self.session,
                     self.admin,
                 )
@@ -319,7 +319,7 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
         approved = await approve_client(
             _request("POST", f"/api/clients/{client_id}/approve"),
             client_id,
-            ClientApprovalRequest(organization_id=self.organization.id),
+            ClientApprovalRequest(organization_id=self.organization.id, kiosk_url="https://infoskaerm.example.test/client/42"),
             self.session,
             self.admin,
         )

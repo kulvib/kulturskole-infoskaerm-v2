@@ -182,7 +182,8 @@
       "example_path": "/api/clients/42/approve",
       "success_status": "200",
       "request_properties": [
-        "organization_id"
+        "organization_id",
+        "kiosk_url"
       ],
       "response_properties": [
         "id",

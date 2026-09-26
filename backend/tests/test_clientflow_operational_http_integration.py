@@ -309,7 +309,7 @@ def test_pending_approval_runtime_protocol_presence_reconnect_and_command_roundt
     pending = _token(http, "status")
     assert pending.status_code == 401
 
-    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
     assert approved.status_code == 200, approved.text
 
     tokens = {}
@@ -413,7 +413,7 @@ def test_system_reboot_roundtrip_uses_real_route_agent_broker_and_boot_evidence(
 ):
     http, engine = operational_http
 
-    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
     assert approved.status_code == 200, approved.text
 
     tokens: dict[str, str] = {}
@@ -538,7 +538,7 @@ def test_os_update_reboot_reconnect_reclaims_exact_same_command(operational_http
     first_boot = "11111111-1111-4111-8111-111111111111"
     second_boot = "22222222-2222-4222-8222-222222222222"
 
-    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
     assert approved.status_code == 200, approved.text
 
     status_token_response = _token(http, "status")
@@ -627,7 +627,7 @@ def test_os_update_reboot_reconnect_reclaims_exact_same_command(operational_http
 def test_display_commissioning_uses_canonical_desired_state_and_real_apply_configuration(operational_http):
     http, engine = operational_http
 
-    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
     assert approved.status_code == 200, approved.text
 
     display_token_response = _token(http, "display")
@@ -743,7 +743,7 @@ def test_calendar_backend_route_agent_transition_broker_and_observed_status_roun
 ):
     http, engine = operational_http
 
-    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
     assert approved.status_code == 200, approved.text
     display_token_response = _token(http, "display")
     assert display_token_response.status_code == 200, display_token_response.text
@@ -896,7 +896,7 @@ def test_kiosk_lockdown_frontend_api_backend_reconcile_agent_broker_and_observed
 ):
     http, engine = operational_http
 
-    approved = http.post(f"/api/clients/{CLIENT_ID}/approve")
+    approved = http.post(f"/api/clients/{CLIENT_ID}/approve", json={"kiosk_url": "https://infoskaerm.example.test/client/42"})
     assert approved.status_code == 200, approved.text
     display_token_response = _token(http, "display")
     assert display_token_response.status_code == 200, display_token_response.text

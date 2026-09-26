@@ -249,6 +249,7 @@ class ClientOrganizationChangeResponse(ClientRead):
 
 class ClientApprovalRequest(BaseModel):
     organization_id: Optional[int] = None
+    kiosk_url: Optional[str] = None
 
 
 
@@ -2731,6 +2732,25 @@ async def approve_client(
             detail="Klientens isolerede Terminal/Remote Desktop provisioning er ufuldstændig",
         )
 
+    if data is not None and "kiosk_url" in data.model_fields_set:
+        desired_display = set_display_desired_kiosk_url(
+            session,
+            client_id=id,
+            kiosk_url=data.kiosk_url,
+            updated_by_user_id=getattr(user, "id", None),
+        )
+    else:
+        # Preserve the Display lock order (Client -> desired row) used by all
+        # other configuration writers, so concurrent approval/configuration
+        # changes cannot introduce a reverse-order deadlock.
+        lock_display_client(session, id)
+        desired_display = get_display_desired_configuration(session, id, for_update=True)
+    if desired_display is None or not str(desired_display.kiosk_url or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Kiosk URL skal angives før klienten kan godkendes",
+        )
+
     client.status = "approved"
     terminal_identity.status = "approved"
     terminal_identity.display_name = client.name
@@ -2779,6 +2799,7 @@ async def approve_client(
             "status_after": client.status,
             "organization_id_before": organization_before,
             "organization_id_after": client.organization_id,
+            "display_configuration_seeded": True,
             "calendar_seasons": calendar_results,
         },
     )

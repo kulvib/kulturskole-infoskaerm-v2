@@ -17,7 +17,7 @@ def test_pending_gui_is_a_separate_temporary_service_not_full_runtime() -> None:
     assert 'PREACTIVATION_GUI_SERVICE = "clientflow-preactivation-gui.service"' in source
     assert 'ExecStart=/usr/local/lib/clientflow-bootstrap/clientflow-fresh-install --preactivation-gui' in source
     assert 'Before=clientflow.target' in source
-    assert 'Conflicts=clientflow.target' in source
+    assert 'Conflicts=clientflow.target' not in source
     assert 'WantedBy=multi-user.target' in source
     assert '[str(SYSTEMCTL), "enable", PREACTIVATION_GUI_SERVICE]' in source
     assert 'NoNewPrivileges=yes' in source
@@ -45,6 +45,7 @@ def test_pending_gui_execs_exact_staged_gui_as_unprivileged_kiosk_user() -> None
     assert 'release_root / "VERSION"' in block
     assert 'os.path.lexists("/opt/clientflow/active")' in source
     assert '"CLIENTFLOW_GUI_MODE": "preactivation"' in block
+    assert '"CLIENTFLOW_GUI_HANDOFF": "1"' in block
     assert '"CLIENTFLOW_VERSION_PATH": str(version_path)' in block
     assert '"GDK_BACKEND": "wayland"' in block
     assert '"WAYLAND_DISPLAY": wayland_socket.name' in block
@@ -70,7 +71,10 @@ def test_customer_flow_installs_pending_gui_before_reboot_and_cleans_it_after_ac
     assert customer.index("_install_preactivation_gui_service()") < customer.index("_install_activation_waiter()")
     assert customer.index("_install_activation_waiter()") < customer.index("confirmed_reboot(")
     cleanup = source[source.index("def _cleanup_completed_bootstrap"):source.index("def _activation_wait")]
-    assert "_disable_preactivation_gui(remove_unit=True)" in cleanup
+    assert "_retire_preactivation_gui_for_handoff()" in cleanup
+    retire = source[source.index("def _retire_preactivation_gui_for_handoff"):source.index("def _canonical_staged_activation")]
+    assert '[str(SYSTEMCTL), "disable", PREACTIVATION_GUI_SERVICE]' in retire
+    assert "--now" not in retire
     wait = source[source.index("def _activation_wait"):source.index("def _factory_identity")]
     assert "_ensure_preactivation_gui_started()" in wait
 
@@ -88,6 +92,10 @@ def test_same_legacy_layout_gui_has_strict_status_only_pending_mode() -> None:
         assert section in source
     assert 'GUI_MODE = str(os.getenv("CLIENTFLOW_GUI_MODE") or "active").strip().lower()' in source
     assert 'PREACTIVATION_MODE = GUI_MODE == "preactivation"' in source
+    assert 'GUI_HANDOFF_ENABLED = str(os.getenv("CLIENTFLOW_GUI_HANDOFF") or "").strip() == "1"' in source
+    assert 'def _adopt_active_runtime_view_if_ready()' in source
+    assert 'PREACTIVATION_MODE = False' in source
+    assert source.index('_adopt_active_runtime_view_if_ready()') < source.index('runtime = _read_json(STATUS_PATH)', source.index('def refresh'))
     assert 'VERSION_PATH = Path(os.getenv("CLIENTFLOW_VERSION_PATH", "/opt/clientflow/active/VERSION"))' in source
     assert '"Pending / Venter på godkendelse"' in source
     assert '"Pending – venter på godkendelse"' in source

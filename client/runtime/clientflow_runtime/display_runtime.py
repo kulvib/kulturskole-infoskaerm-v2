@@ -52,6 +52,7 @@ BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 BOOT_MARKER_PATH = STATE_DIR / "browser-boot.json"
 CALENDAR_PREVIEW_PATH = STATE_DIR / "calendar-preview.json"
 LOCAL_GUI_STATUS_PATH = STATE_DIR / "local-gui-status.json"
+PREACTIVATION_GUI_STATUS_PATH = Path("/var/lib/clientflow/preactivation-gui/local-gui-status.json")
 LOCAL_DISPLAY_POWER_PATH = STATE_DIR / "local-display-power.json"
 DISPLAY_RESOLUTION_PATH = STATE_DIR / "display-resolution.json"
 DISPLAY_RESOLUTION_DESIRED_PATH = STATE_DIR / "display-resolution-desired.json"
@@ -64,6 +65,7 @@ class DisplayRuntime:
         self.logger = configure_logging("clientflow.display.runtime")
         self.browser: subprocess.Popen[bytes] | None = None
         self.local_gui: subprocess.Popen[bytes] | None = None
+        self.handoff_gui_pid: int | None = None
         self.configuration: dict[str, Any] = self._load_configuration()
         self.browser_requested = bool(self.configuration.get("kiosk_url"))
         self.next_start_attempt = 0.0
@@ -662,6 +664,38 @@ class DisplayRuntime:
         self._status("stopped", step=step)
         return {"recorded": True, "step": step}
 
+    def _handoff_gui_process(self) -> int | None:
+        status = self._load_json_object(PREACTIVATION_GUI_STATUS_PATH)
+        if status.get("state") != "running":
+            return None
+        try:
+            pid = int(status.get("pid") or 0)
+        except (TypeError, ValueError):
+            return None
+        if pid <= 1:
+            return None
+        proc = Path(f"/proc/{pid}")
+        try:
+            if proc.stat().st_uid != os.getuid():
+                return None
+            cmdline = (proc / "cmdline").read_bytes().replace(b"\x00", b" ").decode("utf-8", "replace")
+            os.kill(pid, 0)
+        except (OSError, ProcessLookupError):
+            return None
+        if "client-runtime/libexec/local-gui" not in cmdline:
+            return None
+        return pid
+
+    def _gui_available(self) -> bool:
+        if self.local_gui is not None and self.local_gui.poll() is None:
+            return True
+        pid = self._handoff_gui_process()
+        if pid is None:
+            self.handoff_gui_pid = None
+            return False
+        self.handoff_gui_pid = pid
+        return True
+
     def _local_gui_environment(self) -> dict[str, str]:
         environment = self._graphical_environment()
         gui_root = STATE_DIR / "local-gui"
@@ -684,6 +718,10 @@ class DisplayRuntime:
     def start_local_gui(self) -> dict[str, Any]:
         if self.local_gui and self.local_gui.poll() is None:
             return {"started": False, "already_running": True, "pid": self.local_gui.pid}
+        handoff_pid = self._handoff_gui_process()
+        if handoff_pid is not None:
+            self.handoff_gui_pid = handoff_pid
+            return {"started": False, "handoff_running": True, "pid": handoff_pid}
         if not SYSTEM_PYTHON.is_file() or not os.access(SYSTEM_PYTHON, os.X_OK):
             raise RuntimeError("Ubuntu system-Python mangler til ClientFlow GUI")
         if not LOCAL_GUI_SCRIPT.is_file() or LOCAL_GUI_SCRIPT.is_symlink():
@@ -941,7 +979,7 @@ class DisplayRuntime:
         except Exception:
             self.next_gui_start_attempt = time.monotonic() + 2.0
             self.logger.info("local_gui_start_waiting_for_session")
-        if self.configuration.get("kiosk_url") and self.local_gui is not None:
+        if self.configuration.get("kiosk_url") and self._gui_available():
             try:
                 self._start_browser_with_boot_policy()
             except Exception:
@@ -970,7 +1008,7 @@ class DisplayRuntime:
                     LOCAL_GUI_STATUS_PATH.unlink(missing_ok=True)
                     self.next_gui_start_attempt = time.monotonic() + 2.0
                     self.logger.warning("local_gui_exited", extra={"event": str(code)})
-                if self.local_gui is None and time.monotonic() >= self.next_gui_start_attempt:
+                if not self._gui_available() and time.monotonic() >= self.next_gui_start_attempt:
                     try:
                         self.start_local_gui()
                     except Exception:
@@ -988,7 +1026,7 @@ class DisplayRuntime:
                     and time.monotonic() >= self.next_start_attempt
                 ):
                     try:
-                        if self.local_gui is not None:
+                        if self._gui_available():
                             self._start_browser_with_boot_policy()
                     except Exception:
                         self.logger.info("browser_start_retry_waiting")

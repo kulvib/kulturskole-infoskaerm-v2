@@ -44,7 +44,18 @@ RELEASE_INPUT_PATH = Path(os.getenv("CLIENTFLOW_RELEASE_INPUT_PATH", "/opt/clien
 STATUS_SYNC_PATH = Path(os.getenv("CLIENTFLOW_STATUS_SYNC_PATH", "/var/lib/clientflow/status/last-success.json"))
 GUI_MODE = str(os.getenv("CLIENTFLOW_GUI_MODE") or "active").strip().lower()
 PREACTIVATION_MODE = GUI_MODE == "preactivation"
+GUI_HANDOFF_ENABLED = str(os.getenv("CLIENTFLOW_GUI_HANDOFF") or "").strip() == "1"
 CLIENT_ID = str(os.getenv("CLIENTFLOW_CLIENT_ID") or "-").strip() or "-"
+
+ACTIVE_SOCKET_PATH = "/run/clientflow/display/runtime.sock"
+ACTIVE_STATUS_PATH = Path("/var/lib/clientflow/display-runtime/runtime-status.json")
+ACTIVE_CONFIG_PATH = Path("/var/lib/clientflow/display-runtime/configuration.json")
+ACTIVE_RESOLUTION_STATUS_PATH = Path("/var/lib/clientflow/display-runtime/display-resolution.json")
+ACTIVE_RESOLUTION_DESIRED_PATH = Path("/var/lib/clientflow/display-runtime/display-resolution-desired.json")
+ACTIVE_GUI_STATUS_PATH = Path("/var/lib/clientflow/display-runtime/local-gui-status.json")
+ACTIVE_CALENDAR_PREVIEW_PATH = Path("/var/lib/clientflow/display-runtime/calendar-preview.json")
+ACTIVE_VERSION_PATH = Path("/opt/clientflow/active/VERSION")
+ACTIVE_RELEASE_INPUT_PATH = Path("/opt/clientflow/active/release/release-input.json")
 
 # Deployed ClientFlow 1.1.19 GUI visual contract.
 COLOR_GREEN = "#218739"
@@ -94,6 +105,43 @@ DISPLAY_RESOLUTION_PRESET_LABELS = {
     "uhd_4k_portrait": "Portrait 4K",
     "custom": "Custom",
 }
+
+
+def _adopt_active_runtime_view_if_ready() -> bool:
+    """Switch the already-visible preactivation GUI to active runtime state.
+
+    The handoff is deliberately process-preserving: approval may activate the
+    Display runtime, but the GTK window remains the same process.  The active
+    runtime socket is the readiness boundary because it is created only after
+    Display runtime has prepared its canonical state directory.
+    """
+    global PREACTIVATION_MODE
+    global SOCKET_PATH, STATUS_PATH, CONFIG_PATH
+    global RESOLUTION_STATUS_PATH, RESOLUTION_DESIRED_PATH
+    global GUI_STATUS_PATH, CALENDAR_PREVIEW_PATH, VERSION_PATH, RELEASE_INPUT_PATH
+
+    if not PREACTIVATION_MODE or not GUI_HANDOFF_ENABLED:
+        return False
+    if not ACTIVE_VERSION_PATH.is_file() or not Path(ACTIVE_SOCKET_PATH).exists():
+        return False
+
+    previous_gui_status = GUI_STATUS_PATH
+    SOCKET_PATH = ACTIVE_SOCKET_PATH
+    STATUS_PATH = ACTIVE_STATUS_PATH
+    CONFIG_PATH = ACTIVE_CONFIG_PATH
+    RESOLUTION_STATUS_PATH = ACTIVE_RESOLUTION_STATUS_PATH
+    RESOLUTION_DESIRED_PATH = ACTIVE_RESOLUTION_DESIRED_PATH
+    GUI_STATUS_PATH = ACTIVE_GUI_STATUS_PATH
+    CALENDAR_PREVIEW_PATH = ACTIVE_CALENDAR_PREVIEW_PATH
+    VERSION_PATH = ACTIVE_VERSION_PATH
+    RELEASE_INPUT_PATH = ACTIVE_RELEASE_INPUT_PATH
+    PREACTIVATION_MODE = False
+    if previous_gui_status != GUI_STATUS_PATH:
+        try:
+            previous_gui_status.unlink()
+        except OSError:
+            pass
+    return True
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -908,6 +956,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
 
     def refresh(self) -> bool:
         try:
+            _adopt_active_runtime_view_if_ready()
             runtime = _read_json(STATUS_PATH)
             baseline_public = _read_json(PUBLIC_CLIENT_PATH)
             synced_public = _read_json(SYNCED_PUBLIC_CLIENT_PATH)

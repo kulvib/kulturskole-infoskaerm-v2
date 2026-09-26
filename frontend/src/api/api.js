@@ -634,12 +634,12 @@ export async function requestLocalHostnameChange(id, name) {
   return readJsonResponse(res);
 }
 
-export async function approveClient(id, organization_id) {
+export async function approveClient(id, organization_id, kiosk_url) {
   const res = await apiFetch(`${apiUrl}/api/clients/${id}/approve`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
     credentials: "include",
-    body: organization_id ? JSON.stringify({ organization_id }) : undefined,
+    body: JSON.stringify({ organization_id, kiosk_url }),
   });
   if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
   if (!res.ok) throw new Error(await extractError(res, "Kunne ikke godkende klient"));

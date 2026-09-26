@@ -576,6 +576,7 @@ export default function ClientInfoPage() {
   const [deletedClients, setDeletedClients] = useState([]);
   const [organizations, setOrganizations] = useState([]);
   const [organizationSelections, setOrganizationSelections] = useState({});
+  const [kioskUrlSelections, setKioskUrlSelections] = useState({});
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [dragClients, setDragClients] = useState([]);
@@ -989,22 +990,48 @@ export default function ClientInfoPage() {
     }));
   }, []);
 
+  const handleKioskUrlChange = useCallback((clientId, kioskUrl) => {
+    setKioskUrlSelections((prev) => ({
+      ...prev,
+      [clientId]: kioskUrl,
+    }));
+  }, []);
+
   const handleApproveClient = useCallback(
     async (clientId) => {
       const organizationId = organizationSelections[clientId];
+      const currentClient = clients.find((client) => client.id === clientId);
+      const kioskUrl = String(kioskUrlSelections[clientId] ?? currentClient?.kiosk_url ?? "").trim();
 
       if (!organizationId) {
         showSnackbar("Vælg en organisation først!", "warning");
+        return;
+      }
+      if (!kioskUrl) {
+        showSnackbar("Angiv Kiosk URL før klienten godkendes.", "warning");
+        return;
+      }
+      try {
+        const parsed = new URL(kioskUrl);
+        const localHttp = parsed.protocol === "http:" && ["localhost", "127.0.0.1"].includes(parsed.hostname);
+        if (parsed.protocol !== "https:" && !localHttp) throw new Error("invalid kiosk URL");
+      } catch {
+        showSnackbar("Kiosk URL skal være en gyldig HTTPS-adresse.", "warning");
         return;
       }
 
       setApprovingClientId(clientId);
 
       try {
-        await approveClient(clientId, organizationId);
+        await approveClient(clientId, organizationId, kioskUrl);
         showSnackbar("Klient godkendt!", "success");
 
         setOrganizationSelections((prev) => {
+          const next = { ...prev };
+          delete next[clientId];
+          return next;
+        });
+        setKioskUrlSelections((prev) => {
           const next = { ...prev };
           delete next[clientId];
           return next;
@@ -1020,7 +1047,7 @@ export default function ClientInfoPage() {
         setApprovingClientId(null);
       }
     },
-    [organizationSelections, fetchClients, showSnackbar],
+    [organizationSelections, kioskUrlSelections, clients, fetchClients, showSnackbar],
   );
 
   const getOrganizationName = useCallback(
@@ -1746,6 +1773,7 @@ export default function ClientInfoPage() {
                     <TableCell>MAC-adresser</TableCell>
                     <TableCell>Tilføjet</TableCell>
                     <TableCell>Organisation</TableCell>
+                    <TableCell>Kiosk URL</TableCell>
                     <TableCell sx={{ textAlign: "center" }}>Godkend</TableCell>
                     <TableCell sx={{ textAlign: "center" }}>Fjern</TableCell>
                   </TableRow>
@@ -1753,7 +1781,7 @@ export default function ClientInfoPage() {
                 <TableBody>
                   {unapprovedClients.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} align="center">
+                      <TableCell colSpan={10} align="center">
                         Ingen ikke-godkendte klienter.
                       </TableCell>
                     </TableRow>
@@ -1949,6 +1977,18 @@ export default function ClientInfoPage() {
                                 </MenuItem>
                               ))}
                             </Select>
+                          </TableCell>
+                          <TableCell>
+                            <TextField
+                              size="small"
+                              type="url"
+                              value={kioskUrlSelections[client.id] ?? client.kiosk_url ?? ""}
+                              onChange={(e) => handleKioskUrlChange(client.id, e.target.value)}
+                              placeholder="https://…"
+                              disabled={isApproving || isRemoving}
+                              inputProps={{ "aria-label": `Kiosk URL for ${client.name || client.id}` }}
+                              sx={{ minWidth: { xs: 180, sm: 280 } }}
+                            />
                           </TableCell>
                           <TableCell align="center">
                             <Button
