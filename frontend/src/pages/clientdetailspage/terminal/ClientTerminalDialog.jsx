@@ -98,15 +98,23 @@ echo "== ClientFlow canonical services =="
 systemctl --no-pager --full status \
   clientflow-display-agent.service \
   clientflow-display-runtime.service \
+  clientflow-display-power-broker.socket \
+  clientflow-browser-guard.service \
+  clientflow-calendar.service \
   clientflow-status-agent.service \
   clientflow-system-agent.service \
+  clientflow-system-broker.socket \
   clientflow-livestream-agent.service \
   clientflow-livestream-broker.service \
   clientflow-livestream-producer.service \
   clientflow-livestream-uploader.service \
   clientflow-terminal-agent.service \
+  clientflow-standard-terminal-broker.socket \
+  clientflow-root-terminal-broker.socket \
   clientflow-remote-desktop-agent.service \
-  clientflow-remote-desktop-capture.service \
+  clientflow-remote-desktop-capture.socket \
+  clientflow-remote-desktop-input-broker.socket \
+  clientflow-time-integrity.timer \
   2>/dev/null || true
 
 echo
@@ -168,6 +176,7 @@ echo
 echo "== Canonical Display state =="
 for f in \
   /var/lib/clientflow/display-runtime/configuration.json \
+  /var/lib/clientflow/display-runtime/display-resolution-desired.json \
   /var/lib/clientflow/display-runtime/runtime-status.json \
   /var/lib/clientflow/display-runtime/local-gui-status.json; do
   echo "--- $f"
@@ -219,7 +228,7 @@ set -u
 echo "== Ubuntu / APT health =="
 if [[ -r /etc/os-release ]]; then
   . /etc/os-release
-  echo "OS: ${PRETTY_NAME:-ukendt}"
+  echo "OS: \${PRETTY_NAME:-ukendt}"
 fi
 uname -r
 
@@ -281,29 +290,50 @@ systemctl is-active systemd-timesyncd.service 2>/dev/null || true
 
 echo
 echo "== Backend reachability =="
-if [[ -r /etc/clientflow/clientflow.env ]]; then
-  set -a
-  . /etc/clientflow/clientflow.env
-  set +a
-fi
 python3 - <<'PY'
-import os
+import json
+import socket
+import ssl
+from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-url = os.environ.get("CLIENTFLOW_BASE_URL", "")
+from urllib.request import Request, urlopen
+
+credential_path = Path("/etc/clientflow/credentials/status.json")
+try:
+    credential = json.loads(credential_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print("Status credential: kan ikke læses:", exc)
+    raise SystemExit(0)
+
+url = str(credential.get("backend_url") or "").strip()
 host = urlparse(url).hostname or ""
 print("Backend URL:", url or "ikke konfigureret")
 print("Backend host:", host or "ikke konfigureret")
 if host:
-    import socket
     try:
         addresses = sorted({item[4][0] for item in socket.getaddrinfo(host, None)})
         print("DNS adresser:", ", ".join(addresses))
     except Exception as exc:
         print("DNS opslag fejlede:", exc)
+
+if not url:
+    raise SystemExit(0)
+
+ca_file = str(credential.get("tls_ca_file") or "").strip()
+try:
+    context = ssl.create_default_context(cafile=ca_file or None)
+    request = Request(
+        url.rstrip("/") + "/health",
+        headers={"User-Agent": "ClientFlow-support-diagnostics"},
+    )
+    with urlopen(request, timeout=10, context=context) as response:
+        print("Backend /health HTTP:", response.status)
+except HTTPError as exc:
+    print("Backend /health HTTP:", exc.code)
+except (URLError, OSError, ValueError) as exc:
+    print("Backend /health svarer ikke:", exc)
 PY
-if [[ -n "${CLIENTFLOW_BASE_URL:-}" ]]; then
-  curl -fsS -m 10 "${CLIENTFLOW_BASE_URL%/}/health" 2>/dev/null || echo "Backend /health svarer ikke"
-fi
 CLIENTFLOW_CMD`;
 
 const SUPPORT_COMMAND_GROUPS = [
