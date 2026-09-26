@@ -102,24 +102,36 @@ test("Supportkommandoer dækker canonical V2 host/display/update-diagnostik", ()
     "clientflow-display-runtime.service",
     "clientflow-browser-guard.service",
     "/var/lib/clientflow/display-runtime/configuration.json",
+    "/var/lib/clientflow/display-runtime/display-resolution-desired.json",
     "/var/lib/clientflow/display-runtime/runtime-status.json",
     "google-chrome-stable --version",
+    "clientflow-browser-guard.service",
+    "clientflow-calendar.service",
+    "clientflow-display-power-broker.socket",
+    "clientflow-system-broker.socket",
+    "clientflow-time-integrity.timer",
     "clientflow-updater.timer",
     "dpkg --audit",
     "apt-get -o Debug::NoLocking=1 check",
     "/var/run/reboot-required",
     "timedatectl status",
     "resolvectl status",
-    "Backend /health svarer ikke",
+    "/etc/clientflow/credentials/status.json",
+    "backend_url",
+    "Backend /health HTTP:",
+    "Backend /health svarer ikke:",
   ]) {
     assert.match(source, new RegExp(token.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")));
   }
 });
 
-test("Bash-parameterudvidelser i supportkommandoer er escaped fra JavaScript template interpolation", () => {
+test("Supportkommandoer bruger canonical V2 backend-konfiguration uden legacy env-fallback", () => {
   assert.ok(source.includes('echo "OS: \\${PRETTY_NAME:-ukendt}"'));
-  assert.ok(source.includes('if [[ -n "\\${CLIENTFLOW_BASE_URL:-}" ]]'));
-  assert.ok(source.includes('"\\${CLIENTFLOW_BASE_URL%/}/health"'));
+  assert.ok(source.includes('/etc/clientflow/credentials/status.json'));
+  assert.ok(source.includes('credential.get("backend_url")'));
+  assert.ok(source.includes('credential.get("tls_ca_file")'));
+  assert.doesNotMatch(source, /\/etc\/clientflow\/clientflow\.env/);
+  assert.doesNotMatch(source, /CLIENTFLOW_BASE_URL/);
   assert.doesNotMatch(source, /echo "OS: \${PRETTY_NAME:-ukendt}"/);
 });
 
