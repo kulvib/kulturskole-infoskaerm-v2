@@ -10,18 +10,29 @@ if ! flock -n 9; then
 fi
 
 APT_GET=/usr/bin/apt-get
+DPKG=/usr/bin/dpkg
 if [[ ! -x "$APT_GET" ]]; then
   echo "apt-get blev ikke fundet" >&2
   exit 1
 fi
+if [[ ! -x "$DPKG" ]]; then
+  echo "dpkg blev ikke fundet" >&2
+  exit 1
+fi
 
-"$APT_GET" -o Acquire::Retries=3 update
+# Runtime Ubuntu maintenance intentionally follows the same conservative
+# non-removing policy as factory readiness. New dependencies are allowed, but
+# already installed packages must not be removed implicitly by this action.
+"$APT_GET" -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3 update
 "$APT_GET" \
+  -o DPkg::Lock::Timeout=120 \
   -o Dpkg::Options::=--force-confdef \
   -o Dpkg::Options::=--force-confold \
-  -y full-upgrade
+  -y --with-new-pkgs upgrade
 
-"$APT_GET" -y autoremove
+# Do not report success until package state is healthy after the transaction.
+"$DPKG" --audit
+"$APT_GET" -o DPkg::Lock::Timeout=120 check
 
 # The helper never invokes reboot itself. It reports Ubuntu's reboot-required
 # boundary to the fixed-function System broker, which owns the controlled

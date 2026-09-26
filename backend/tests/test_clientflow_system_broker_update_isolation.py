@@ -183,9 +183,13 @@ def test_power_transition_stops_browser_then_waits_status_then_final_status(monk
     assert sleeps == [5.0, 5.0]
 
 
-def test_update_os_helper_uses_full_upgrade_autoremove_and_never_calls_systemctl():
+def test_update_os_helper_uses_non_removing_health_gated_upgrade_and_never_calls_systemctl():
     helper = (ROOT / "client/libexec/update-os").read_text(encoding="utf-8")
-    assert "full-upgrade" in helper
-    assert "autoremove" in helper
+    assert "DPkg::Lock::Timeout=120" in helper
+    assert "--with-new-pkgs upgrade" in helper
+    assert '"$DPKG" --audit' in helper
+    assert '"$APT_GET" -o DPkg::Lock::Timeout=120 check' in helper
+    assert "full-upgrade" not in helper
+    assert "autoremove" not in helper
     assert "CLIENTFLOW_REBOOT_REQUIRED=1" in helper
     assert "systemctl" not in helper

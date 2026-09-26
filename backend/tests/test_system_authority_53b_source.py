@@ -163,8 +163,12 @@ def test_53b_os_update_preserves_fixed_function_reboot_boundary_and_no_fake_prog
     assert 'CLIENTFLOW_REBOOT_REQUIRED=1' in helper
     assert 'CLIENTFLOW_REBOOT_REQUIRED=0' in helper
     assert '/var/run/reboot-required' in helper
-    assert 'full-upgrade' in helper
-    assert 'autoremove' in helper
+    assert 'DPkg::Lock::Timeout=120' in helper
+    assert '--with-new-pkgs upgrade' in helper
+    assert '"$DPKG" --audit' in helper
+    assert '"$APT_GET" -o DPkg::Lock::Timeout=120 check' in helper
+    assert 'full-upgrade' not in helper
+    assert 'autoremove' not in helper
     assert 'systemctl' not in helper
     assert '_journal_mark_reboot_requested' in broker
     assert '_cross_update_reboot_boundary()' in broker
