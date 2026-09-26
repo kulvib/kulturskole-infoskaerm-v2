@@ -29,13 +29,16 @@ test("Ubuntu action copy represents package installation, not a check-only actio
   assert.doesNotMatch(info, /Tjek\/opdater Ubuntu/);
 });
 
-test("optional kiosk lockdown is a superadmin desired-state control", () => {
+test("optional kiosk lockdown is a confirmed superadmin desired-state action", () => {
   const info = read("src/pages/clientdetailspage/ClientDetailsInfoSection.jsx");
   assert.match(info, /Kiosk lockdown/);
   assert.match(info, /desktop_lockdown_enabled/);
   assert.match(info, /desktop_lockdown_status/);
-  assert.match(info, /payload\.desktop_lockdown_enabled/);
-  assert.match(info, /disabled=\{saving \|\| !isSuperadmin\}/);
+  assert.match(info, /apiUpdateClient\(client\.id, \{ desktop_lockdown_enabled: desktopLockdownEnabled \}\)/);
+  assert.match(info, /Aktivér kiosk lockdown\?/);
+  assert.match(info, /Deaktivér kiosk lockdown\?/);
+  assert.match(info, /disabled=\{saving \|\| !isSuperadmin \|\| lockdownPending\}/);
+  assert.match(info, /\["superadmin", "admin", "viewer"\]\.includes\(role\)/);
 });
 
 test("kiosk URL accepts a bare hostname and validates it as HTTPS", () => {
@@ -76,5 +79,6 @@ test("Browser Guard refresh policy is dynamically editable under Display configu
   assert.match(info, /browser_refresh_interval_sec/);
   assert.match(info, /Automatisk browser refresh \(sek\.\)/);
   assert.match(info, /0 = slået fra\. Ellers 60–86400 sekunder\./);
-  assert.match(info, /payload\.browser_refresh_interval_sec = refreshSeconds/);
+  assert.match(info, /return \{ kiosk_url: kioskUrl, browser_refresh_interval_sec: refreshSeconds \}/);
+  assert.match(info, /apiUpdateClient\(client\.id, payload\)/);
 });
