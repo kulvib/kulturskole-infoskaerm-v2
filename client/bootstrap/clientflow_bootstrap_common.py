@@ -30,6 +30,8 @@ NMCLI = Path("/usr/bin/nmcli")
 NETPLAN = Path("/usr/sbin/netplan")
 IP = Path("/usr/sbin/ip")
 RUNUSER = Path("/usr/sbin/runuser")
+DBUS_RUN_SESSION = Path("/usr/bin/dbus-run-session")
+GSETTINGS = Path("/usr/bin/gsettings")
 XDG_USER_DIR = Path("/usr/bin/xdg-user-dir")
 GIO = Path("/usr/bin/gio")
 VISUDO = Path("/usr/sbin/visudo")
@@ -502,6 +504,61 @@ def validate_factory_popup_autostarts(user: str) -> None:
             raise BootstrapError(f"Ubuntu popup-autostart override har ugyldigt indhold for {user}: {path}")
 
 
+def _factory_kiosk_desktop_settings() -> tuple[tuple[str, str, str], ...]:
+    """Desktop icons that must be hidden before the kiosk user's first login."""
+    return (
+        ("org.gnome.shell.extensions.ding", "show-home", "false"),
+        ("org.gnome.shell.extensions.ding", "show-trash", "false"),
+    )
+
+
+def _factory_user_gsettings(user: str, action: str, schema: str, key: str, value: str | None = None) -> str:
+    username = validate_local_user(user)
+    account = pwd.getpwnam(username)
+    home = Path(account.pw_dir)
+    for binary in (RUNUSER, DBUS_RUN_SESSION, GSETTINGS):
+        if not binary.is_file():
+            raise BootstrapError(f"GNOME desktop-klargøring mangler {binary}")
+    command = [
+        str(RUNUSER),
+        "-u",
+        username,
+        "--",
+        "env",
+        f"HOME={home}",
+        str(DBUS_RUN_SESSION),
+        "--",
+        str(GSETTINGS),
+        action,
+        schema,
+        key,
+    ]
+    if value is not None:
+        command.append(value)
+    result = _run(command, timeout=30, check=True)
+    return (result.stdout or "").strip()
+
+
+def validate_factory_kiosk_desktop_settings(user: str = KIOSK_USER) -> None:
+    if validate_local_user(user) != KIOSK_USER:
+        raise BootstrapError("Factory desktop-baseline må kun anvendes på canonical kiosk-bruger")
+    for schema, key, expected in _factory_kiosk_desktop_settings():
+        actual = _factory_user_gsettings(user, "get", schema, key)
+        if actual != expected:
+            raise BootstrapError(
+                f"Kiosk desktop-setting matcher ikke før første reboot: {schema} {key}={actual!r}, forventede {expected!r}"
+            )
+
+
+def prepare_factory_kiosk_desktop_settings(user: str = KIOSK_USER) -> None:
+    if validate_local_user(user) != KIOSK_USER:
+        raise BootstrapError("Factory desktop-baseline må kun anvendes på canonical kiosk-bruger")
+    for schema, key, value in _factory_kiosk_desktop_settings():
+        _factory_user_gsettings(user, "set", schema, key, value)
+    validate_factory_kiosk_desktop_settings(user)
+    ok("Kiosk-skrivebord er klargjort uden Hjem/Papirkurv før første login.")
+
+
 def provision_factory_human_accounts() -> None:
     require_root()
     password = _prompt_admin_password()
@@ -524,6 +581,7 @@ def provision_factory_human_accounts() -> None:
     for username in (KIOSK_USER, ADMIN_USER):
         prepare_factory_gnome_initial_setup_markers(username)
         prepare_factory_popup_autostarts(username)
+    prepare_factory_kiosk_desktop_settings(KIOSK_USER)
     ok("cfadmin og clientflow-kiosk er oprettet og valideret")
 
 
@@ -768,6 +826,7 @@ def validate_factory_handoff(*, client_name: str, operator_user: str) -> None:
     for username in (KIOSK_USER, ADMIN_USER):
         validate_factory_gnome_initial_setup_markers(username)
         validate_factory_popup_autostarts(username)
+    validate_factory_kiosk_desktop_settings(KIOSK_USER)
     gdm = GDM_CONFIG.read_text(encoding="utf-8") if GDM_CONFIG.is_file() else ""
     if "AutomaticLoginEnable=true" not in gdm or f"AutomaticLogin={KIOSK_USER}" not in gdm or "WaylandEnable=true" not in gdm:
         raise BootstrapError("GDM factory-handoff peger ikke på canonical kiosk-bruger")

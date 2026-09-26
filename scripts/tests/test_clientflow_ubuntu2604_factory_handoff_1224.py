@@ -179,3 +179,73 @@ def test_factory_handoff_fails_closed_unless_both_onboarding_markers_are_validat
     ready = "write_factory_state(client_name=client_name, operator_user=operator_user, handoff_ready=True)"
     assert "for username in (KIOSK_USER, ADMIN_USER):" in handoff
     assert handoff.index(marker_check) < handoff.index(ready)
+
+
+def test_factory_provisioning_hides_virtual_home_before_first_kiosk_login() -> None:
+    source = COMMON.read_text(encoding="utf-8")
+    provision = source[source.index("def provision_factory_human_accounts") : source.index("def _replace_ini_section_keys")]
+    settings = source[source.index("def _factory_kiosk_desktop_settings") : source.index("def provision_factory_human_accounts")]
+    assert '("org.gnome.shell.extensions.ding", "show-home", "false")' in settings
+    assert '("org.gnome.shell.extensions.ding", "show-trash", "false")' in settings
+    assert "prepare_factory_kiosk_desktop_settings(KIOSK_USER)" in provision
+
+
+def test_factory_handoff_fails_closed_unless_kiosk_desktop_icons_are_hidden() -> None:
+    source = COMMON.read_text(encoding="utf-8")
+    handoff = source[source.index("def validate_factory_handoff") : source.index("def load_usb_state")]
+    desktop_check = "validate_factory_kiosk_desktop_settings(KIOSK_USER)"
+    ready = "write_factory_state(client_name=client_name, operator_user=operator_user, handoff_ready=True)"
+    assert desktop_check in handoff
+    assert handoff.index(desktop_check) < handoff.index(ready)
+
+
+def test_factory_kiosk_desktop_settings_use_same_ding_contract_as_runtime() -> None:
+    bootstrap = COMMON.read_text(encoding="utf-8")
+    runtime = (ROOT / "client/runtime/clientflow_runtime/display_platform_prepare.py").read_text(encoding="utf-8")
+    for setting in (
+        '("org.gnome.shell.extensions.ding", "show-home", "false")',
+        '("org.gnome.shell.extensions.ding", "show-trash", "false")',
+    ):
+        assert setting in bootstrap
+        assert setting in runtime
+
+
+def test_factory_kiosk_desktop_prepare_sets_and_reads_back_both_virtual_icons(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_common()
+    calls: list[tuple[str, str, str, str, str | None]] = []
+
+    def fake_gsettings(user: str, action: str, schema: str, key: str, value: str | None = None) -> str:
+        calls.append((user, action, schema, key, value))
+        return "false" if action == "get" else ""
+
+    monkeypatch.setattr(module, "_factory_user_gsettings", fake_gsettings)
+    monkeypatch.setattr(module, "validate_local_user", lambda username: username)
+
+    module.prepare_factory_kiosk_desktop_settings(module.KIOSK_USER)
+
+    expected = [
+        (module.KIOSK_USER, "set", "org.gnome.shell.extensions.ding", "show-home", "false"),
+        (module.KIOSK_USER, "set", "org.gnome.shell.extensions.ding", "show-trash", "false"),
+        (module.KIOSK_USER, "get", "org.gnome.shell.extensions.ding", "show-home", None),
+        (module.KIOSK_USER, "get", "org.gnome.shell.extensions.ding", "show-trash", None),
+    ]
+    assert calls == expected
+
+
+def test_factory_kiosk_desktop_validation_fails_closed_if_home_is_still_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_common()
+
+    def fake_gsettings(user: str, action: str, schema: str, key: str, value: str | None = None) -> str:
+        assert user == module.KIOSK_USER
+        assert action == "get"
+        return "true" if key == "show-home" else "false"
+
+    monkeypatch.setattr(module, "_factory_user_gsettings", fake_gsettings)
+    monkeypatch.setattr(module, "validate_local_user", lambda username: username)
+
+    with pytest.raises(module.BootstrapError, match="show-home"):
+        module.validate_factory_kiosk_desktop_settings(module.KIOSK_USER)
