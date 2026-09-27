@@ -1157,6 +1157,18 @@ export async function requestOsUpdate(clientId) {
   return readJsonResponse(res);
 }
 
+export async function requestFirmwareUpdate(clientId) {
+  const res = await apiFetch(`${apiUrl}/api/clients/${encodeURIComponent(clientId)}/firmware-update`, {
+    method: "POST",
+    headers: authHeaders(),
+    credentials: "include",
+  });
+  if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
+  if (!res.ok)
+    throw new Error(await extractError(res, "Kunne ikke anmode om firmwareopdatering"));
+  return readJsonResponse(res);
+}
+
 // ---------------------------------------------------------------------------
 // ClientFlow selfupdate
 // ---------------------------------------------------------------------------

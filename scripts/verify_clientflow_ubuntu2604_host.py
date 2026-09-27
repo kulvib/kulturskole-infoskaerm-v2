@@ -134,7 +134,7 @@ def _source_contract(repo: Path) -> dict[str, object]:
             path = release_root / "runtime/bin" / name
             path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             path.chmod(0o755)
-        for name in ("display-power", "update-os"):
+        for name in ("display-power", "update-os", "update-firmware"):
             (release_root / "client-runtime/libexec" / name).chmod(0o755)
 
         summary = validate_release_systemd_contract(release_root)

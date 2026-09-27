@@ -527,6 +527,15 @@ class ClientRead(ClientBase):
     ubuntu_update_progress: Optional[int] = None
     ubuntu_update_package_count: Optional[int] = None
     ubuntu_update_reboot_required: Optional[bool] = None
+    firmware: Optional[Dict[str, Any]] = None
+    pending_firmware_update: Optional[bool] = False
+    firmware_update_status: Optional[str] = "ready"
+    firmware_update_message: Optional[str] = None
+    firmware_update_error: Optional[str] = None
+    firmware_update_started_at: Optional[datetime] = None
+    firmware_update_updated_at: Optional[datetime] = None
+    firmware_update_finished_at: Optional[datetime] = None
+    firmware_update_reboot_required: Optional[bool] = None
     desktop_lockdown_enabled: Optional[bool] = False
     desktop_lockdown_status: Optional[str] = "unknown"
     desktop_lockdown_message: Optional[str] = None

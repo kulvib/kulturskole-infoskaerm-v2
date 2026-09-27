@@ -38,7 +38,7 @@ def test_53b_system_commands_use_shared_system_queue_only() -> None:
 
     assert 'SYSTEM_DOMAIN = "system"' in control
     assert 'domain=SYSTEM_DOMAIN' in control
-    for command in ("reboot", "shutdown", "update_os", "change_hostname", "change_password"):
+    for command in ("reboot", "shutdown", "update_os", "update_firmware", "change_hostname", "change_password"):
         assert f'"{command}"' in control
         assert f'"{command}"' in broker
     assert "Domain.SYSTEM" in agent
@@ -182,6 +182,6 @@ def test_53b_os_update_preserves_fixed_function_reboot_boundary_and_no_fake_prog
     clients = read("backend/service1/routers/clients.py")
     shared = read("backend/service1/shared_domain.py")
     assert '"requested_boot_id": presence.status.boot_id' in clients
-    assert 'row.command_type == "update_os"' in shared
+    assert 'row.command_type in {"update_os", "update_firmware"}' in shared
     assert 'current_boot_id != requested_boot_id' in shared
     assert 'row.status = "queued"' in shared

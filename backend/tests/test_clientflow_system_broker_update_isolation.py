@@ -22,6 +22,7 @@ LEGACY_RELEASE_ACTIONS = ("update_clientflow", "activate_release", "rollback_rel
 def test_system_broker_has_no_parallel_clientflow_release_authority(monkeypatch):
     assert system_broker.ALLOWED_ACTIONS == {
         "update_os",
+        "update_firmware",
         "reboot",
         "shutdown",
         "change_hostname",
@@ -124,13 +125,14 @@ def test_system_broker_boot_change_never_auto_completes_non_disruptive_action(
         system_broker._journal_begin(42, command_id, "change_hostname")
 
 
-def test_update_os_reboot_requested_journal_recovers_after_boot_change(monkeypatch, tmp_path):
+@pytest.mark.parametrize("update_action", ["update_os", "update_firmware"])
+def test_update_reboot_requested_journal_recovers_after_boot_change(monkeypatch, tmp_path, update_action):
     first_boot = "11111111-1111-4111-8111-111111111111"
     second_boot = "22222222-2222-4222-8222-222222222222"
     _bind_temp_journal(monkeypatch, tmp_path, boot_id=first_boot)
     command_id = "00000000-0000-4000-8000-000000000096"
 
-    lock_fd, completed = system_broker._journal_begin(42, command_id, "update_os")
+    lock_fd, completed = system_broker._journal_begin(42, command_id, update_action)
     assert completed is None
     system_broker._journal_mark_reboot_requested(
         lock_fd,
@@ -147,7 +149,7 @@ def test_update_os_reboot_requested_journal_recovers_after_boot_change(monkeypat
     os.close(lock_fd)
 
     system_broker.BOOT_ID_PATH.write_text(second_boot + "\n", encoding="ascii")
-    lock_fd, completed = system_broker._journal_begin(42, command_id, "update_os")
+    lock_fd, completed = system_broker._journal_begin(42, command_id, update_action)
     try:
         assert completed["recovered_after_boot_change"] is True
         assert completed["reboot_required"] is True
