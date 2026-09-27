@@ -21,6 +21,9 @@ def test_source_freeze_has_no_delivery_package_artifacts() -> None:
         "DELIVERY_MANIFEST.sha256",
         "README.txt",
         "SHA256SUMS_PACKAGE.txt",
+        "clientflow-factory-post-reboot-readiness-os-update-ci-fix-CHANGED_FILES.txt",
+        "clientflow-factory-post-reboot-readiness-os-update-ci-fix-DELETE_FILES.txt",
+        "clientflow-factory-post-reboot-readiness-os-update-ci-fix-TEST_RESULTS.txt",
     }
     leaked = sorted(name for name in forbidden_root_artifacts if (ROOT / name).exists())
     leaked.extend(path.name for path in sorted(ROOT.glob("*.patch")))
