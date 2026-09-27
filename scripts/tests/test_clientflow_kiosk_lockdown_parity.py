@@ -106,7 +106,10 @@ def test_optional_lockdown_restores_legacy_two_second_quicksettings_guard_contra
     assert "while _desired()" in guard
     assert "lockdown_quicksettings=True" in guard
     assert '[str(NMCLI), "networking", "on"]' in session
-    assert '("org.gnome.desktop.notifications", "show-banners", "true")' in session
+    assert '("org.gnome.desktop.notifications", "show-banners", "false")' in session
+    assert '("org.gnome.desktop.notifications", "show-in-lock-screen", "false")' in session
+    assert '("org.gnome.desktop.notifications", "show-banners", "true")' not in session
+    assert 'KIOSK_NOTIFICATION_BASELINE' in lockdown
     assert 'QUICK_GUARD_UNIT = "clientflow-kiosk-quicksettings-guard.service"' in lockdown
     assert '_set_quick_guard_running(True)' in lockdown
     assert '_set_quick_guard_running(False)' in lockdown

@@ -111,17 +111,16 @@ def _apply_gsettings(record: pwd.struct_passwd, *, lockdown_quicksettings: bool 
     if not bus.exists():
         print("CLIENTFLOW_KIOSK_SESSION_POLICY_OPTIONAL: session bus ikke klar", flush=True)
         return
+    # Notification banners are never part of the optional lockdown toggle.
+    # They are a permanent kiosk-session baseline: Ubuntu/GNOME must not place
+    # desktop banners over ClientFlow content. The recurring session policy and
+    # the optional quick-settings guard both reassert the same fail-closed values.
     settings = [
         ("org.gnome.settings-daemon.plugins.color", "night-light-enabled", "false"),
         ("org.gnome.desktop.interface", "color-scheme", "'default'"),
+        ("org.gnome.desktop.notifications", "show-banners", "false"),
+        ("org.gnome.desktop.notifications", "show-in-lock-screen", "false"),
     ]
-    if lockdown_quicksettings:
-        settings.extend(
-            [
-                ("org.gnome.desktop.notifications", "show-banners", "true"),
-                ("org.gnome.desktop.notifications", "show-in-lock-screen", "false"),
-            ]
-        )
     for schema, key, value in settings:
         _run(_user_command(record, [str(GSETTINGS), "set", schema, key, value]))
 
