@@ -59,9 +59,14 @@ DENIED_EXACT = (
 # cannot use a global local.d lock here because optional lockdown is kiosk-user-only
 # and cfadmin must remain unaffected. These security-critical kiosk values are therefore
 # actively verified and reconciled through the fixed-function broker.
+KIOSK_NOTIFICATION_BASELINE = (
+    ("org.gnome.desktop.notifications", "show-banners", "false"),
+    ("org.gnome.desktop.notifications", "show-in-lock-screen", "false"),
+)
 ENFORCED_GSETTINGS = (
     ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
     ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
+    *KIOSK_NOTIFICATION_BASELINE,
 )
 OPTIONAL_GSETTINGS = (
     ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
@@ -72,8 +77,6 @@ OPTIONAL_GSETTINGS = (
     ("org.gnome.shell", "favorite-apps", "[]"),
     ("org.gnome.settings-daemon.plugins.color", "night-light-enabled", "false"),
     ("org.gnome.desktop.interface", "color-scheme", "'default'"),
-    ("org.gnome.desktop.notifications", "show-banners", "true"),
-    ("org.gnome.desktop.notifications", "show-in-lock-screen", "false"),
     ("org.gnome.shell.extensions.ding", "show-home", "false"),
 )
 
@@ -420,6 +423,10 @@ def _apply_gsettings(kiosk_user: str, record, enabled: bool) -> None:
     for schema, key, value in OPTIONAL_GSETTINGS:
         command = [*base, "set", schema, key, value] if enabled else [*base, "reset", schema, key]
         _run(command, required=False)
+    # Popup suppression belongs to the kiosk baseline, not the optional lockdown.
+    # Never reset these keys during rollback; keep Ubuntu/GNOME banners hidden.
+    for schema, key, value in KIOSK_NOTIFICATION_BASELINE:
+        _run([*base, "set", schema, key, value], required=False)
 
 
 def _set_quick_guard_running(enabled: bool) -> None:

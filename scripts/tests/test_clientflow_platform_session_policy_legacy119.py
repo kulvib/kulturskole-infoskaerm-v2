@@ -134,6 +134,8 @@ def test_kiosk_session_policy_source_contains_audio_and_gnome_baseline():
         '"set-volume", "@DEFAULT_AUDIO_SINK@", "0.60"',
         '"night-light-enabled", "false"',
         '"color-scheme", "\'default\'"',
+        '"show-banners", "false"',
+        '"show-in-lock-screen", "false"',
     ):
         assert needle in source
     assert "clientflow-kiosk" in source
