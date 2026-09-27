@@ -49,10 +49,9 @@ def _method_local_tuple(source: str, class_name: str, method_name: str, name: st
                             return ast.literal_eval(child.value)
     raise AssertionError(f"{class_name}.{method_name} local {name} not found")
 
-def test_staged_1326_1227_source_identity_leads_promoted_runtime_catalog_by_one():
-    # Source/build identity moves ahead before runtime selection. Exact 1227
-    # candidate bytes must cross build/acceptance/approval/publication before
-    # catalog promotion is allowed.
+def test_promoted_1326_1227_source_identity_matches_runtime_catalog():
+    # Exact 1227 approved bytes have crossed build/approval/transport/publication
+    # before selector promotion, so source/build identity and runtime selection align.
     assert VERSION.read_text(encoding="utf-8").strip() == "1.3.26"
     release_input = json.loads(_source(RELEASE_INPUT))
     assert release_input["release_sequence"] == 1227
@@ -61,13 +60,13 @@ def test_staged_1326_1227_source_identity_leads_promoted_runtime_catalog_by_one(
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
-    assert catalog["catalog_sequence"] == 1226
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert catalog["latest_stable"] == "1.3.25"
-    assert catalog["default_install_version"] == "1.3.25"
+    assert catalog["catalog_sequence"] == 1227
+    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert catalog["latest_stable"] == "1.3.26"
+    assert catalog["default_install_version"] == "1.3.26"
     selected = catalog["releases"][0]
-    assert selected["release_id"] == "clientflow-1.3.25-seq-1226"
-    assert selected["release_sequence"] == 1226
+    assert selected["release_id"] == "clientflow-1.3.26-seq-1227"
+    assert selected["release_sequence"] == 1227
 
 
 def test_dispatch_uses_staged_immutable_release_cli_not_stable_updater():
