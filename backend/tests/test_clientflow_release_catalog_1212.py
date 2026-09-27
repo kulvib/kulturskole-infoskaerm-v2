@@ -63,7 +63,7 @@ def test_catalog_1226_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1226_is_aligned_with_exact_1325_source_after_publication() -> None:
+def test_catalog_1226_remains_selected_while_1326_1227_source_is_staged() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -73,13 +73,13 @@ def test_catalog_1226_is_aligned_with_exact_1325_source_after_publication() -> N
     )
     source_sequence = int(release_input["release_sequence"])
 
-    # The exact 1.3.25/1226 source has crossed reproducibility, Ubuntu 26.04
-    # executable-candidate, manual approval and immutable publication. Runtime
-    # selection may therefore align with the already-published source identity.
-    assert source_version == "1.3.25"
-    assert source_sequence == 1226
+    # Source/build identity moves first. Runtime selection must remain on the
+    # last approved/published release until exact 1227 bytes have crossed the
+    # release gates and immutable publication has been independently verified.
+    assert source_version == "1.3.26"
+    assert source_sequence == 1227
     assert data["catalog_sequence"] == 1226
-    assert source_sequence == data["catalog_sequence"]
+    assert source_sequence == data["catalog_sequence"] + 1
 
     assert data["latest_stable"] == "1.3.25"
     assert data["default_install_version"] == "1.3.25"

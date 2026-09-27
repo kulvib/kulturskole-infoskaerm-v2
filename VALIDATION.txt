@@ -301,3 +301,29 @@ PENDING: reproducible build + Ubuntu 26.04 executable-candidate gate + manual ap
 PENDING: immutable publication and independent store re-read.
 PENDING: only then catalog promotion to 1.3.25/1226 and canonical USB regeneration.
 PENDING: clean physical Ubuntu 26.04 fresh-install acceptance from phase 0.
+
+================================================================================
+ClientFlow 1.3.26 / sequence 1227 source-freeze validation
+2026-09-27
+================================================================================
+
+PASS: client/VERSION = 1.3.26.
+PASS: release_sequence = 1227.
+PASS: candidate release id = clientflow-1.3.26-seq-1227.
+PASS: minimum Ubuntu LTS remains 26.04 amd64/Wayland.
+PASS: runtime Python remains 3.13.14.
+PASS: database migration head remains 20260922_56a_calendar_rev.
+PASS: runtime catalog deliberately remains 1.3.25 / sequence 1226.
+PASS: source/build sequence leads catalog sequence by exactly one.
+PASS: catalog promotion is not part of this freeze.
+PASS: post-1226 readiness, parity, kiosk-hardening, update-safety and
+      Control Room configuration closures are included in source.
+PASS: repo/database audit opened no speculative performance change before
+      physical runtime evidence.
+PENDING: canonical GitHub CI on the 1.3.26/1227 source-freeze branch.
+PENDING: record exact resulting 40-character GitHub source-freeze SHA.
+PENDING: deterministic runtime-input transport sequence 1227.
+PENDING: reproducible release-build + executable-candidate gate.
+PENDING: physical Ubuntu 26.04 clean-install/parity/update/performance acceptance.
+PENDING: exact candidate approval and immutable publication/re-read.
+PENDING: only then catalog promotion to 1.3.26/1227 and canonical USB regeneration.
