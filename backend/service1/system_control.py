@@ -24,7 +24,7 @@ from .enrollment_models import ClientSystemEncryptionKey
 from .models import Client
 
 SYSTEM_DOMAIN = "system"
-SYSTEM_COMMAND_TYPES = frozenset({"reboot", "shutdown", "update_os", "change_hostname", "change_password"})
+SYSTEM_COMMAND_TYPES = frozenset({"reboot", "shutdown", "update_os", "update_firmware", "change_hostname", "change_password"})
 SYSTEM_ACTIVE_STATUSES = frozenset({"queued", "claimed"})
 SYSTEM_TERMINAL_STATUSES = frozenset({"succeeded", "failed", "expired", "cancelled"})
 LOCAL_MANAGEMENT_COMMANDS = frozenset({"change_hostname", "change_password"})
@@ -350,6 +350,56 @@ def os_update_projection(session: Session, client_id: int) -> dict[str, Any]:
         latest_system_command(session, client_id, command_types={"update_os"})
     )
 
+
+def firmware_update_projection_from_command(row: ClientCommand | None) -> dict[str, Any]:
+    if row is None:
+        return {
+            "pending_firmware_update": False,
+            "firmware_update_status": "ready",
+            "firmware_update_message": None,
+            "firmware_update_error": None,
+            "firmware_update_started_at": None,
+            "firmware_update_updated_at": None,
+            "firmware_update_finished_at": None,
+            "firmware_update_reboot_required": None,
+        }
+    status = _command_status(row)
+    mapping = {
+        "queued": ("requested", "Firmware-opdatering afventer System-agent"),
+        "claimed": ("installing", "Firmware-opdatering kører"),
+        "succeeded": ("success", "Firmware-opdatering gennemført"),
+        "failed": ("error", "Firmware-opdatering fejlede"),
+        "expired": ("error", "Firmware-opdateringskommando udløb"),
+        "cancelled": ("error", "Firmware-opdateringskommando blev annulleret"),
+    }
+    public_status, message = mapping.get(status, ("error", "Firmware-opdateringsstatus er ukendt"))
+    error = (row.error_message or row.error_code) if public_status == "error" else None
+    result = row.result if isinstance(row.result, dict) else {}
+    output = str(result.get("output") or "")
+    reboot_required: bool | None = None
+    if "CLIENTFLOW_REBOOT_REQUIRED=1" in output:
+        reboot_required = True
+    elif "CLIENTFLOW_REBOOT_REQUIRED=0" in output:
+        reboot_required = False
+    if public_status == "success" and reboot_required:
+        message = "Firmware-opdatering gennemført; genstart er gennemført"
+    return {
+        "pending_firmware_update": status in SYSTEM_ACTIVE_STATUSES,
+        "firmware_update_status": public_status,
+        "firmware_update_message": message,
+        "firmware_update_error": error,
+        "firmware_update_started_at": row.claimed_at,
+        "firmware_update_updated_at": row.completed_at or row.claimed_at or row.requested_at,
+        "firmware_update_finished_at": row.completed_at,
+        "firmware_update_reboot_required": reboot_required,
+    }
+
+
+def firmware_update_projection(session: Session, client_id: int) -> dict[str, Any]:
+    return firmware_update_projection_from_command(
+        latest_system_command(session, client_id, command_types={"update_firmware"})
+    )
+
 def power_projection_from_command(
     row: ClientCommand | None,
     *,
@@ -440,9 +490,9 @@ def load_latest_system_projection_commands(
 ) -> dict[int, dict[str, ClientCommand | None]]:
     """Load the latest power/update/local command per client in one query.
 
-    ``row_number()`` keeps the result bounded to at most three rows per client
+    ``row_number()`` keeps the result bounded to at most four rows per client
     while preserving the exact existing ordering: newest ``requested_at`` and
-    then newest command id. The three projection command groups are disjoint.
+    then newest command id. The four projection command groups are disjoint.
     """
     ids = sorted({int(client_id) for client_id in client_ids})
     if not ids:
@@ -451,6 +501,7 @@ def load_latest_system_projection_commands(
     projection_kind = case(
         (ClientCommand.command_type.in_(("reboot", "shutdown")), "power"),
         (ClientCommand.command_type == "update_os", "os_update"),
+        (ClientCommand.command_type == "update_firmware", "firmware_update"),
         (ClientCommand.command_type.in_(tuple(LOCAL_MANAGEMENT_COMMANDS)), "local_management"),
         else_="other",
     )
@@ -475,7 +526,7 @@ def load_latest_system_projection_commands(
     rows = session.exec(select(ClientCommand).where(ClientCommand.id.in_(latest_ids))).all()
 
     result: dict[int, dict[str, ClientCommand | None]] = {
-        client_id: {"power": None, "os_update": None, "local_management": None}
+        client_id: {"power": None, "os_update": None, "firmware_update": None, "local_management": None}
         for client_id in ids
     }
     for row in rows:
@@ -483,6 +534,8 @@ def load_latest_system_projection_commands(
             kind = "power"
         elif row.command_type == "update_os":
             kind = "os_update"
+        elif row.command_type == "update_firmware":
+            kind = "firmware_update"
         elif row.command_type in LOCAL_MANAGEMENT_COMMANDS:
             kind = "local_management"
         else:

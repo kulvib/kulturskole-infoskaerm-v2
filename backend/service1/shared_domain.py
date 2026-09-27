@@ -370,7 +370,7 @@ def _reconcile_command_state(
     )
     current_boot_id = None
     needs_boot_id = domain == "system" and any(
-        row.status == "claimed" and row.command_type == "update_os"
+        row.status == "claimed" and row.command_type in {"update_os", "update_firmware"}
         for row in active_rows
     )
     if needs_boot_id:
@@ -389,7 +389,7 @@ def _reconcile_command_state(
                     session, client_id=client_id, command_id=row.id, error_message=row.error_message
                 )
             continue
-        if row.status == "claimed" and domain == "system" and row.command_type == "update_os":
+        if row.status == "claimed" and domain == "system" and row.command_type in {"update_os", "update_firmware"}:
             payload = row.payload if isinstance(row.payload, dict) else {}
             requested_boot_id = str(payload.get("requested_boot_id") or "")
             if requested_boot_id and current_boot_id and current_boot_id != requested_boot_id:
@@ -400,7 +400,7 @@ def _reconcile_command_state(
                     row.status = "failed"
                     row.completed_at = now
                     row.error_code = "boot_recovery_attempts_exhausted"
-                    row.error_message = "OS-update kunne ikke genoptages efter reboot"
+                    row.error_message = "System-opdatering kunne ikke genoptages efter reboot"
                 else:
                     row.status = "queued"
                     row.available_at = now

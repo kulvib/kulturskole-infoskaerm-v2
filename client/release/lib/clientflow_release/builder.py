@@ -63,6 +63,7 @@ def _git(repo: Path, *args: str) -> str:
 DIRECT_EXEC_PAYLOAD_SUFFIXES = frozenset({
     "client-runtime/libexec/display-power",
     "client-runtime/libexec/update-os",
+    "client-runtime/libexec/update-firmware",
     "client-runtime/libexec/clientflow-recovery",
     "client-runtime/libexec/clientflow-switch-user-admin",
     "client-runtime/libexec/local-gui",

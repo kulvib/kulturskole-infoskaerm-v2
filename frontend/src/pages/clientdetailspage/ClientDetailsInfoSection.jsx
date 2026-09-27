@@ -33,7 +33,7 @@ import SaveIcon from "@mui/icons-material/Save";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import DeleteSweepIcon from "@mui/icons-material/DeleteSweep";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
+import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestFirmwareUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
@@ -1641,6 +1641,90 @@ function ScheduleStrip({ markedDays, onOpenCalendar, calendarLoading, clientId, 
   );
 }
 
+function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted }) {
+  const { user } = useAuth();
+  const isSuperadmin = user?.role === "superadmin";
+  const firmware = client?.firmware || null;
+  const [starting, setStarting] = React.useState(false);
+  const supported = firmware?.supported === true;
+  const updateCount = Number.isFinite(Number(firmware?.update_count)) ? Number(firmware.update_count) : 0;
+  const updateAvailable = firmware?.update_available === true && updateCount > 0;
+  const requiresShutdown = firmware?.requires_shutdown === true;
+  const inProgress = client?.pending_firmware_update === true || ["requested", "installing"].includes(String(client?.firmware_update_status || ""));
+  const disabled = !isSuperadmin || clientOnline !== true || !supported || !updateAvailable || requiresShutdown || starting || inProgress || client?.pending_os_update === true;
+
+  const startFirmwareUpdate = async () => {
+    if (disabled || !client?.id) return;
+    setStarting(true);
+    try {
+      const res = await requestFirmwareUpdate(client.id);
+      showSnackbar?.({ message: res?.firmware_update_message || "Firmware-opdatering er sendt til klienten", severity: "success" });
+      await onStarted?.({ optimistic: true });
+    } catch (err) {
+      showSnackbar?.({ message: `Fejl: ${err?.message || "Kunne ikke starte firmware-opdatering"}`, severity: "error" });
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  let statusText = "Status ikke rapporteret";
+  let statusColor = MUTED;
+  if (supported) {
+    if (updateAvailable) {
+      statusText = `${updateCount} opdatering${updateCount === 1 ? "" : "er"} tilgængelig${updateCount === 1 ? "" : "e"}`;
+      statusColor = "#fbbf24";
+    } else {
+      statusText = "Firmware er opdateret";
+      statusColor = "#22c55e";
+    }
+  }
+  if (firmware?.error) {
+    statusText = `Firmware-statusfejl: ${firmware.error}`;
+    statusColor = "#f87171";
+  }
+  if (inProgress) {
+    statusText = client?.firmware_update_message || "Firmware-opdatering kører";
+    statusColor = "#7dd3fc";
+  } else if (client?.firmware_update_status === "error") {
+    statusText = client?.firmware_update_error || client?.firmware_update_message || "Firmware-opdatering fejlede";
+    statusColor = "#f87171";
+  }
+
+  const helper = requiresShutdown
+    ? "Kræver fuld nedlukning og fysisk opstart; fjernopdatering er derfor blokeret."
+    : !isSuperadmin
+    ? "Kun superadministrator kan godkende firmwareopdateringer."
+    : firmware?.requires_reboot
+    ? "Opdateringen kræver genstart; ClientFlow styrer og verificerer reboot-grænsen."
+    : "Firmware installeres kun efter superadministratorgodkendelse.";
+
+  return (
+    <Box sx={{ p: 1.15, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle2" sx={{ color: TEXT, fontWeight: 950 }}>Firmware</Typography>
+          <Typography variant="caption" sx={{ color: statusColor, fontWeight: 850 }}>{statusText}</Typography>
+          <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.35 }}>{helper}</Typography>
+        </Box>
+        {isSuperadmin && (
+          <Button
+            size="small"
+            variant="outlined"
+            color="warning"
+            startIcon={starting || inProgress ? <CircularProgress size={16} color="inherit" /> : <SystemUpdateAltIcon />}
+            disabled={disabled}
+            type="button"
+            onClick={startFirmwareUpdate}
+            sx={{ borderRadius: 2, fontWeight: 850, whiteSpace: "nowrap" }}
+          >
+            {starting || inProgress ? "Opdaterer firmware…" : "Installer firmwareopdateringer"}
+          </Button>
+        )}
+      </Stack>
+    </Box>
+  );
+}
+
 function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onUbuntuUpdateStarted, onDiagnosticsRefresh, clientflowDeployment, onClientflowDeploymentChange }) {
   return (
     <Grid container spacing={1.75}>
@@ -1689,6 +1773,12 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
               clientOnline={clientOnline}
               showSnackbar={showSnackbar}
               onStarted={onUbuntuUpdateStarted}
+            />
+            <FirmwareUpdateControl
+              client={client}
+              clientOnline={clientOnline}
+              showSnackbar={showSnackbar}
+              onStarted={onDiagnosticsRefresh}
             />
           </Stack>
         </DataPanel>

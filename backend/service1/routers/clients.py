@@ -32,6 +32,8 @@ from ..display_control import (
 from ..system_control import (
     active_system_command,
     build_encrypted_password_payload,
+    firmware_update_projection,
+    firmware_update_projection_from_command,
     local_management_projection,
     local_management_projection_from_command,
     load_latest_system_projection_commands,
@@ -1074,6 +1076,9 @@ def _apply_status_runtime_snapshot(client: Client, presence: ClientPresence) -> 
 def _apply_presence_for_read(client: Client, presence: ClientPresence) -> None:
     _set_runtime_read_attr(client, "presence", presence.public_dict())
     _apply_status_runtime_snapshot(client, presence)
+    system_payload = presence.system.status_payload if isinstance(presence.system.status_payload, dict) else {}
+    firmware = system_payload.get("firmware") if isinstance(system_payload.get("firmware"), dict) else None
+    _set_runtime_read_attr(client, "firmware", dict(firmware) if firmware is not None else None)
 
 
 def _prepare_client_read(client: Client, presence: ClientPresence) -> Client:
@@ -1180,6 +1185,13 @@ def _apply_system_projection_for_read(
         else os_update_projection_from_command(projection_commands.get("os_update"))
     )
     for key, value in os_update.items():
+        _set_runtime_read_attr(client, key, value)
+    firmware_update = (
+        firmware_update_projection(session, client_id)
+        if projection_commands is None
+        else firmware_update_projection_from_command(projection_commands.get("firmware_update"))
+    )
+    for key, value in firmware_update.items():
         _set_runtime_read_attr(client, key, value)
     local = (
         local_management_projection(session, client_id)
@@ -2041,6 +2053,76 @@ async def trigger_os_update(
     logger.info("system_command_queued client_id=%s command_id=%s action=update_os", id, command.id)
     session.commit()
     return {"ok": True, "command_id": command.id} | os_update_projection(session, id)
+
+
+@router.post("/clients/{id}/firmware-update")
+async def trigger_firmware_update(
+    id: int,
+    request: Request,
+    session=Depends(get_session),
+    user=Depends(get_current_superadmin_user),
+):
+    client = session.get(Client, id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    _require_admin_client_access(user, client)
+    _require_no_active_clientflow_deployment(session, id)
+    presence = _require_system_ready(session, client)
+    system_payload = presence.system.status_payload if isinstance(presence.system.status_payload, dict) else {}
+    firmware = system_payload.get("firmware") if isinstance(system_payload.get("firmware"), dict) else {}
+    if firmware.get("supported") is not True:
+        raise HTTPException(status_code=409, detail="Klienten rapporterer ikke understøttet fwupd firmwarehåndtering")
+    if firmware.get("update_available") is not True or int(firmware.get("update_count") or 0) <= 0:
+        raise HTTPException(status_code=409, detail="Der er ingen firmware-opdateringer tilgængelige")
+    if firmware.get("requires_shutdown") is True:
+        raise HTTPException(
+            status_code=409,
+            detail="Mindst én firmware-opdatering kræver fuld nedlukning og fysisk opstart; planlæg lokal vedligeholdelse",
+        )
+
+    lock_system_client(session, id)
+    _require_no_active_clientflow_deployment(session, id)
+    active = active_system_command(session, id, for_update=True)
+    if active is not None:
+        if active.command_type == "update_firmware":
+            return {"ok": True, "already_requested": True, "command_id": active.id} | firmware_update_projection(session, id)
+        raise HTTPException(status_code=409, detail=f"System-handling '{active.command_type}' er allerede i gang")
+
+    command = queue_system_command(
+        session,
+        client_id=id,
+        command_type="update_firmware",
+        payload={
+            "source": "control_room_superadmin",
+            "requested_boot_id": presence.status.boot_id,
+            "approved_update_count": int(firmware.get("update_count") or 0),
+            "firmware_checked_at": str(firmware.get("checked_at") or "")[:80],
+        },
+        requested_by_user_id=getattr(user, "id", None),
+        ttl_seconds=10_800,
+        idempotency_prefix="control-room-firmware-update",
+    )
+    logger.info("system_command_queued client_id=%s command_id=%s action=update_firmware", id, command.id)
+    add_audit_log(
+        session,
+        action="firmware_update_approved",
+        request=request,
+        actor=user,
+        entity_type="client",
+        entity_id=client.id,
+        entity_label=client.name,
+        target_organization_id=client.organization_id,
+        severity="critical",
+        is_critical=True,
+        details={
+            "command_id": command.id,
+            "update_count": int(firmware.get("update_count") or 0),
+            "requires_reboot": firmware.get("requires_reboot") is True,
+            "provider": str(firmware.get("provider") or "fwupd")[:40],
+        },
+    )
+    session.commit()
+    return {"ok": True, "command_id": command.id} | firmware_update_projection(session, id)
 
 
 @router.post("/clients/{id}/os-update/reset")

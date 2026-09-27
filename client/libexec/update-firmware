@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LOCK=/run/clientflow-update-firmware.lock
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "En firmware-opdatering kører allerede" >&2
+  exit 75
+fi
+
+FWUPDMGR=/usr/bin/fwupdmgr
+PYTHON=/usr/bin/python3
+if [[ ! -x "$FWUPDMGR" ]]; then
+  echo "fwupdmgr blev ikke fundet" >&2
+  exit 1
+fi
+if [[ ! -x "$PYTHON" ]]; then
+  echo "python3 blev ikke fundet" >&2
+  exit 1
+fi
+
+run_fwupd_ok() {
+  set +e
+  "$@"
+  rc=$?
+  set -e
+  if [[ $rc -ne 0 && $rc -ne 2 && $rc -ne 101 ]]; then
+    return "$rc"
+  fi
+  return 0
+}
+
+# Refresh only as part of a superadministrator-approved execution. This keeps
+# normal status reporting read-only and bounded while ensuring execution uses
+# current enabled-remotes metadata.
+WORKDIR=/run/clientflow-firmware-update
+mkdir -p "$WORKDIR"
+chmod 0700 "$WORKDIR"
+REFRESH_JSON="$WORKDIR/refresh.json"
+UPDATES_JSON="$WORKDIR/updates.json"
+RESULT_JSON="$WORKDIR/update-result.json"
+rm -f "$REFRESH_JSON" "$UPDATES_JSON" "$RESULT_JSON"
+trap 'rm -f "$REFRESH_JSON" "$UPDATES_JSON" "$RESULT_JSON"' EXIT
+
+run_fwupd_ok "$FWUPDMGR" refresh --force --json >"$REFRESH_JSON"
+
+set +e
+"$FWUPDMGR" get-updates --json >"$UPDATES_JSON"
+updates_rc=$?
+set -e
+if [[ $updates_rc -ne 0 && $updates_rc -ne 2 && $updates_rc -ne 101 ]]; then
+  echo "fwupdmgr get-updates fejlede med kode $updates_rc" >&2
+  exit "$updates_rc"
+fi
+
+readarray -t META < <("$PYTHON" - <<'PYMETA'
+import json
+from pathlib import Path
+path = Path('/run/clientflow-firmware-update/updates.json')
+try:
+    doc = json.loads(path.read_text(encoding='utf-8') or '{}')
+except Exception:
+    raise SystemExit('Ugyldig fwupd update JSON')
+devices = doc.get('Devices', []) if isinstance(doc, dict) else []
+if not isinstance(devices, list):
+    devices = []
+count = 0
+needs_reboot = False
+needs_shutdown = False
+for row in devices:
+    if not isinstance(row, dict):
+        continue
+    count += 1
+    flags = row.get('Flags', [])
+    if not isinstance(flags, list):
+        flags = []
+    needs_reboot = needs_reboot or 'needs-reboot' in flags
+    needs_shutdown = needs_shutdown or 'needs-shutdown' in flags
+print(count)
+print('1' if needs_reboot else '0')
+print('1' if needs_shutdown else '0')
+PYMETA
+)
+COUNT=${META[0]:-0}
+NEEDS_REBOOT=${META[1]:-0}
+NEEDS_SHUTDOWN=${META[2]:-0}
+
+if [[ "$COUNT" == "0" ]]; then
+  echo "CLIENTFLOW_FIRMWARE_UPDATE_COUNT=0"
+  echo "CLIENTFLOW_REBOOT_REQUIRED=0"
+  echo "CLIENTFLOW_SHUTDOWN_REQUIRED=0"
+  echo "Ingen firmware-opdateringer tilgængelige"
+  exit 0
+fi
+
+# Shutdown-only firmware is intentionally fail-closed. A headless kiosk cannot
+# guarantee a later physical power-on, so such updates require a planned local
+# maintenance window rather than an unattended remote power-off.
+if [[ "$NEEDS_SHUTDOWN" == "1" ]]; then
+  echo "Firmware-opdatering kræver fuld nedlukning og fysisk opstart; planlagt lokal vedligeholdelse kræves" >&2
+  exit 78
+fi
+
+# Keep fwupd safety checks enabled. --assume-yes removes interaction and
+# --no-reboot-check prevents fwupdmgr itself from crossing the reboot boundary;
+# the ClientFlow System broker owns that boundary and durable completion proof.
+set +e
+"$FWUPDMGR" update --assume-yes --no-reboot-check --json >"$RESULT_JSON"
+update_rc=$?
+set -e
+if [[ $update_rc -ne 0 && $update_rc -ne 2 && $update_rc -ne 101 ]]; then
+  echo "fwupdmgr update fejlede med kode $update_rc" >&2
+  exit "$update_rc"
+fi
+
+echo "CLIENTFLOW_FIRMWARE_UPDATE_COUNT=$COUNT"
+echo "CLIENTFLOW_REBOOT_REQUIRED=$NEEDS_REBOOT"
+echo "CLIENTFLOW_SHUTDOWN_REQUIRED=0"
+echo "Firmware-opdatering gennemført"

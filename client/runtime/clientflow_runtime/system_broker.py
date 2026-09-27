@@ -34,12 +34,14 @@ JOURNAL_LOCK_PATH = STATE_DIR / "command-journal.lock"
 JOURNAL_RETENTION_SECONDS = 90 * 24 * 60 * 60
 BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 BOOT_BOUNDARY_ACTIONS = frozenset({"reboot", "shutdown"})
+UPDATE_ACTIONS = frozenset({"update_os", "update_firmware"})
 DISPLAY_RUNTIME_SOCKET = os.getenv("CLIENTFLOW_DISPLAY_RUNTIME_SOCKET", "/run/clientflow/display/runtime.sock")
 POWER_PREPARE_DELAY_SECONDS = 5.0
 POWER_FINAL_DELAY_SECONDS = 5.0
 
 ALLOWED_ACTIONS = frozenset({
     "update_os",
+    "update_firmware",
     "reboot",
     "shutdown",
     "change_hostname",
@@ -232,7 +234,7 @@ def _journal_begin(client_id: int, command_id: str, action: str) -> tuple[int, d
                 raise SystemCommandInDoubt("system_command_binding_mismatch")
             if existing.get("state") == "completed" and isinstance(existing.get("result"), dict):
                 return lock_fd, dict(existing["result"])
-            if existing.get("state") == "reboot_requested" and action == "update_os":
+            if existing.get("state") == "reboot_requested" and action in UPDATE_ACTIONS:
                 previous_boot_id = str(existing.get("boot_id") or "")
                 current_boot_id = _current_boot_id()
                 pending_result = existing.get("pending_result")
@@ -324,7 +326,7 @@ def _journal_mark_reboot_requested(
     journal = _prune_journal(_load_journal(), now)
     key = _journal_key(client_id, command_id)
     entry = journal.get(key)
-    if entry is None or entry.get("action") != "update_os":
+    if entry is None or entry.get("action") not in UPDATE_ACTIONS:
         raise SystemCommandInDoubt("system_command_journal_binding_lost")
     entry.update({
         "state": "reboot_requested",
@@ -413,6 +415,11 @@ def _prepare(action: str, payload: dict[str, Any], *, client_id: int, command_id
         if not helper.is_file() or helper.is_symlink():
             raise RuntimeError("OS-updatehelper er ikke installeret")
         return {"command": [str(helper)], "timeout": 7200}
+    if action == "update_firmware":
+        helper = Path("/opt/clientflow/active/client-runtime/libexec/update-firmware")
+        if not helper.is_file() or helper.is_symlink():
+            raise RuntimeError("Firmware-updatehelper er ikke installeret")
+        return {"command": [str(helper)], "timeout": 7200}
     raise ValueError("Systemhandlingen er ikke implementeret")
 
 
@@ -458,7 +465,7 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
         if action in BOOT_BOUNDARY_ACTIONS:
             _display_transition(action)
         result = _execute(prepared)
-        if action == "update_os":
+        if action in UPDATE_ACTIONS:
             reboot_required = _output_requests_reboot(result)
             result = {**result, "reboot_required": reboot_required}
             if reboot_required:
@@ -474,7 +481,7 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
                 record_system_intent(
                     action="reboot",
                     command_id=command_id,
-                    source="update_os",
+                    source=action,
                     requested_boot_id=requested_boot_id,
                 )
                 _display_transition("reboot")
@@ -483,7 +490,7 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
                 # reboot_requested journal. This call must not return success.
                 _cross_update_reboot_boundary()
     except Exception as exc:
-        if action in BOOT_BOUNDARY_ACTIONS or action == "update_os":
+        if action in BOOT_BOUNDARY_ACTIONS or action in UPDATE_ACTIONS:
             clear_system_intent()
         _journal_finish(
             lock_fd, client_id=client_id, command_id=command_id, action=action, result=None, error=exc
