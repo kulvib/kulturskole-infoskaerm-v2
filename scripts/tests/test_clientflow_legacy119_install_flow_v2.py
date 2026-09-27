@@ -178,15 +178,22 @@ def test_usb_builder_is_deterministic_and_packages_only_repo_owned_preclaim_boot
             "README_START_HER.txt",
             "Start ClientFlow.EXE",
             "USB_SHA256SUMS.txt",
-            "PlanIQ Flow.png",
+            "PlanIQ Display.png",
             "payload/clientflow-factory-prepare",
             "payload/clientflow-fresh-install",
             "payload/clientflow_bootstrap_common.py",
             "payload/planiq-display-mark.png",
+            "payload/planiq-display-logo-on-dark.png",
         }
         assert b"clientflow-factory-prepare" in archive.read("PAYLOAD_SHA256SUMS.txt")
         assert archive.read("payload/planiq-display-mark.png") == (
             ROOT / "frontend/public/brand/planiq-display/planiq-display-mark.png"
+        ).read_bytes()
+        assert archive.read("payload/planiq-display-logo-on-dark.png") == (
+            ROOT / "frontend/public/brand/planiq-display/planiq-display-logo-on-dark.png"
+        ).read_bytes()
+        assert archive.read("PlanIQ Display.png") == (
+            ROOT / "frontend/public/brand/planiq-display/planiq-display-logo.png"
         ).read_bytes()
 
 

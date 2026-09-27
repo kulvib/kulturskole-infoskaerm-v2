@@ -135,6 +135,10 @@ def test_kiosk_session_policy_source_contains_audio_and_gnome_baseline():
         '"night-light-enabled", "false"',
         '"color-scheme", "\'default\'"',
         '"show-banners", "false"',
+        '"picture-uri", repr(uri)',
+        '"picture-uri-dark", repr(uri)',
+        '"picture-options", "\'centered\'"',
+        '"primary-color", "\'#111827\'"',
         '"show-in-lock-screen", "false"',
     ):
         assert needle in source

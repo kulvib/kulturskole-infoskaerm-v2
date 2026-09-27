@@ -54,6 +54,12 @@ PREACTIVATION_HANDOFF_PATH = Path(
     )
 )
 ACTIVE_ROOT = Path(os.getenv("CLIENTFLOW_ACTIVE_ROOT", "/opt/clientflow/active"))
+BRAND_LOGO_PATH = Path(
+    os.getenv(
+        "CLIENTFLOW_BRAND_LOGO_PATH",
+        str(Path(__file__).resolve().parent.parent / "brand/planiq-display/planiq-display-logo.png"),
+    )
+)
 _ACTIVE_PATHS = {
     "socket": "/run/clientflow/display/runtime.sock",
     "status": Path("/var/lib/clientflow/display-runtime/runtime-status.json"),
@@ -537,6 +543,10 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             font-family: Arial, sans-serif;
             font-size: {normal}pt;
         }}
+        .brand-logo {{
+            margin-top: {max(4, round(8 * scale))}px;
+            margin-bottom: {max(2, round(5 * scale))}px;
+        }}
         .legacy-frame {{
             border: 1px solid #b9b9b9;
             border-radius: 0;
@@ -683,6 +693,14 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         outer.add_css_class("legacy-root")
         self.set_child(outer)
+
+        if BRAND_LOGO_PATH.is_file():
+            logo = Gtk.Picture.new_for_filename(str(BRAND_LOGO_PATH))
+            logo.add_css_class("brand-logo")
+            logo.set_content_fit(Gtk.ContentFit.CONTAIN)
+            logo.set_can_shrink(True)
+            logo.set_size_request(-1, max(38, round(58 * self._layout_scale)))
+            outer.append(logo)
 
         actions_frame, actions = self._frame("Handlinger")
         outer.append(actions_frame)

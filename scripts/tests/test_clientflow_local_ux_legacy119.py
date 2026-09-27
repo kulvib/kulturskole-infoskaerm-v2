@@ -87,6 +87,10 @@ def test_local_gui_preserves_legacy119_sections_copy_and_safe_actions() -> None:
     assert '.start-button:disabled, .stop-button:disabled' in source
     assert 'background-color: #b6b6b6;' in source
     assert 'color: #6f6f6f;' in source
+    assert 'BRAND_LOGO_PATH = Path(' in source
+    assert 'planiq-display-logo.png' in source
+    assert 'Gtk.Picture.new_for_filename(str(BRAND_LOGO_PATH))' in source
+    assert 'logo.set_content_fit(Gtk.ContentFit.CONTAIN)' in source
 
     # The local GUI keeps the frozen domains read-only and only mutates Display
     # through the existing narrow RPC.

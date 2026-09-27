@@ -25,6 +25,7 @@ FACTORY_STATE = BOOTSTRAP_ROOT / "factory-state.json"
 USB_STATE = BOOTSTRAP_ROOT / "usb-state.json"
 PERSISTENT_ROOT = Path("/usr/local/lib/clientflow-bootstrap")
 PLANIQ_DISPLAY_DESKTOP_ICON = PERSISTENT_ROOT / "planiq-display-mark.png"
+PLANIQ_DISPLAY_WALLPAPER = PERSISTENT_ROOT / "planiq-display-logo-on-dark.png"
 SYSTEMCTL = Path("/usr/bin/systemctl")
 NMCLI = Path("/usr/bin/nmcli")
 NETPLAN = Path("/usr/sbin/netplan")
@@ -506,9 +507,16 @@ def validate_factory_popup_autostarts(user: str) -> None:
 
 def _factory_kiosk_desktop_settings() -> tuple[tuple[str, str, str], ...]:
     """Desktop icons that must be hidden before the kiosk user's first login."""
+    wallpaper_uri = PLANIQ_DISPLAY_WALLPAPER.as_uri()
     return (
         ("org.gnome.shell.extensions.ding", "show-home", "false"),
         ("org.gnome.shell.extensions.ding", "show-trash", "false"),
+        ("org.gnome.desktop.background", "picture-uri", repr(wallpaper_uri)),
+        ("org.gnome.desktop.background", "picture-uri-dark", repr(wallpaper_uri)),
+        ("org.gnome.desktop.background", "picture-options", "'centered'"),
+        ("org.gnome.desktop.background", "primary-color", "'#111827'"),
+        ("org.gnome.desktop.background", "secondary-color", "'#111827'"),
+        ("org.gnome.desktop.background", "color-shading-type", "'solid'"),
     )
 
 
@@ -1493,6 +1501,7 @@ def install_persistent_bootstrap(source_dir: Path) -> None:
         "clientflow-factory-prepare": 0o555,
         "clientflow-fresh-install": 0o555,
         "planiq-display-mark.png": 0o444,
+        "planiq-display-logo-on-dark.png": 0o444,
     }
     _ensure_root_directory(PERSISTENT_ROOT, mode=0o755)
     for name, mode in required.items():

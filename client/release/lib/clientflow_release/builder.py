@@ -121,6 +121,10 @@ def _create_payload(
     source_mappings = (
         (Path("client/config-examples"), PurePosixPath(root) / "client-runtime/config-examples"),
         (Path("client/libexec"), PurePosixPath(root) / "client-runtime/libexec"),
+        (
+            Path("frontend/public/brand/planiq-display"),
+            PurePosixPath(root) / "client-runtime/brand/planiq-display",
+        ),
         (Path("client/systemd"), PurePosixPath(root) / "client-runtime/systemd"),
         (Path("client/sysusers.d"), PurePosixPath(root) / "client-runtime/sysusers.d"),
         (Path("client/tmpfiles.d"), PurePosixPath(root) / "client-runtime/tmpfiles.d"),

@@ -15,6 +15,9 @@ KIOSK_USER = "clientflow-kiosk"
 LOGINCTL = Path("/usr/bin/loginctl")
 RUNUSER = Path("/usr/sbin/runuser")
 GSETTINGS = Path("/usr/bin/gsettings")
+ACTIVE_BRAND_WALLPAPER = Path(
+    "/opt/clientflow/active/client-runtime/brand/planiq-display/planiq-display-logo-on-dark.png"
+)
 NMCLI = Path("/usr/bin/nmcli")
 RFKILL = Path("/usr/sbin/rfkill")
 POWERPROFILESCTL = Path("/usr/bin/powerprofilesctl")
@@ -126,6 +129,20 @@ def _apply_gsettings(record: pwd.struct_passwd, *, lockdown_quicksettings: bool 
         ("org.gnome.desktop.notifications", "show-banners", "false"),
         ("org.gnome.desktop.notifications", "show-in-lock-screen", "false"),
     ]
+    if ACTIVE_BRAND_WALLPAPER.is_file():
+        uri = ACTIVE_BRAND_WALLPAPER.as_uri()
+        settings.extend(
+            [
+                ("org.gnome.desktop.background", "picture-uri", repr(uri)),
+                ("org.gnome.desktop.background", "picture-uri-dark", repr(uri)),
+                ("org.gnome.desktop.background", "picture-options", "'centered'"),
+                ("org.gnome.desktop.background", "primary-color", "'#111827'"),
+                ("org.gnome.desktop.background", "secondary-color", "'#111827'"),
+                ("org.gnome.desktop.background", "color-shading-type", "'solid'"),
+            ]
+        )
+    else:
+        print("CLIENTFLOW_KIOSK_SESSION_POLICY_OPTIONAL: PlanIQ Display wallpaper mangler", flush=True)
     for schema, key, value in settings:
         _run(_user_command(record, [str(GSETTINGS), "set", schema, key, value]))
 

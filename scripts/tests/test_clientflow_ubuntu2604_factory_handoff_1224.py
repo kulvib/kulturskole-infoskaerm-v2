@@ -201,6 +201,9 @@ def test_factory_provisioning_hides_virtual_home_before_first_kiosk_login() -> N
     settings = source[source.index("def _factory_kiosk_desktop_settings") : source.index("def provision_factory_human_accounts")]
     assert '("org.gnome.shell.extensions.ding", "show-home", "false")' in settings
     assert '("org.gnome.shell.extensions.ding", "show-trash", "false")' in settings
+    assert '("org.gnome.desktop.background", "picture-uri", repr(wallpaper_uri))' in settings
+    assert '("org.gnome.desktop.background", "picture-uri-dark", repr(wallpaper_uri))' in settings
+    assert '("org.gnome.desktop.background", "picture-options", "\'centered\'")' in settings
     assert "prepare_factory_kiosk_desktop_settings(KIOSK_USER)" in provision
 
 
@@ -230,20 +233,24 @@ def test_factory_kiosk_desktop_prepare_sets_and_reads_back_both_virtual_icons(
     module = _load_common()
     calls: list[tuple[str, str, str, str, str | None]] = []
 
+    expected_values = {(schema, key): value for schema, key, value in module._factory_kiosk_desktop_settings()}
+
     def fake_gsettings(user: str, action: str, schema: str, key: str, value: str | None = None) -> str:
         calls.append((user, action, schema, key, value))
-        return "false" if action == "get" else ""
+        return expected_values[(schema, key)] if action == "get" else ""
 
     monkeypatch.setattr(module, "_factory_user_gsettings", fake_gsettings)
     monkeypatch.setattr(module, "validate_local_user", lambda username: username)
 
     module.prepare_factory_kiosk_desktop_settings(module.KIOSK_USER)
 
+    settings = list(module._factory_kiosk_desktop_settings())
     expected = [
-        (module.KIOSK_USER, "set", "org.gnome.shell.extensions.ding", "show-home", "false"),
-        (module.KIOSK_USER, "set", "org.gnome.shell.extensions.ding", "show-trash", "false"),
-        (module.KIOSK_USER, "get", "org.gnome.shell.extensions.ding", "show-home", None),
-        (module.KIOSK_USER, "get", "org.gnome.shell.extensions.ding", "show-trash", None),
+        (module.KIOSK_USER, "set", schema, key, value)
+        for schema, key, value in settings
+    ] + [
+        (module.KIOSK_USER, "get", schema, key, None)
+        for schema, key, _value in settings
     ]
     assert calls == expected
 
@@ -253,10 +260,14 @@ def test_factory_kiosk_desktop_validation_fails_closed_if_home_is_still_visible(
 ) -> None:
     module = _load_common()
 
+    expected_values = {(schema, key): value for schema, key, value in module._factory_kiosk_desktop_settings()}
+
     def fake_gsettings(user: str, action: str, schema: str, key: str, value: str | None = None) -> str:
         assert user == module.KIOSK_USER
         assert action == "get"
-        return "true" if key == "show-home" else "false"
+        if key == "show-home":
+            return "true"
+        return expected_values[(schema, key)]
 
     monkeypatch.setattr(module, "_factory_user_gsettings", fake_gsettings)
     monkeypatch.setattr(module, "validate_local_user", lambda username: username)
