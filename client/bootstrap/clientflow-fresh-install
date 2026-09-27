@@ -84,6 +84,7 @@ BOOTSTRAP_FILES = (
     "clientflow-factory-prepare",
     "clientflow-fresh-install",
     "planiq-display-mark.png",
+    "planiq-display-logo-on-dark.png",
 )
 
 

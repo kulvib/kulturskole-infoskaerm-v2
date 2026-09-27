@@ -1,6 +1,6 @@
 CLIENTFLOW USB · START HER
 
-PlanIQ Flow / ClientFlow
+PlanIQ Display / ClientFlow
 
 1. Start Ubuntu med den normale installationsbruger.
 2. Åbn USB-mediet i Filer.
@@ -12,10 +12,14 @@ PlanIQ Flow / ClientFlow
    01 Klient klargøring
 6. Klik derefter på 01 Klient klargøring på skrivebordet og følg flowet.
 
-PlanIQ Flow-branding:
-- "PlanIQ Flow.png" på USB-roden er det originale, uændrede PlanIQ Flow-logo fra Flow-repoet.
+PlanIQ Display-branding:
+- "PlanIQ Display.png" på USB-roden kommer direkte fra repositoryets canonical
+  PlanIQ Display-brandasset.
 - Logoet er branding omkring USB-startoplevelsen; det bruges ikke som en ny
   bootstrap- eller sikkerhedsautoritet.
+- "Start ClientFlow.EXE" bevares som den statiske, robuste Linux-launcher; GNOME
+  på flytbare FAT32/vfat-medier har ikke en portabel Windows-lignende embedded
+  executable-icon-kontrakt.
 
 Teknisk:
 - "Start ClientFlow.EXE" er et Linux amd64 ELF-program, ikke et Windows-program.

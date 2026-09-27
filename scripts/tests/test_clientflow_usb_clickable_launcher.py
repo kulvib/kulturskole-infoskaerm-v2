@@ -9,14 +9,11 @@ ROOT = Path(__file__).resolve().parents[2]
 USB = ROOT / "client/bootstrap/usb"
 LAUNCHER = USB / "Start ClientFlow.EXE"
 LAUNCHER_SOURCE = USB / "start_clientflow_launcher.S"
-FLOW_LOGO = USB / "planiq-flow-logo.png"
+DISPLAY_LOGO = ROOT / "frontend/public/brand/planiq-display/planiq-display-logo.png"
 SHORT_README = USB / "00_START_HER_KORT.txt"
 LONG_README = USB / "README_START_HER.txt"
 USB_BUILDER = ROOT / "scripts/build_clientflow_usb_installer.py"
 
-# Original byte-for-byte Flow asset:
-# flow-planiq-main/frontend/public/brand/planiq-flow/planiq-flow-logo.png
-ORIGINAL_FLOW_LOGO_SHA256 = "39a257f857aba6acce310137fceb25ca852635adae3bf31875096358f4f803f9"
 
 
 def _elf_program_header_types(raw: bytes) -> list[tuple[int, int]]:
@@ -66,10 +63,9 @@ def test_usb_click_launcher_is_only_a_terminal_shim_to_canonical_entrypoint() ->
     assert "--hold-open" in source
 
 
-def test_usb_flow_branding_is_exact_original_flow_asset() -> None:
-    raw = FLOW_LOGO.read_bytes()
+def test_usb_display_branding_uses_canonical_repo_asset() -> None:
+    raw = DISPLAY_LOGO.read_bytes()
     assert raw.startswith(b"\x89PNG\r\n\x1a\n")
-    assert hashlib.sha256(raw).hexdigest() == ORIGINAL_FLOW_LOGO_SHA256
 
 
 def test_usb_builder_packages_launcher_and_branding_under_top_level_integrity(tmp_path: Path) -> None:
@@ -84,20 +80,20 @@ def test_usb_builder_packages_launcher_and_branding_under_top_level_integrity(tm
     module.build(output)
     with zipfile.ZipFile(output) as archive:
         launcher = archive.read("Start ClientFlow.EXE")
-        logo = archive.read("PlanIQ Flow.png")
+        logo = archive.read("PlanIQ Display.png")
         top_manifest = archive.read("USB_SHA256SUMS.txt").decode("utf-8")
         payload_manifest = archive.read("PAYLOAD_SHA256SUMS.txt").decode("utf-8")
         launcher_mode = (archive.getinfo("Start ClientFlow.EXE").external_attr >> 16) & 0o777
-        logo_mode = (archive.getinfo("PlanIQ Flow.png").external_attr >> 16) & 0o777
+        logo_mode = (archive.getinfo("PlanIQ Display.png").external_attr >> 16) & 0o777
 
     assert launcher == LAUNCHER.read_bytes()
-    assert logo == FLOW_LOGO.read_bytes()
+    assert logo == DISPLAY_LOGO.read_bytes()
     assert launcher_mode == 0o555
     assert logo_mode == 0o444
     assert f"{hashlib.sha256(launcher).hexdigest()}  Start ClientFlow.EXE" in top_manifest
-    assert f"{hashlib.sha256(logo).hexdigest()}  PlanIQ Flow.png" in top_manifest
+    assert f"{hashlib.sha256(logo).hexdigest()}  PlanIQ Display.png" in top_manifest
     assert "Start ClientFlow.EXE" not in payload_manifest
-    assert "PlanIQ Flow.png" not in payload_manifest
+    assert "PlanIQ Display.png" not in payload_manifest
 
 
 def test_usb_readmes_make_clickable_start_primary_and_keep_terminal_recovery() -> None:
@@ -109,7 +105,8 @@ def test_usb_readmes_make_clickable_start_primary_and_keep_terminal_recovery() -
     assert long.index('Dobbeltklik på "Start ClientFlow.EXE"') < long.index(
         "bash 01_START_CLIENTFLOW_USB.sh"
     )
-    assert "originale, uændrede PlanIQ Flow-logo" in long
+    assert '"PlanIQ Display.png" på USB-roden' in long
+    assert "embedded" in long
 
 
 def test_usb_click_launcher_requests_hold_open_without_changing_manual_recovery() -> None:

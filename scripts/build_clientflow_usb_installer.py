@@ -18,13 +18,20 @@ PAYLOAD_SOURCES = {
         ROOT / "frontend/public/brand/planiq-display/planiq-display-mark.png",
         0o444,
     ),
+    "planiq-display-logo-on-dark.png": (
+        ROOT / "frontend/public/brand/planiq-display/planiq-display-logo-on-dark.png",
+        0o444,
+    ),
 }
 STATIC_SOURCES = {
     "00_START_HER_KORT.txt": (USB / "00_START_HER_KORT.txt", 0o444),
     "01_START_CLIENTFLOW_USB.sh": (USB / "01_START_CLIENTFLOW_USB.sh", 0o755),
     "README_START_HER.txt": (USB / "README_START_HER.txt", 0o444),
     "Start ClientFlow.EXE": (USB / "Start ClientFlow.EXE", 0o555),
-    "PlanIQ Flow.png": (USB / "planiq-flow-logo.png", 0o444),
+    "PlanIQ Display.png": (
+        ROOT / "frontend/public/brand/planiq-display/planiq-display-logo.png",
+        0o444,
+    ),
 }
 ZIP_TIME = (2020, 1, 1, 0, 0, 0)
 
