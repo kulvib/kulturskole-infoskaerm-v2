@@ -579,6 +579,11 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         .start-button:hover {{ background-image: none; background-color: #4BB543; }}
         .stop-button {{ background-image: none; background-color: {COLOR_RED}; }}
         .stop-button:hover {{ background-image: none; background-color: {COLOR_RED}; }}
+        .start-button:disabled, .stop-button:disabled {{
+            background-image: none;
+            background-color: #b6b6b6;
+            color: #6f6f6f;
+        }}
         .copy-button {{
             background: transparent;
             border: 0;
