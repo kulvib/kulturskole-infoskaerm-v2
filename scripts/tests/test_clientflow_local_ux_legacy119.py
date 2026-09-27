@@ -81,6 +81,13 @@ def test_local_gui_preserves_legacy119_sections_copy_and_safe_actions() -> None:
     assert 'PREACTIVATION_MODE' in source
     assert 'Kioskstyring aktiveres først efter backend-godkendelse.' in source
 
+    # Disabled Start/Stop controls must be visually grey as well as insensitive,
+    # regardless of whether the disabled state comes from preactivation, startup,
+    # runtime busy/lock state, display power state, or the current running state.
+    assert '.start-button:disabled, .stop-button:disabled' in source
+    assert 'background-color: #b6b6b6;' in source
+    assert 'color: #6f6f6f;' in source
+
     # The local GUI keeps the frozen domains read-only and only mutates Display
     # through the existing narrow RPC.
     assert '_service_state("clientflow-livestream-producer.service")' in source
