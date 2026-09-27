@@ -69,8 +69,9 @@ ENFORCED_GSETTINGS = (
     *KIOSK_NOTIFICATION_BASELINE,
 )
 OPTIONAL_GSETTINGS = (
-    ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
-    ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
+    # Command-line/terminal escape belongs to the always-on kiosk baseline and
+    # must never be reset when optional lockdown is disabled. ENFORCED_GSETTINGS
+    # still verifies those keys while lockdown is active.
     ("org.gnome.desktop.session", "idle-delay", "uint32 0"),
     ("org.gnome.desktop.screensaver", "lock-enabled", "false"),
     ("org.gnome.desktop.screensaver", "ubuntu-lock-on-suspend", "false"),

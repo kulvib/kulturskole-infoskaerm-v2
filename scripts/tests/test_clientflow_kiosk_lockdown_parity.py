@@ -10,12 +10,12 @@ from clientflow_runtime import kiosk_lockdown, kiosk_lockdown_broker
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_default_platform_baseline_does_not_apply_optional_lockdown():
+def test_default_platform_baseline_keeps_command_line_closed_without_applying_optional_lockdown():
     source = (Path(__file__).resolve().parents[2] / "client/runtime/clientflow_runtime/display_platform_prepare.py").read_text(encoding="utf-8")
     gsettings = source[source.index("def _gsettings_commands"):source.index("def _prepare_gnome_settings")]
     graphical = source[source.index("def _prepare_graphical_kiosk"):source.index("def prepare()")]
-    assert '"disable-command-line", "true"' not in gsettings
-    assert '"terminal", "[]"' not in gsettings
+    assert '"disable-command-line", "true"' in gsettings
+    assert '"terminal", "[]"' in gsettings
     assert '"favorite-apps", "[]"' not in gsettings
     assert "_prepare_kiosk_application_lockdown(" not in graphical
     assert "_prepare_kiosk_binary_acl(" not in graphical

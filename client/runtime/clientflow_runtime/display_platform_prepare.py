@@ -441,6 +441,11 @@ def _gsettings_commands() -> Iterable[tuple[str, str, str]]:
         ("org.gnome.desktop.screensaver", "ubuntu-lock-on-suspend", "false"),
         ("org.gnome.desktop.session", "idle-delay", "uint32 0"),
         ("org.gnome.desktop.lockdown", "disable-lock-screen", "true"),
+        # Command-line escape is part of the canonical kiosk baseline, not the
+        # optional extra lockdown. This only targets the kiosk account; cfadmin
+        # and ClientFlow's brokered Terminal domain remain separate authorities.
+        ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
+        ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
         # Preserve the legacy technician escape hatch: the kiosk user may log
         # out/switch user so cfadmin can be selected at GDM.
         ("org.gnome.desktop.lockdown", "disable-user-switching", "false"),
