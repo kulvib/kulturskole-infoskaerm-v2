@@ -116,6 +116,11 @@ def _apply_gsettings(record: pwd.struct_passwd, *, lockdown_quicksettings: bool 
     # desktop banners over ClientFlow content. The recurring session policy and
     # the optional quick-settings guard both reassert the same fail-closed values.
     settings = [
+        # Keep local GNOME command-line escape unavailable for the kiosk user.
+        # This does not affect ClientFlow's brokered Terminal subsystem or
+        # cfadmin's own login session.
+        ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
+        ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
         ("org.gnome.settings-daemon.plugins.color", "night-light-enabled", "false"),
         ("org.gnome.desktop.interface", "color-scheme", "'default'"),
         ("org.gnome.desktop.notifications", "show-banners", "false"),
