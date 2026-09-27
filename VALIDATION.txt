@@ -1,3 +1,24 @@
+ClientFlow 1.3.27 / sequence 1228 source-freeze validation
+
+PASS: client/VERSION = 1.3.27.
+PASS: release_sequence = 1228.
+PASS: candidate release id = clientflow-1.3.27-seq-1228.
+PASS: minimum Ubuntu LTS remains 26.04.
+PASS: architecture remains amd64.
+PASS: runtime Python remains 3.13.14.
+PASS: runtime catalog deliberately remains 1.3.26 / sequence 1227.
+PASS: staged source sequence leads promoted catalog sequence by exactly one.
+PASS: catalog selector authority is not changed by the source-freeze transition.
+
+PENDING: merge source-freeze change to canonical main.
+PENDING: canonical GitHub CI on the exact resulting main SHA.
+PENDING: deterministic runtime-input transport sequence 1228.
+PENDING: reproducible release candidate build from the exact same source SHA.
+PENDING: canonical manual approval and immutable publication.
+PENDING: only then catalog promotion to 1.3.27/1228, canonical USB and physical acceptance.
+
+---
+
 ClientFlow 1.3.26 / sequence 1227 catalog-promotion validation
 Date: 2026-09-27
 
