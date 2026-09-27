@@ -720,6 +720,13 @@ def _pending_manual_activation_state(
         # ClientFlow bootstrap cleanup. Unmarked host/customer profiles are
         # never enumerated or deleted.
         "bootstrap_network_connection": bootstrap_network_connection,
+        # Preserve only the non-secret host-readiness evidence needed by the
+        # post-reboot approval-readiness publisher.  Dropping these fields at
+        # the durable pending boundary makes a correctly rebooted client
+        # permanently unable to prove that it crossed the preclaim boot and
+        # completed the conservative Ubuntu package-health gate.
+        "preclaim_boot_id": install_state.get("preclaim_boot_id"),
+        "preclaim_host_readiness": install_state.get("preclaim_host_readiness"),
         "status": "pending_manual_activation",
     }
 

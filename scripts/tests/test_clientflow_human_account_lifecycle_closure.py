@@ -145,9 +145,17 @@ def test_pending_manual_activation_state_preserves_exact_bootstrap_user():
         "release_candidate_sha256": "b" * 64,
         "source_commit": "c" * 40,
     }
+    preclaim_readiness = {
+        "package_index_refreshed": True,
+        "package_upgrade_completed": True,
+        "dpkg_audit_clean": True,
+        "apt_check_clean": True,
+    }
     source_state = {
         "bootstrap_user": "ubuntu-bootstrap",
         "credential_seed_b64": "resume-only",
+        "preclaim_boot_id": "22222222-2222-4222-8222-222222222222",
+        "preclaim_host_readiness": preclaim_readiness,
     }
 
     final = cli._pending_manual_activation_state(
@@ -164,6 +172,8 @@ def test_pending_manual_activation_state_preserves_exact_bootstrap_user():
     assert final["status"] == "pending_manual_activation"
     assert final["bootstrap_user"] == "ubuntu-bootstrap"
     assert final["fresh_install_binding"] == binding
+    assert final["preclaim_boot_id"] == source_state["preclaim_boot_id"]
+    assert final["preclaim_host_readiness"] == preclaim_readiness
     assert "credential_seed_b64" not in final
 
 
