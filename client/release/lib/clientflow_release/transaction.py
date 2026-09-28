@@ -394,7 +394,7 @@ def _validate_prepared_release_tree(release_root: Path, manifest: dict[str, Any]
         "version": manifest["version"],
         "release_id": manifest["release_id"],
         "release_sequence": int(manifest["release_sequence"]),
-        "python": "3.13.14",
+        "python": str(manifest["runtime"]["python"]),
     }
     for key, value in expected.items():
         if ready.get(key) != value:
