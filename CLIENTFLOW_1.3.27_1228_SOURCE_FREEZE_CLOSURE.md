@@ -1,5 +1,10 @@
 # ClientFlow 1.3.27 / sequence 1228 — source-freeze closure
 
+> **SUPERSEDED BEFORE BUILD:** This initial freeze boundary was superseded
+> by the Python 3.13 patch-compatibility bridge before sequence-1228 runtime
+> input transport or release build. Current source authority is documented in
+> `CLIENTFLOW_1.3.27_1228_SOURCE_REFREEZE_PYTHON_RUNTIME_BRIDGE_CLOSURE.md`.
+
 ## Scope
 
 This source-freeze change stages the current canonical codebase as ClientFlow

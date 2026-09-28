@@ -122,6 +122,8 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CLIENTFLOW_1.3.27_1228_SOURCE_IDENTITY.md" in seen
     assert "CLIENTFLOW_1.3.27_1228_SOURCE_FREEZE_CLOSURE.md" in seen
     assert "CHANGED_FILES_1327_1228_SOURCE_FREEZE.txt" in seen
+    assert "CLIENTFLOW_1.3.27_1228_SOURCE_REFREEZE_PYTHON_RUNTIME_BRIDGE_CLOSURE.md" in seen
+    assert "CHANGED_FILES_1327_1228_SOURCE_REFREEZE.txt" in seen
 
 
 def test_1323_1224_initial_freeze_is_explicitly_superseded_before_build() -> None:
@@ -150,3 +152,21 @@ def test_1325_1226_refreeze_contains_no_known_unused_runtime_or_template_files()
     )
     leaked = [relative for relative in forbidden if (ROOT / relative).exists()]
     assert leaked == [], "known unused pre-1226 files remain: " + ", ".join(leaked)
+
+def test_1327_1228_initial_freeze_is_superseded_by_python_runtime_bridge_refreeze() -> None:
+    initial = (ROOT / "CLIENTFLOW_1.3.27_1228_SOURCE_FREEZE_CLOSURE.md").read_text(
+        encoding="utf-8"
+    )
+    refreeze = (
+        ROOT / "CLIENTFLOW_1.3.27_1228_SOURCE_REFREEZE_PYTHON_RUNTIME_BRIDGE_CLOSURE.md"
+    ).read_text(encoding="utf-8")
+
+    assert "SUPERSEDED BEFORE BUILD" in initial
+    assert "d3d598aa5f51a36d87992d7635ea504e6440f881" in refreeze
+    assert "#1047" in refreeze
+    assert "36474336723" in refreeze
+    assert "sequence-1228 runtime-input transport" in refreeze
+    assert "runtime Python: `3.13.14`" in refreeze
+    assert "Python 3.13.15" in refreeze
+    assert "source release sequence" in refreeze and "catalog sequence" in refreeze
+
