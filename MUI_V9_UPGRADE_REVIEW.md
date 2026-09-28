@@ -5,8 +5,8 @@
 Frontendens gratis, produktionsrelevante UI-stack er opgraderet og låst til:
 
 - React og ReactDOM `19.2.7`
-- Material UI og Material Icons `9.2.0`
-- MUI X Date Pickers Community `9.9.0`
+- Material UI og Material Icons `9.4.0`
+- MUI X Date Pickers Community `9.14.0`
 - Emotion React `11.14.0` og Emotion Styled `11.14.1`
 - date-fns `4.4.0`
 - `@hello-pangea/dnd` `18.0.1`

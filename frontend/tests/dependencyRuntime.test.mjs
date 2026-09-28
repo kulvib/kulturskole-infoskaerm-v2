@@ -17,9 +17,9 @@ const EXPECTED = Object.freeze({
   react: "19.2.7",
   "react-dom": "19.2.7",
   "react-router-dom": "7.18.2",
-  "@mui/material": "9.2.0",
-  "@mui/icons-material": "9.2.0",
-  "@mui/x-date-pickers": "9.9.0",
+  "@mui/material": "9.4.0",
+  "@mui/icons-material": "9.4.0",
+  "@mui/x-date-pickers": "9.14.0",
   "@hello-pangea/dnd": "18.0.1",
   "date-fns": "4.4.0",
 });
