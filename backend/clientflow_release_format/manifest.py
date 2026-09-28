@@ -20,6 +20,8 @@ from .constants import (
 _VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _RELEASE_ID_RE = re.compile(r"^clientflow-(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-seq-([1-9]\d*)$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_RUNTIME_PYTHON_RE = re.compile(r"^3\.13\.([1-9]\d*)$")
+_MIN_RUNTIME_PYTHON_PATCH = 14
 _APPROVAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/@+-]{0,199}$")
 _ALLOWED_INSTALL_MODES = {INSTALL_MODE_FRESH, INSTALL_MODE_UPDATE}
 
@@ -149,8 +151,10 @@ def validate_manifest(
     runtime = data.get("runtime")
     if not isinstance(runtime, dict):
         raise ManifestError("Manifestets runtime-kontrakt mangler")
-    if runtime.get("python") != "3.13.14":
-        raise ManifestError("Runtime Python skal være 3.13.14")
+    runtime_python = str(runtime.get("python") or "")
+    runtime_match = _RUNTIME_PYTHON_RE.fullmatch(runtime_python)
+    if runtime_match is None or int(runtime_match.group(1)) < _MIN_RUNTIME_PYTHON_PATCH:
+        raise ManifestError("Runtime Python skal være en understøttet Python 3.13 patch-version")
     if runtime.get("architecture") != "amd64":
         raise ManifestError("Runtimearkitekturen skal være amd64")
     artifacts = runtime.get("artifacts")

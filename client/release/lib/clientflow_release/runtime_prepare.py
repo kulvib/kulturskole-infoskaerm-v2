@@ -178,9 +178,11 @@ def prepare_runtime(release_root: Path, manifest: dict) -> None:
     if set(wheel_declared) != {item.name for item in wheelhouse.glob("*.whl")}:
         raise RuntimePreparationError("Wheelhouse matcher ikke manifestet")
 
+    runtime_version = str(runtime["python"])
+    expected_python_root = f"python-{runtime_version}"
     python_extract = release_root / ".python-extract"
-    inspect_payload_tar(python_tar, expected_root="python-3.13.14")
-    extracted = safe_extract_payload(python_tar, python_extract, expected_root="python-3.13.14")
+    inspect_payload_tar(python_tar, expected_root=expected_python_root)
+    extracted = safe_extract_payload(python_tar, python_extract, expected_root=expected_python_root)
     runtime_root = release_root / "runtime"
     os.replace(extracted, runtime_root)
     python_extract.rmdir()
@@ -189,7 +191,7 @@ def prepare_runtime(release_root: Path, manifest: dict) -> None:
         [str(runtime_python), "-c", "import platform; print(platform.python_version())"],
         timeout=30,
     ).stdout.strip()
-    if version != "3.13.14":
+    if version != runtime_version:
         raise RuntimePreparationError(f"Python-runtime har forkert version: {version}")
 
     pip_wheels = sorted(wheelhouse.glob("pip-*.whl"))

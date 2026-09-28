@@ -71,7 +71,7 @@ def _runtime_regions(payload: FileRegion, manifest: dict) -> dict[str, FileRegio
     return actual
 
 
-def _validate_python_runtime(region: FileRegion) -> None:
+def _validate_python_runtime(region: FileRegion, *, version: str) -> None:
     try:
         with region.open() as source:
             with tarfile.open(fileobj=source, mode="r:") as python_archive:
@@ -79,9 +79,10 @@ def _validate_python_runtime(region: FileRegion) -> None:
                 names: set[str] = set()
                 total_size = 0
                 python_member = None
+                expected_root = f"python-{version}"
                 for member in members:
                     name = PurePosixPath(member.name)
-                    if name.is_absolute() or ".." in name.parts or not name.parts or name.parts[0] != "python-3.13.14":
+                    if name.is_absolute() or ".." in name.parts or not name.parts or name.parts[0] != expected_root:
                         raise RuntimeArtifactError("Python-runtime indeholder en ugyldig sti")
                     canonical = name.as_posix()
                     if canonical in names:
@@ -98,7 +99,7 @@ def _validate_python_runtime(region: FileRegion) -> None:
                     total_size += member.size
                     if total_size > MAX_PYTHON_RUNTIME_BYTES:
                         raise RuntimeArtifactError("Python-runtime overskrider størrelsesgrænsen")
-                    if canonical == "python-3.13.14/bin/python3":
+                    if canonical == f"{expected_root}/bin/python3":
                         python_member = member
                 if python_member is None or not python_member.isfile():
                     raise RuntimeArtifactError("Python-runtime mangler bin/python3")
@@ -124,7 +125,7 @@ def validate_runtime_artifacts(payload: FileRegion, manifest: dict) -> None:
     python_region = actual.get("python-runtime-amd64.tar")
     if python_region is None:
         raise RuntimeArtifactError("Python-runtime mangler")
-    _validate_python_runtime(python_region)
+    _validate_python_runtime(python_region, version=str(manifest["runtime"]["python"]))
 
     found: dict[str, str] = {}
     for name, region in actual.items():
