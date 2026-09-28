@@ -3,8 +3,8 @@
 ## Fastlåste runtimes
 
 - Python: `3.13.14`
-- Node.js: `22.22.0`
-- npm: `10.9.4`
+- Node.js: `22.23.3`
+- npm: `10.9.9`
 - pip i Render/CI: `26.1.2`
 
 Render, GitHub Actions, `backend/.python-version`, `frontend/package.json` og lockfilerne skal ændres samlet.

@@ -279,7 +279,7 @@ services:
 
     envVars:
       - key: NODE_VERSION
-        value: "22.22.0"
+        value: "22.23.3"
       - key: VITE_API_URL
         value: "https://api.display.planiq.dk"
       - key: VITE_WS_API_URL

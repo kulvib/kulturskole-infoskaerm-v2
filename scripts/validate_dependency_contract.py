@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "PlanIQ Display"
 KIND = "display"
 PYTHON_VERSION = "3.13.14"
-NODE_VERSION = "22.22.0"
-NPM_VERSION = "10.9.4"
+NODE_VERSION = "22.23.3"
+NPM_VERSION = "10.9.9"
 PIP_VERSION = "26.1.2"
 DIRECT_RE = re.compile(r"^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?==([^\s;]+)$")
 LOCK_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([^\s\\]+)(?:\s+\\)?$")
