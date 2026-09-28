@@ -1,0 +1,115 @@
+name: Build ClientFlow Python runtime input
+
+"on":
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Full 40-character main SHA; canonical CI must already be green for this exact commit
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: clientflow-python-runtime-input-${{ inputs.expected_source_sha }}
+  cancel-in-progress: false
+
+env:
+  CLIENTFLOW_TARGET_PYTHON_VERSION: "3.13.15"
+
+jobs:
+  build:
+    name: Build deterministic Python 3.13.15 runtime input
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout exact source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up exact target Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.15"
+
+      - name: Require exact main source and green canonical CI
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF_NAME" = "main"
+          test "$GITHUB_SHA" = "$EXPECTED_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test "$(python -c 'import platform; print(platform.python_version())')" = "$CLIENTFLOW_TARGET_PYTHON_VERSION"
+          test -n "${pythonLocation:-}"
+          test -d "$pythonLocation"
+          python scripts/verify_github_ci_run.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --sha "$EXPECTED_SOURCE_SHA" \
+            --workflow ci.yml \
+            --head-branch main
+
+      - name: Build the normalized runtime twice
+        id: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/runtime-a" "$RUNNER_TEMP/runtime-b"
+          for build in a b; do
+            python scripts/build_clientflow_python_runtime_input.py \
+              --python-version "$CLIENTFLOW_TARGET_PYTHON_VERSION" \
+              --source-runtime "$pythonLocation" \
+              --output "$RUNNER_TEMP/runtime-$build/python-runtime-amd64.tar" \
+              --manifest "$RUNNER_TEMP/runtime-$build/python-runtime-manifest.json"
+          done
+
+          cmp \
+            "$RUNNER_TEMP/runtime-a/python-runtime-amd64.tar" \
+            "$RUNNER_TEMP/runtime-b/python-runtime-amd64.tar"
+          cmp \
+            "$RUNNER_TEMP/runtime-a/python-runtime-manifest.json" \
+            "$RUNNER_TEMP/runtime-b/python-runtime-manifest.json"
+
+          RUNTIME="$RUNNER_TEMP/runtime-a/python-runtime-amd64.tar"
+          MANIFEST="$RUNNER_TEMP/runtime-a/python-runtime-manifest.json"
+          SHA256="$(sha256sum "$RUNTIME" | awk '{print $1}')"
+          SIZE="$(stat -c %s "$RUNTIME")"
+          test "$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["sha256"])' "$MANIFEST")" = "$SHA256"
+          test "$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["size_bytes"])' "$MANIFEST")" = "$SIZE"
+          echo "path=$RUNTIME" >> "$GITHUB_OUTPUT"
+          echo "manifest=$MANIFEST" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### ClientFlow Python runtime input candidate"
+            echo
+            echo "- Python: \`$CLIENTFLOW_TARGET_PYTHON_VERSION\`"
+            echo "- Runner: \`ubuntu-26.04 / amd64\`"
+            echo "- SHA-256: \`$SHA256\`"
+            echo "- Size: \`$SIZE\` bytes"
+            echo "- Source commit: \`$GITHUB_SHA\`"
+            echo
+            echo "Candidate only. This workflow does not change runtime locks, release identity, or catalog authority."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload candidate runtime and manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: clientflow-python-runtime-3.13.15-amd64-${{ inputs.expected_source_sha }}
+          path: |
+            ${{ steps.runtime.outputs.path }}
+            ${{ steps.runtime.outputs.manifest }}
+          if-no-files-found: error
+          retention-days: 14
