@@ -1,3 +1,24 @@
+ClientFlow 1.3.27 / sequence 1228 Python-runtime bridge source re-freeze validation
+Date: 2026-09-28
+
+PASS: canonical pre-refreeze main commit = d3d598aa5f51a36d87992d7635ea504e6440f881.
+PASS: canonical push CI = #1047 / run 36474336723 / completed success.
+PASS: current source/build identity remains 1.3.27 / sequence 1228.
+PASS: active runtime Python remains 3.13.14.
+PASS: promoted runtime catalog remains 1.3.26 / sequence 1227.
+PASS: source release sequence 1228 leads catalog sequence 1227 by exactly one.
+PASS: the Python 3.13 patch-compatibility bridge is present before release artifact production.
+PASS: no sequence-1228 runtime-input transport/build/approval/publication/catalog promotion occurred before re-freeze.
+PASS: Python 3.13.15 workflow candidate remains evidence only and is not consumed by 1.3.27/1228.
+
+PENDING: merge this source re-freeze to canonical main.
+PENDING: canonical GitHub CI on the exact resulting re-freeze main SHA.
+PENDING: sequence-1228 runtime-input transport from that exact green re-freeze SHA.
+PENDING: reproducible 1.3.27/1228 build, approval, immutable publication and catalog promotion while still on Python 3.13.14.
+PENDING: verify the promoted 1.3.26 -> 1.3.27 bridge update path before staging a later Python 3.13.15 runtime release.
+
+---
+
 ClientFlow 1.3.27 / sequence 1228 Python 3.13 patch-compatibility bridge validation
 Date: 2026-09-28
 
