@@ -361,7 +361,6 @@ def build_runtime(
         dir=output.parent,
     )
     tmp_path = Path(tmp_name)
-    published = False
     try:
         with os.fdopen(descriptor, "w+b", closefd=True) as target:
             _write_runtime_tar(target, entries, version=version)
@@ -369,7 +368,6 @@ def build_runtime(
             os.fsync(target.fileno())
         verify_runtime_tar(tmp_path, version=version)
         os.link(tmp_path, output, follow_symlinks=False)
-        published = True
     finally:
         tmp_path.unlink(missing_ok=True)
 
