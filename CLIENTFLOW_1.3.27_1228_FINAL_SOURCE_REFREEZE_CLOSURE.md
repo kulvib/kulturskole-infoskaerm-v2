@@ -4,6 +4,10 @@ Date: 2026-09-29
 
 ## Status
 
+**SUPERSEDED BEFORE BUILD — pre-release maintenance wave (2026-09-29).**
+
+The operator explicitly reopened the staged 1.3.27/1228 source before runtime-input transport and canonical release build in order to modernize the backend/frontend toolchains and complete dependency/cost maintenance. No artifact chain derived from this closure is release authority. A new final source re-freeze is required after the maintenance wave is complete. The ClientFlow 1.3.27/1228 embedded runtime remains Python `3.13.14` because this release is the compatibility bridge consumed by the currently promoted 1.3.26/1227 updater; the deterministic Python `3.13.15` runtime candidate is evidence for the first post-1228 runtime upgrade, not authority to bypass that bridge.
+
 This document supersedes the previous 1.3.27/1228 Python-runtime bridge
 source re-freeze as the current source/build authority boundary.
 

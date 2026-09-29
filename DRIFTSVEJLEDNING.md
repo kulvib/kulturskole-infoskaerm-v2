@@ -183,7 +183,7 @@ login, HLS/livestream, ClientFlow, WebSocket, terminal og Remote Desktop.
 
 ## Runtime- og dependency-kontrakt (Step 36B)
 
-Projektet bruger Python `3.13.14`, Node.js `22.23.3`, npm `10.9.9` og pip `26.1.2`. Python installeres fra hash-låste lockfiler med `--require-hashes`; frontend installeres med `npm ci`. CI kører `pip check`, `pip-audit`, npm-audit, dependency-runtime-tests og `scripts/validate_dependency_contract.py`.
+Backend/CI bruger Python `3.13.15`, frontend-build bruger Node.js `24.21.0` LTS og npm `11.19.0`, og pip er `26.1.2`. Den indlejrede ClientFlow-runtime for compatibility-bridge release 1.3.27/1228 forbliver bevidst på Python `3.13.14`. Python-dependencies installeres fra hash-låste lockfiler med `--require-hashes`; frontend installeres med `npm ci`. CI kører `pip check`, `pip-audit`, npm-audit, dependency-runtime-tests og `scripts/validate_dependency_contract.py`.
 
 Vedligeholdelsesproceduren står i [DEPENDENCY_MAINTENANCE.md](DEPENDENCY_MAINTENANCE.md).
 
