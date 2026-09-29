@@ -2,12 +2,15 @@
 
 ## Fastlåste runtimes
 
-- Python: `3.13.14`
-- Node.js: `22.23.3`
-- npm: `10.9.9`
+- Backend/CI Python: `3.13.15`
+- Node.js: `24.21.0` LTS
+- npm: `11.19.0`
+- ClientFlow 1.3.27/1228 embedded runtime Python: `3.13.14` (compatibility bridge; intentionally unchanged)
 - pip i Render/CI: `26.1.2`
 
-Render, GitHub Actions, `backend/.python-version`, `frontend/package.json` og lockfilerne skal ændres samlet.
+Render, GitHub Actions, `backend/.python-version`, `frontend/package.json` og lockfilerne skal ændres samlet for backend/frontend toolchains.
+
+ClientFlow release-artifact production is a separate compatibility boundary. Sequence 1228 must remain on embedded Python `3.13.14` so the currently promoted 1.3.26/1227 updater can consume the bridge. The already-proven deterministic Python `3.13.15` runtime candidate is reserved for the first post-1228 runtime upgrade after 1228 has been promoted and update-tested.
 
 ## Python
 
