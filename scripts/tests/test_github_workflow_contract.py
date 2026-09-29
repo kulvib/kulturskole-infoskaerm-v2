@@ -62,3 +62,9 @@ def test_production_smoke_is_manual_main_only_and_uses_dispatched_sha():
     assert "EXPECTED_COMMIT: ${{ github.sha }}" in source
     assert "python scripts/check_production_readiness.py" in source
     assert "secrets." not in source
+
+def test_dependency_maintenance_candidate_keeps_pyjwt_security_floor():
+    source, _ = _load("dependency-maintenance-candidate.yml")
+    assert 'text.count("PyJWT==2.14.0") != 1' in source
+    assert '"security_floor": {"PyJWT": "2.14.0"}' in source
+
