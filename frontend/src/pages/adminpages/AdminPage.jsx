@@ -15,11 +15,13 @@ import SecurityIcon from "@mui/icons-material/Security";
 import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
 import HistoryIcon from "@mui/icons-material/History";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
+import ConstructionIcon from "@mui/icons-material/Construction";
 
 import OrganizationAdministration from "./OrganizationAdministration";
 import UserAdministration from "./UserAdministration";
 import EnrollmentTokensPage from "./EnrollmentTokensPage";
 import AuditLog from "./AuditLog";
+import MaintenanceAdministration from "./MaintenanceAdministration";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import {
@@ -52,6 +54,13 @@ const SECTIONS = [
     label: "Installation",
     icon: <RocketLaunchIcon fontSize="small" />,
     superadminOnly: true,
+  },
+  {
+    key: "maintenance",
+    label: "Vedligeholdelse",
+    icon: <ConstructionIcon fontSize="small" />,
+    superadminOnly: true,
+    viewerAllowed: false,
   },
 ];
 
@@ -102,7 +111,7 @@ export default function AdminPage() {
   const visibleSections = useMemo(
     () =>
       SECTIONS.filter(
-        (section) => !section.superadminOnly || isSuperadmin || isViewer,
+        (section) => !section.superadminOnly || isSuperadmin || (isViewer && section.viewerAllowed !== false),
       ),
     [isSuperadmin, isViewer],
   );
@@ -262,6 +271,17 @@ export default function AdminPage() {
           ) : (
             <Alert severity="error">
               Kun superadministratorer og Se adgang kan se installationskoder.
+            </Alert>
+          ))}
+
+        {activeSection === "maintenance" &&
+          (isSuperadmin ? (
+            <Box>
+              <MaintenanceAdministration />
+            </Box>
+          ) : (
+            <Alert severity="error">
+              Kun superadministratorer kan styre vedligeholdelsestilstand.
             </Alert>
           ))}
       </Stack>

@@ -75,7 +75,7 @@ ADVISORY_LOCK_KEY = -614927384150371204
 # Baseline adoption is deliberately reviewed only for this exact graph. If a
 # later migration changes the head, the adoption path fails closed until the
 # baseline delta is reviewed again.
-REVIEWED_BASELINE_ADOPTION_HEAD = "20260929_57a_impersonation"
+REVIEWED_BASELINE_ADOPTION_HEAD = "20260929_58a_maintenance"
 REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 
 # Production was observed at this Alembic label before Step 40A was deployed,
@@ -84,7 +84,7 @@ REVIEWED_BASELINE_ADOPTION_BASE = "20260712_30d_display_base"
 # 39A schema; otherwise deployment fails closed without stamping or DDL.
 RECOVERABLE_LEGACY_REVISION = "20260730_41a"
 RECOVERABLE_LEGACY_TARGET = "20260717_39a_livestream_leases"
-REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260929_57a_impersonation"
+REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260929_58a_maintenance"
 REVIEWED_LIVESTREAM_V2_PREDECESSOR = "20260814_40a_livestream_control"
 REVIEWED_LIVESTREAM_V2_REVISION = "20260814_41a_livestream_v2"
 REVIEWED_TERMINAL_V2_REVISION = "20260816_42a_terminal_v2"
@@ -105,6 +105,7 @@ REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION = "20260829_54a_display_parity"
 REVIEWED_ENROLLMENT_BINDING_REVISION = "20260908_55a_enroll_binding"
 REVIEWED_CALENDAR_DELIVERY_REVISION = "20260922_56a_calendar_rev"
 REVIEWED_IMPERSONATION_REVISION = "20260929_57a_impersonation"
+REVIEWED_MAINTENANCE_REVISION = "20260929_58a_maintenance"
 LIVESTREAM_V2_TABLES = frozenset({
     "livestream_v2_agent_status",
     "livestream_v2_command",
@@ -975,6 +976,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
             enrollment_binding_revision = script.get_revision(REVIEWED_ENROLLMENT_BINDING_REVISION)
             calendar_delivery_revision = script.get_revision(REVIEWED_CALENDAR_DELIVERY_REVISION)
             impersonation_revision = script.get_revision(REVIEWED_IMPERSONATION_REVISION)
+            maintenance_revision = script.get_revision(REVIEWED_MAINTENANCE_REVISION)
             head_revision = script.get_revision(head)
             if any(
                 item is None
@@ -985,7 +987,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                     database_contract_revision, canonical_foundations_revision, clientflow_deployment_revision,
                     clientflow_update_auth_revision, client_liveness_revision, display_authority_revision,
                     system_authority_revision, display_operational_parity_revision, enrollment_binding_revision,
-                    calendar_delivery_revision, impersonation_revision, head_revision,
+                    calendar_delivery_revision, impersonation_revision, maintenance_revision, head_revision,
                 )
             ):
                 raise RuntimeError("Legacy-revision reconciliation mangler kendte Alembic-noder")
@@ -1010,10 +1012,11 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                 or enrollment_binding_revision.down_revision != REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION
                 or calendar_delivery_revision.down_revision != REVIEWED_ENROLLMENT_BINDING_REVISION
                 or impersonation_revision.down_revision != REVIEWED_CALENDAR_DELIVERY_REVISION
-                or head != REVIEWED_IMPERSONATION_REVISION
+                or maintenance_revision.down_revision != REVIEWED_IMPERSONATION_REVISION
+                or head != REVIEWED_MAINTENANCE_REVISION
             ):
                 raise RuntimeError(
-                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B -> 52A -> 53A -> 53B -> 54A -> 55A -> 56A -> 57A-kæde"
+                    "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B -> 52A -> 53A -> 53B -> 54A -> 55A -> 56A -> 57A -> 58A-kæde"
                 )
             legacy_columns, legacy_constraints, legacy_indexes = (
                 _pre_livestream_control_schema_contract()

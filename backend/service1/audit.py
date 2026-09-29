@@ -47,6 +47,7 @@ CRITICAL_AUDIT_ACTIONS = {
     "organization_season_calendars_replaced",
     "impersonation_started",
     "impersonation_stopped",
+    "maintenance_enabled",
 }
 
 WARNING_AUDIT_ACTIONS = {
@@ -57,6 +58,8 @@ WARNING_AUDIT_ACTIONS = {
     "session_reauthentication_failed",
     "session_revoked",
     "other_sessions_revoked",
+    "maintenance_disabled",
+    "maintenance_reauthentication_failed",
 }
 
 

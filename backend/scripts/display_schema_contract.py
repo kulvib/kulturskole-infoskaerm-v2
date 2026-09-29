@@ -1097,3 +1097,23 @@ EXPECTED_INDEXES["ix_refresh_tokens_session_id"] = (
 # Replaced below after deterministic contract fingerprint calculation.
 EXPECTED_FINGERPRINT = "03cda7a545c01c93eca0f8707a8000fd8ad076af0b8e0b2e095bf1fac736a095"
 
+
+# Step 58A: server-authoritative maintenance state for human user access.
+EXPECTED_HEAD_REVISION = "20260929_58a_maintenance"
+EXPECTED_TABLES = set(EXPECTED_TABLES)
+EXPECTED_TABLES.add("maintenance_state")
+EXPECTED_COLUMNS["maintenance_state"] = {
+    "id": {"data_type": "integer", "default": None, "length": None, "nullable": False, "udt_name": "int4"},
+    "enabled": {"data_type": "boolean", "default": "false", "length": None, "nullable": False, "udt_name": "bool"},
+    "message": {"data_type": "character varying", "default": None, "length": 500, "nullable": True, "udt_name": "varchar"},
+    "expected_end_at": {"data_type": "timestamp without time zone", "default": None, "length": None, "nullable": True, "udt_name": "timestamp"},
+    "enabled_at": {"data_type": "timestamp without time zone", "default": None, "length": None, "nullable": True, "udt_name": "timestamp"},
+    "enabled_by_user_id": {"data_type": "integer", "default": None, "length": None, "nullable": True, "udt_name": "int4"},
+    "updated_at": {"data_type": "timestamp without time zone", "default": "now()", "length": None, "nullable": False, "udt_name": "timestamp"},
+}
+EXPECTED_CONSTRAINTS["ck_maintenance_state_singleton_id"] = "CHECK (id = 1)"
+EXPECTED_CONSTRAINTS["maintenance_state_enabled_by_user_id_fkey"] = 'FOREIGN KEY (enabled_by_user_id) REFERENCES "user"(id) ON DELETE SET NULL'
+EXPECTED_CONSTRAINTS["maintenance_state_pkey"] = "PRIMARY KEY (id)"
+EXPECTED_INDEXES["maintenance_state_pkey"] = "CREATE UNIQUE INDEX maintenance_state_pkey ON public.maintenance_state USING btree (id)"
+# Replaced below after deterministic contract fingerprint calculation.
+EXPECTED_FINGERPRINT = "d575b231d0e68b64f42e51558b3ed22f5c2604a663eab260900e72bfb6b472e6"

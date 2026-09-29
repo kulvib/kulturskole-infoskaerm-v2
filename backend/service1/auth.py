@@ -20,6 +20,7 @@ from sqlmodel import Session, select
 from .audit import add_audit_log, commit_audit_log
 from .db import get_session
 from .models import Client, Organization, RefreshToken, User
+from .maintenance_state import DEFAULT_MAINTENANCE_MESSAGE, get_maintenance_snapshot
 from .client_ip import get_client_ip
 from .rate_limit import (
     assert_key_not_limited,
@@ -691,6 +692,48 @@ def _client_from_payload(payload: dict, session: Session) -> Client:
     return client
 
 
+def _maintenance_headers(state) -> dict[str, str]:
+    headers = {"Cache-Control": "no-store, max-age=0"}
+    expected = _coerce_aware_utc(getattr(state, "expected_end_at", None))
+    if expected is not None:
+        headers["Retry-After"] = str(max(0, int((expected - datetime.now(timezone.utc)).total_seconds())))
+    return headers
+
+
+def _maintenance_snapshot_or_503(session: Session):
+    try:
+        return get_maintenance_snapshot(session)
+    except Exception as exc:
+        log_safe_exception(
+            logger,
+            exc,
+            event="maintenance_state_unavailable",
+            location="auth._maintenance_snapshot_or_503",
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Vedligeholdelsestilstanden kunne ikke bekræftes",
+            headers={"Cache-Control": "no-store, max-age=0"},
+        ) from None
+
+
+def _enforce_human_maintenance_access(request: Request, session: Session, current_user: User) -> None:
+    state = _maintenance_snapshot_or_503(session)
+    if not state.enabled:
+        return
+    actor = getattr(request.state, "real_actor", None) or current_user
+    if getattr(actor, "is_superadmin", False):
+        return
+    path = request.url.path.rstrip("/")
+    if path.endswith("/auth/me") or path.endswith("/auth/impersonation/stop"):
+        return
+    raise HTTPException(
+        status_code=503,
+        detail=state.message or DEFAULT_MAINTENANCE_MESSAGE,
+        headers=_maintenance_headers(state),
+    )
+
+
 def _user_response(user: User, *, actor: Optional[User] = None) -> dict:
     impersonation_active = actor is not None and actor.id != user.id
     return {
@@ -741,6 +784,7 @@ def login_for_access_token(
         detail="For mange mislykkede loginforsøg. Prøv igen senere.",
     )
 
+    maintenance_state = _maintenance_snapshot_or_503(session)
     user = authenticate_user(raw_identifier, form_data.password, session)
 
     if not user:
@@ -782,6 +826,13 @@ def login_for_access_token(
         raise invalid_credentials_exception
 
     clear_key_rate_limit(bucket="auth-login-account", key=identifier_key)
+
+    if maintenance_state.enabled and not user.is_superadmin:
+        raise HTTPException(
+            status_code=503,
+            detail=maintenance_state.message or DEFAULT_MAINTENANCE_MESSAGE,
+            headers=_maintenance_headers(maintenance_state),
+        )
 
     previous_last_login_at = getattr(user, "last_login_at", None)
     user.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1020,6 +1071,7 @@ def get_me(
 ):
     payload = _decode_token_or_raise(token)
     user = _resolve_user_from_payload(payload, session, request=request)
+    _enforce_human_maintenance_access(request, session, user)
     actor = getattr(request.state, "real_actor", None)
     return _user_response(user, actor=actor)
 
@@ -1032,7 +1084,9 @@ def get_current_user_or_client(
     payload = _decode_token_or_raise(token)
     if payload.get("principal") == "client":
         return _client_from_payload(payload, session)
-    return _resolve_user_from_payload(payload, session, request=request)
+    user = _resolve_user_from_payload(payload, session, request=request)
+    _enforce_human_maintenance_access(request, session, user)
+    return user
 
 
 def principal_is_client(principal) -> bool:
@@ -1055,7 +1109,9 @@ def get_current_user(
     session: Session = Depends(get_session),
 ):
     payload = _decode_token_or_raise(token)
-    return _resolve_user_from_payload(payload, session, request=request)
+    user = _resolve_user_from_payload(payload, session, request=request)
+    _enforce_human_maintenance_access(request, session, user)
+    return user
 
 
 def get_current_admin_user(
@@ -1555,6 +1611,10 @@ def verify_ws_token(token: str, session: Session) -> Optional[Union[User, Client
         )
         if payload.get("principal") == "client":
             return _client_from_payload(payload, session)
-        return _resolve_user_from_payload(payload, session)
+        user = _resolve_user_from_payload(payload, session)
+        state = get_maintenance_snapshot(session)
+        if state.enabled and not user.is_superadmin:
+            return None
+        return user
     except Exception:
         return None

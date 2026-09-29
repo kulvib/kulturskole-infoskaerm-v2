@@ -131,6 +131,21 @@ class User(SQLModel, table=True):
         return self.role == "viewer"
 
 
+class MaintenanceState(SQLModel, table=True):
+    __tablename__ = "maintenance_state"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_maintenance_state_singleton_id"),
+    )
+
+    id: int = Field(default=1, primary_key=True)
+    enabled: bool = Field(default=False, nullable=False)
+    message: Optional[str] = Field(default=None, max_length=500)
+    expected_end_at: Optional[datetime] = Field(default=None)
+    enabled_at: Optional[datetime] = Field(default=None)
+    enabled_by_user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    updated_at: datetime = Field(default_factory=utcnow, nullable=False)
+
+
 class RefreshToken(SQLModel, table=True):
     __tablename__ = "refresh_tokens"
 
