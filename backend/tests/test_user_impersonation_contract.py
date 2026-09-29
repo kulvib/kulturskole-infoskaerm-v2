@@ -147,6 +147,7 @@ def test_normal_refresh_rotation_keeps_access_context_valid_with_same_session_id
     old_row.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
     new_row = _active_row(row_id=78, actor_id=actor.id)
     new_row.session_id = old_row.session_id
+    new_row.session_expires_at = old_row.session_expires_at
     session = _FakeSession(actor, old_row, new_row)
 
     resolved = auth._resolve_user_from_payload(old_payload, session)
