@@ -304,6 +304,8 @@ class BaselineAdoptionTests(unittest.TestCase):
                     return Revision(runner.REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION)
                 if revision == runner.REVIEWED_CALENDAR_DELIVERY_REVISION:
                     return Revision(runner.REVIEWED_ENROLLMENT_BINDING_REVISION)
+                if revision == runner.REVIEWED_IMPERSONATION_REVISION:
+                    return Revision(runner.REVIEWED_CALENDAR_DELIVERY_REVISION)
                 raise AssertionError(f"unexpected revision lookup: {revision}")
 
         def verify(_connection, **kwargs):
@@ -717,6 +719,8 @@ class BaselineAdoptionTests(unittest.TestCase):
                     return Revision(runner.REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION)
                 if revision == runner.REVIEWED_CALENDAR_DELIVERY_REVISION:
                     return Revision(runner.REVIEWED_ENROLLMENT_BINDING_REVISION)
+                if revision == runner.REVIEWED_IMPERSONATION_REVISION:
+                    return Revision(runner.REVIEWED_CALENDAR_DELIVERY_REVISION)
                 raise AssertionError(f"unexpected revision lookup: {revision}")
 
         with patch.object(

@@ -139,6 +139,8 @@ class RefreshToken(SQLModel, table=True):
     token_hash: str = Field(index=True, unique=True, max_length=64, nullable=False)
     expires_at: datetime = Field(index=True, nullable=False)
     session_expires_at: Optional[datetime] = Field(default=None, index=True)
+    session_id: Optional[str] = Field(default=None, index=True, max_length=64)
+    impersonated_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     revoked_at: Optional[datetime] = Field(default=None, index=True)
     created_ip: Optional[str] = Field(default=None, max_length=45)
     user_agent: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))

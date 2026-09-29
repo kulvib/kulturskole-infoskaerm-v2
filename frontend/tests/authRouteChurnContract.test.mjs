@@ -49,7 +49,8 @@ test("backend remains authoritative for active user and token-version on protect
     "utf8",
   );
 
-  assert.match(backendAuth, /user = session\.exec\(select\(User\)\.where\(User\.username == username\)\)\.first\(\)/);
-  assert.match(backendAuth, /if not user or not user\.is_active:/);
-  assert.match(backendAuth, /_token_version\(payload\.get\("token_version"\)\) != _token_version\(getattr\(user, "token_version", 0\)\)/);
+  assert.match(backendAuth, /token_row = _require_active_refresh_row\(payload, session\)/);
+  assert.match(backendAuth, /if not actor\.is_active or not effective_user\.is_active:/);
+  assert.match(backendAuth, /_token_version\(payload\.get\("token_version"\)\) != _token_version\(getattr\(effective_user, "token_version", 0\)\)/);
+  assert.match(backendAuth, /token_row\.user_id != actor_user_id or token_row\.impersonated_user_id != expected_impersonated_user_id/);
 });

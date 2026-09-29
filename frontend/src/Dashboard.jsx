@@ -21,6 +21,7 @@ import {
 } from "@mui/material";
 import LogoutIcon from "@mui/icons-material/Logout";
 import VpnKeyIcon from "@mui/icons-material/VpnKey";
+import PersonSearchIcon from "@mui/icons-material/PersonSearch";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import MenuIcon from "@mui/icons-material/Menu";
@@ -29,6 +30,9 @@ import DesktopWindowsIcon from "@mui/icons-material/DesktopWindows";
 import HomeIcon from "@mui/icons-material/Home";
 import { PRODUCT_BRAND } from "./branding";
 import { getCanonicalUserRole, getRoleLabel, hasAdminOrSuperadminRole, hasSuperadminRole, isViewerRole } from "./utils/roleUtils";
+import ImpersonationBanner from "./auth/ImpersonationBanner";
+import ImpersonationDialog from "./auth/ImpersonationDialog";
+import AppSnackbar from "./components/AppSnackbar";
 
 const DISPLAY_LOGO_WHITE = PRODUCT_BRAND.logo.dark;
 const DISPLAY_PRODUCT_NAME = PRODUCT_BRAND.productName;
@@ -36,7 +40,14 @@ const NAVBAR_DARK = "#1e293b";
 
 
 export default function Dashboard() {
-  const { user, logoutUser } = useAuth();
+  const {
+    user,
+    logoutUser,
+    isImpersonating,
+    listImpersonationCandidates,
+    startImpersonation,
+    stopImpersonation,
+  } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const theme = useTheme();
@@ -51,6 +62,9 @@ export default function Dashboard() {
 
   const [userMenuAnchorEl, setUserMenuAnchorEl] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [impersonationDialogOpen, setImpersonationDialogOpen] = useState(false);
+  const [impersonationStopping, setImpersonationStopping] = useState(false);
+  const [impersonationError, setImpersonationError] = useState("");
 
   const userMenuOpen = Boolean(userMenuAnchorEl);
 
@@ -86,6 +100,37 @@ export default function Dashboard() {
   const handleChangePassword = () => {
     navigateFromMenu("/skift-adgangskode");
   };
+
+  const handleImpersonationMenuClick = () => {
+    closeMenus();
+    setDrawerOpen(false);
+    setImpersonationDialogOpen(true);
+  };
+
+  const handleStartImpersonation = React.useCallback(async (targetUserId) => {
+    try {
+      await startImpersonation(targetUserId);
+      setImpersonationError("");
+      navigate("/");
+    } catch (error) {
+      setImpersonationError(error?.message || "Kunne ikke skifte bruger");
+      throw error;
+    }
+  }, [navigate, startImpersonation]);
+
+  const handleStopImpersonation = React.useCallback(async () => {
+    if (impersonationStopping) return;
+    setImpersonationStopping(true);
+    try {
+      await stopImpersonation();
+      setImpersonationError("");
+      navigate("/");
+    } catch (error) {
+      setImpersonationError(error?.message || "Kunne ikke skifte tilbage");
+    } finally {
+      setImpersonationStopping(false);
+    }
+  }, [impersonationStopping, navigate, stopImpersonation]);
 
   const handleDrawerNavigate = (to) => {
     setDrawerOpen(false);
@@ -306,6 +351,24 @@ export default function Dashboard() {
             {userDisplayRole}
           </Typography>
         </Box>
+        {!isImpersonating && isAdmin && (
+          <Button
+            fullWidth
+            variant="outlined"
+            onClick={handleImpersonationMenuClick}
+            startIcon={<PersonSearchIcon fontSize="small" />}
+            sx={{
+              mb: 1,
+              textTransform: "none",
+              color: "#e2e8f0",
+              borderColor: "#475569",
+              "&:hover": { bgcolor: "#334155", borderColor: "#64748b" },
+            }}
+          >
+            Skift bruger
+          </Button>
+        )}
+        {!isImpersonating && (
         <Button
           fullWidth
           variant="outlined"
@@ -321,6 +384,7 @@ export default function Dashboard() {
         >
           Skift adgangskode
         </Button>
+        )}
         <Button
           fullWidth
           variant="outlined"
@@ -527,12 +591,22 @@ export default function Dashboard() {
                   )}
                 </Box>
                 <Divider />
-                <MenuItem onClick={handleChangePassword}>
-                  <ListItemIcon>
-                    <VpnKeyIcon fontSize="small" />
-                  </ListItemIcon>
-                  Skift adgangskode
-                </MenuItem>
+                {!isImpersonating && isAdmin && (
+                  <MenuItem onClick={handleImpersonationMenuClick}>
+                    <ListItemIcon>
+                      <PersonSearchIcon fontSize="small" />
+                    </ListItemIcon>
+                    Skift bruger
+                  </MenuItem>
+                )}
+                {!isImpersonating && (
+                  <MenuItem onClick={handleChangePassword}>
+                    <ListItemIcon>
+                      <VpnKeyIcon fontSize="small" />
+                    </ListItemIcon>
+                    Skift adgangskode
+                  </MenuItem>
+                )}
                 <MenuItem onClick={handleLogout}>
                   <ListItemIcon>
                     <LogoutIcon fontSize="small" />
@@ -544,11 +618,29 @@ export default function Dashboard() {
           )}
 
         </Toolbar>
+        <ImpersonationBanner
+          user={user}
+          onStop={handleStopImpersonation}
+          stopping={impersonationStopping}
+        />
       </AppBar>
       <Toolbar sx={{ minHeight: 56 }} />
       <Box component="main" sx={{ p: { xs: 2, md: 3 }, minHeight: "calc(100vh - 56px)", bgcolor: "transparent" }}>
         <Outlet />
       </Box>
+      <ImpersonationDialog
+        open={impersonationDialogOpen}
+        onClose={() => setImpersonationDialogOpen(false)}
+        loadCandidates={listImpersonationCandidates}
+        onStart={handleStartImpersonation}
+        actorRole={user?.role}
+      />
+      <AppSnackbar
+        open={Boolean(impersonationError)}
+        message={impersonationError}
+        severity="error"
+        onClose={() => setImpersonationError("")}
+      />
     </>
   );
 }
