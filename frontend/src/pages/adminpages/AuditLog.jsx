@@ -97,6 +97,9 @@ const ACTION_META = {
   organization_name_changed: { label: "Organisation omdøbt", category: "Organisation", color: "info" },
   impersonation_started: { label: "Skift bruger startet", category: "Sikkerhed", color: "warning" },
   impersonation_stopped: { label: "Skift bruger afsluttet", category: "Sikkerhed", color: "info" },
+  session_reauthentication_failed: { label: "Sessionsgodkendelse afvist", category: "Sikkerhed", color: "warning" },
+  session_revoked: { label: "Session afsluttet", category: "Sikkerhed", color: "warning" },
+  other_sessions_revoked: { label: "Andre sessioner afsluttet", category: "Sikkerhed", color: "warning" },
   organization_logo_updated: { label: "Organisationslogo ændret", category: "Organisation", color: "info" },
   organization_logo_deleted: { label: "Organisationslogo slettet", category: "Organisation", color: "warning" },
   organization_times_updated: { label: "Organisationstider ændret", category: "Kalender", color: "info" },
@@ -372,6 +375,12 @@ function formatHumanSummary(log) {
       return `${target} loggede ind.`;
     case "login_failed":
       return `Login blev afvist for ${target}.`;
+    case "session_reauthentication_failed":
+      return `Bekræftelse af adgangskode blev afvist for ${target}.`;
+    case "session_revoked":
+      return `${actor} afsluttede en anden aktiv session for ${target}.`;
+    case "other_sessions_revoked":
+      return `${actor} afsluttede ${details.revoked_count ?? 0} andre aktive session(er) for ${target}.`;
     case "audit_logs_cleanup_expired":
       return `${actor} ryddede ${details.deleted_count ?? 0} udløbne audit-log rækker.`;
     case "client_created":

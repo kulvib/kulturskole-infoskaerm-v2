@@ -54,6 +54,9 @@ WARNING_AUDIT_ACTIONS = {
     "login_failed",
     "client_soft_deleted",
     "enrollment_token_revoked",
+    "session_reauthentication_failed",
+    "session_revoked",
+    "other_sessions_revoked",
 }
 
 

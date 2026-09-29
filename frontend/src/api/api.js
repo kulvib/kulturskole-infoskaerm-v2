@@ -410,6 +410,43 @@ export async function logout() {
   }
 }
 
+export async function getActiveAuthSessions(signal) {
+  const res = await apiFetch(`${authApiBase}/sessions`, {
+    method: "GET",
+    headers: authHeaders(),
+    credentials: "include",
+    cache: "no-store",
+    signal,
+  });
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Kunne ikke hente aktive sessioner");
+  return readJsonResponse(res, "Uventet svar fra sessionsoversigten");
+}
+
+export async function revokeAuthSession(sessionId, password) {
+  const res = await apiFetch(`${authApiBase}/sessions/revoke`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({
+      session_id: String(sessionId || ""),
+      password: String(password || ""),
+    }),
+  });
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Kunne ikke afslutte sessionen");
+  return readJsonResponse(res, "Uventet svar fra session-afslutning");
+}
+
+export async function revokeOtherAuthSessions(password) {
+  const res = await apiFetch(`${authApiBase}/sessions/revoke-others`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ password: String(password || "") }),
+  });
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Kunne ikke afslutte andre sessioner");
+  return readJsonResponse(res, "Uventet svar fra session-afslutning");
+}
+
 
 export async function forgotPassword(identifier) {
   const res = await apiFetch(`${apiUrl}/api/users/forgot-password`, {

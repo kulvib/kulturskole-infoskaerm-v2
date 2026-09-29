@@ -22,6 +22,7 @@ import {
 import LogoutIcon from "@mui/icons-material/Logout";
 import VpnKeyIcon from "@mui/icons-material/VpnKey";
 import PersonSearchIcon from "@mui/icons-material/PersonSearch";
+import SecurityIcon from "@mui/icons-material/Security";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import MenuIcon from "@mui/icons-material/Menu";
@@ -99,6 +100,10 @@ export default function Dashboard() {
 
   const handleChangePassword = () => {
     navigateFromMenu("/skift-adgangskode");
+  };
+
+  const handleSessionSecurity = () => {
+    navigateFromMenu("/sessioner-og-sikkerhed");
   };
 
   const handleImpersonationMenuClick = () => {
@@ -369,21 +374,38 @@ export default function Dashboard() {
           </Button>
         )}
         {!isImpersonating && (
-        <Button
-          fullWidth
-          variant="outlined"
-          onClick={handleChangePassword}
-          startIcon={<VpnKeyIcon fontSize="small" />}
-          sx={{
-            mb: 1,
-            textTransform: "none",
-            color: "#e2e8f0",
-            borderColor: "#475569",
-            "&:hover": { bgcolor: "#334155", borderColor: "#64748b" },
-          }}
-        >
-          Skift adgangskode
-        </Button>
+          <Button
+            fullWidth
+            variant="outlined"
+            onClick={handleSessionSecurity}
+            startIcon={<SecurityIcon fontSize="small" />}
+            sx={{
+              mb: 1,
+              textTransform: "none",
+              color: "#e2e8f0",
+              borderColor: "#475569",
+              "&:hover": { bgcolor: "#334155", borderColor: "#64748b" },
+            }}
+          >
+            Sessioner og sikkerhed
+          </Button>
+        )}
+        {!isImpersonating && (
+          <Button
+            fullWidth
+            variant="outlined"
+            onClick={handleChangePassword}
+            startIcon={<VpnKeyIcon fontSize="small" />}
+            sx={{
+              mb: 1,
+              textTransform: "none",
+              color: "#e2e8f0",
+              borderColor: "#475569",
+              "&:hover": { bgcolor: "#334155", borderColor: "#64748b" },
+            }}
+          >
+            Skift adgangskode
+          </Button>
         )}
         <Button
           fullWidth
@@ -597,6 +619,14 @@ export default function Dashboard() {
                       <PersonSearchIcon fontSize="small" />
                     </ListItemIcon>
                     Skift bruger
+                  </MenuItem>
+                )}
+                {!isImpersonating && (
+                  <MenuItem onClick={handleSessionSecurity}>
+                    <ListItemIcon>
+                      <SecurityIcon fontSize="small" />
+                    </ListItemIcon>
+                    Sessioner og sikkerhed
                   </MenuItem>
                 )}
                 {!isImpersonating && (
