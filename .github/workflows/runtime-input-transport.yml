@@ -83,8 +83,9 @@ jobs:
               raise SystemExit("source release sequence is not staged ahead of catalog")
           if any(str(item.get("version")) == version for item in catalog["releases"]):
               raise SystemExit("source version is already present in runtime catalog")
-          tag = f"runtime-inputs-{sequence}-transport"
-          name = f"clientflow-runtime-inputs-python-{release_input['runtime_python']}-amd64-{sequence}.tar"
+          source_sha = os.environ["EXPECTED_SOURCE_SHA"]
+          tag = f"runtime-inputs-{sequence}-{source_sha}-transport"
+          name = f"clientflow-runtime-inputs-python-{release_input['runtime_python']}-amd64-{sequence}-{source_sha}.tar"
           output = os.environ["GITHUB_OUTPUT"]
           with open(output, "a", encoding="utf-8") as fh:
               fh.write(f"version={version}\nsequence={sequence}\ntag={tag}\nasset_name={name}\n")
