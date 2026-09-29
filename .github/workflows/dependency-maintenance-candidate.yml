@@ -191,6 +191,91 @@ jobs:
           test "$(node --version)" = "v$CLIENTFLOW_NODE_VERSION"
           test "$(npm --version)" = "$CLIENTFLOW_NPM_VERSION"
 
+      - name: Refresh checksum manifest for reviewed candidate changes
+        working-directory: ${{ steps.candidate.outputs.path }}
+        shell: bash
+        env:
+          SOURCE_TREE: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import os
+
+          source = Path(os.environ["SOURCE_TREE"]).resolve()
+          candidate = Path.cwd().resolve()
+          reviewed = {
+              "backend/requirements.txt",
+              "backend/requirements.lock.txt",
+              "requirements-ci.lock.txt",
+              "frontend/package.json",
+              "frontend/package-lock.json",
+              "scripts/validate_dependency_contract.py",
+          }
+
+          def digest(path: Path) -> str:
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          def repository_files(root: Path) -> set[str]:
+              return {
+                  path.relative_to(root).as_posix()
+                  for path in root.rglob("*")
+                  if path.is_file() and ".git" not in path.relative_to(root).parts
+              }
+
+          source_files = repository_files(source)
+          candidate_files = repository_files(candidate)
+          added = candidate_files - source_files
+          removed = source_files - candidate_files
+          modified = {
+              relative
+              for relative in source_files & candidate_files
+              if digest(source / relative) != digest(candidate / relative)
+          }
+          changed = added | removed | modified
+          if changed != reviewed:
+              unexpected = sorted(changed - reviewed)
+              missing = sorted(reviewed - changed)
+              raise SystemExit(
+                  "Candidate drift does not match reviewed dependency outputs; "
+                  f"unexpected={unexpected}, missing={missing}"
+              )
+
+          manifest = candidate / "SHA256SUMS.txt"
+          lines = manifest.read_text(encoding="utf-8").splitlines()
+          manifest_paths: set[str] = set()
+          refreshed: list[str] = []
+          for raw_line in lines:
+              if not raw_line.strip():
+                  refreshed.append(raw_line)
+                  continue
+              old_digest, separator, relative = raw_line.partition("  ")
+              if separator != "  " or len(old_digest) != 64:
+                  raise SystemExit(f"Malformed SHA256SUMS entry: {raw_line!r}")
+              if relative in manifest_paths:
+                  raise SystemExit(f"Duplicate SHA256SUMS entry: {relative}")
+              manifest_paths.add(relative)
+              target = candidate / relative
+              if not target.is_file():
+                  raise SystemExit(f"SHA256SUMS target missing: {relative}")
+              if relative in reviewed:
+                  old_digest = digest(target)
+              refreshed.append(f"{old_digest}  {relative}")
+
+          expected_updates = reviewed & manifest_paths
+          if expected_updates != {"frontend/package-lock.json"}:
+              raise SystemExit(
+                  "Unexpected reviewed files covered by SHA256SUMS: "
+                  f"{sorted(expected_updates)}"
+              )
+          manifest.write_text("\n".join(refreshed) + "\n", encoding="utf-8")
+          print(
+              "Candidate checksum manifest refreshed for: "
+              + ", ".join(sorted(expected_updates))
+          )
+          PY
+
       - name: Validate candidate backend and dependency contracts
         working-directory: ${{ steps.candidate.outputs.path }}
         shell: bash
@@ -241,6 +326,7 @@ jobs:
           cp "$CANDIDATE/frontend/package.json" "$OUTPUT/frontend/package.json"
           cp "$CANDIDATE/frontend/package-lock.json" "$OUTPUT/frontend/package-lock.json"
           cp "$CANDIDATE/scripts/validate_dependency_contract.py" "$OUTPUT/scripts/validate_dependency_contract.py"
+          cp "$CANDIDATE/SHA256SUMS.txt" "$OUTPUT/SHA256SUMS.txt"
           python - "$OUTPUT/dependency-maintenance-candidate.json" <<'PY'
           import json
           import os
