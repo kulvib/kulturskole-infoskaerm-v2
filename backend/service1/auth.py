@@ -13,7 +13,7 @@ from fastapi.openapi.models import OAuthFlows as OAuthFlowsModel
 from fastapi.security import OAuth2, OAuth2PasswordRequestForm
 from jwt.exceptions import InvalidTokenError
 from passlib.context import CryptContext
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
@@ -137,6 +137,29 @@ class ImpersonationCandidateOut(BaseModel):
     organization_id: Optional[int] = None
     organization_name: Optional[str] = None
     must_change_password: bool
+
+
+class ActiveSessionOut(BaseModel):
+    session_id: str
+    current: bool
+    refreshed_at: datetime
+    session_expires_at: datetime
+    user_agent: Optional[str] = None
+    ip_address: Optional[str] = None
+    impersonation_active: bool = False
+
+
+class SessionRevokeRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class SessionRevokeOthersRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=256)
+
+
+class SessionRevokeResult(BaseModel):
+    revoked_count: int
 
 
 # ---------------------------------------------------------------------------
@@ -1073,6 +1096,247 @@ def _current_refresh_row_for_context(request: Request, session: Session, actor: 
     if not refresh_expiry or refresh_expiry <= now or session_expiry <= now:
         raise HTTPException(status_code=401, detail="Sessionen er udløbet")
     return row
+
+
+def _session_security_actor(request: Request, current_user: User) -> User:
+    actor = getattr(request.state, "real_actor", None) or current_user
+    if getattr(request.state, "impersonation_active", False) or actor.id != current_user.id:
+        raise HTTPException(status_code=409, detail="Afslut det aktive bruger-skift først")
+    return actor
+
+
+def _set_session_security_no_store(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+
+
+def _require_session_security_password(
+    *,
+    request: Request,
+    session: Session,
+    actor: User,
+    password: str,
+) -> None:
+    key = f"user:{int(actor.id)}"
+    assert_key_not_limited(
+        bucket="session-security-password",
+        key=key,
+        max_attempts=5,
+        window_seconds=300,
+        detail="For mange mislykkede godkendelsesforsøg. Prøv igen senere.",
+    )
+    if not verify_password(password, actor.hashed_password):
+        record_key_attempt(
+            bucket="session-security-password",
+            key=key,
+            window_seconds=300,
+        )
+        commit_audit_log(
+            session,
+            action="session_reauthentication_failed",
+            request=request,
+            actor=actor,
+            target_user=actor,
+            entity_type="session",
+            status="failed",
+            severity="warning",
+            details={"reason": "wrong_password"},
+        )
+        raise HTTPException(status_code=403, detail="Adgangskoden er forkert")
+    clear_key_rate_limit(bucket="session-security-password", key=key)
+
+
+def _active_session_rows(session: Session, actor: User) -> list[RefreshToken]:
+    now = datetime.now(timezone.utc)
+    rows = session.exec(
+        select(RefreshToken)
+        .where(
+            RefreshToken.user_id == int(actor.id),
+            RefreshToken.revoked_at.is_(None),
+        )
+        .order_by(RefreshToken.created_at.desc(), RefreshToken.id.desc())
+    ).all()
+    active: list[RefreshToken] = []
+    for row in rows:
+        refresh_expiry = _coerce_aware_utc(row.expires_at)
+        session_expiry = _refresh_session_expires_at(row)
+        if not refresh_expiry or refresh_expiry <= now or session_expiry <= now:
+            continue
+        session_id = str(row.session_id or "").strip()
+        if not session_id:
+            continue
+        active.append(row)
+    return active
+
+
+@router.get("/sessions", response_model=list[ActiveSessionOut])
+def list_active_sessions(
+    response: Response,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    actor = _session_security_actor(request, current_user)
+    _set_session_security_no_store(response)
+    current_row = _current_refresh_row_for_context(request, session, actor)
+    current_session_id = str(current_row.session_id or "").strip()
+    if not current_session_id:
+        raise HTTPException(status_code=401, detail="Sessionen mangler sikkerhedsbinding")
+
+    result: list[ActiveSessionOut] = []
+    seen: set[str] = set()
+    for row in _active_session_rows(session, actor):
+        session_id = str(row.session_id or "").strip()
+        if session_id in seen:
+            continue
+        seen.add(session_id)
+        refreshed_at = _coerce_aware_utc(row.created_at) or datetime.now(timezone.utc)
+        result.append(
+            ActiveSessionOut(
+                session_id=session_id,
+                current=session_id == current_session_id,
+                refreshed_at=refreshed_at,
+                session_expires_at=_refresh_session_expires_at(row),
+                user_agent=(str(row.user_agent).strip() if row.user_agent else None),
+                ip_address=(str(row.created_ip).strip() if row.created_ip else None),
+                impersonation_active=row.impersonated_user_id is not None,
+            )
+        )
+
+    if sum(1 for row in result if row.current) != 1:
+        raise HTTPException(status_code=401, detail="Den aktuelle session kunne ikke identificeres sikkert")
+    result.sort(key=lambda row: (not row.current, -row.refreshed_at.timestamp()))
+    return result
+
+
+@router.post("/sessions/revoke", response_model=SessionRevokeResult)
+def revoke_active_session(
+    payload: SessionRevokeRequest,
+    response: Response,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    actor = _session_security_actor(request, current_user)
+    _set_session_security_no_store(response)
+    current_row = _current_refresh_row_for_context(request, session, actor)
+    current_session_id = str(current_row.session_id or "").strip()
+    target_session_id = payload.session_id.strip()
+    if not current_session_id:
+        raise HTTPException(status_code=401, detail="Sessionen mangler sikkerhedsbinding")
+    if target_session_id == current_session_id:
+        raise HTTPException(status_code=400, detail="Brug Log ud for at afslutte den aktuelle session")
+
+    _require_session_security_password(
+        request=request,
+        session=session,
+        actor=actor,
+        password=payload.password,
+    )
+
+    rows = session.exec(
+        select(RefreshToken).where(
+            RefreshToken.user_id == int(actor.id),
+            RefreshToken.session_id == target_session_id,
+            RefreshToken.revoked_at.is_(None),
+        )
+    ).all()
+    now_aware = datetime.now(timezone.utc)
+    now = now_aware.replace(tzinfo=None)
+    active_rows = [
+        row
+        for row in rows
+        if (_coerce_aware_utc(row.expires_at) or datetime.min.replace(tzinfo=timezone.utc)) > now_aware
+        and _refresh_session_expires_at(row) > now_aware
+    ]
+    if not active_rows:
+        raise HTTPException(status_code=404, detail="Sessionen findes ikke eller er allerede afsluttet")
+
+    for row in active_rows:
+        row.revoked_at = now
+        session.add(row)
+    add_audit_log(
+        session,
+        action="session_revoked",
+        request=request,
+        actor=actor,
+        target_user=actor,
+        entity_type="session",
+        entity_label="remote-session",
+        severity="warning",
+        details={
+            "revoked_count": len(active_rows),
+            "target_impersonation_active": any(row.impersonated_user_id is not None for row in active_rows),
+        },
+    )
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise HTTPException(status_code=500, detail="Kunne ikke afslutte sessionen")
+    return SessionRevokeResult(revoked_count=len(active_rows))
+
+
+@router.post("/sessions/revoke-others", response_model=SessionRevokeResult)
+def revoke_other_sessions(
+    payload: SessionRevokeOthersRequest,
+    response: Response,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    actor = _session_security_actor(request, current_user)
+    _set_session_security_no_store(response)
+    current_row = _current_refresh_row_for_context(request, session, actor)
+    current_session_id = str(current_row.session_id or "").strip()
+    if not current_session_id:
+        raise HTTPException(status_code=401, detail="Sessionen mangler sikkerhedsbinding")
+
+    _require_session_security_password(
+        request=request,
+        session=session,
+        actor=actor,
+        password=payload.password,
+    )
+
+    now_aware = datetime.now(timezone.utc)
+    now = now_aware.replace(tzinfo=None)
+    rows = session.exec(
+        select(RefreshToken).where(
+            RefreshToken.user_id == int(actor.id),
+            RefreshToken.revoked_at.is_(None),
+            or_(
+                RefreshToken.session_id != current_session_id,
+                RefreshToken.session_id.is_(None),
+            ),
+        )
+    ).all()
+    active_rows = [
+        row
+        for row in rows
+        if (_coerce_aware_utc(row.expires_at) or datetime.min.replace(tzinfo=timezone.utc)) > now_aware
+        and _refresh_session_expires_at(row) > now_aware
+    ]
+    for row in active_rows:
+        row.revoked_at = now
+        session.add(row)
+    add_audit_log(
+        session,
+        action="other_sessions_revoked",
+        request=request,
+        actor=actor,
+        target_user=actor,
+        entity_type="session",
+        entity_label="other-sessions",
+        severity="warning",
+        details={"revoked_count": len(active_rows)},
+    )
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise HTTPException(status_code=500, detail="Kunne ikke afslutte andre sessioner")
+    return SessionRevokeResult(revoked_count=len(active_rows))
 
 
 def _candidate_out(user: User, organization_names: dict[int, str]) -> ImpersonationCandidateOut:

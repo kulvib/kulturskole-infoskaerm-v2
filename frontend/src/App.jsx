@@ -23,6 +23,7 @@ const ClientTerminalPage = lazy(
   () => import("./pages/clientdetailspage/terminal/ClientTerminalPage"),
 );
 const ChangePassword = lazy(() => import("./ChangePassword"));
+const SessionSecurityPage = lazy(() => import("./SessionSecurityPage"));
 const ForgotPasswordPage = lazy(() => import("./ForgotPasswordPage"));
 const ResetPasswordPage = lazy(() => import("./ResetPasswordPage"));
 
@@ -92,6 +93,7 @@ export default function App() {
           <Route path="calendar" element={<CalendarPage />} />
           <Route path="skift-adgangskode" element={<ChangePassword />} />
           <Route path="skift-password" element={<ChangePassword />} />
+          <Route path="sessioner-og-sikkerhed" element={<SessionSecurityPage />} />
 
           <Route
             path="administration"
