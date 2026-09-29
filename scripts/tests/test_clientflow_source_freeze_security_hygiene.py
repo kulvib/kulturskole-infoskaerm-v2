@@ -13,6 +13,14 @@ def test_source_freeze_has_no_repo_overlay_duplicate_tree() -> None:
     )
 
 
+
+def test_source_freeze_has_no_backend_path_overlay_tree() -> None:
+    leaked = [name for name in ("service1", "tests") if (ROOT / name).exists()]
+    assert leaked == [], (
+        "backend delivery paths leaked into repository root instead of backend/: "
+        + ", ".join(leaked)
+    )
+
 def test_source_freeze_has_no_delivery_package_artifacts() -> None:
     """Delivery-only bundle metadata must never become canonical source."""
     forbidden_root_artifacts = {

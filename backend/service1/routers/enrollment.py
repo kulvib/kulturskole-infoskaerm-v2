@@ -489,12 +489,14 @@ def _verify_initial_fresh_install_authorization(
     return authorization
 
 
-def _token_to_read(token: EnrollmentToken, session: Optional[Session] = None) -> EnrollmentTokenRead:
+def _token_to_read(
+    token: EnrollmentToken,
+    used_client: Optional[Client] = None,
+) -> EnrollmentTokenRead:
     now = utcnow()
     is_used = token.used_at is not None
     is_revoked = token.revoked_at is not None
     is_expired = (not is_used) and (not is_revoked) and token.expires_at < now
-    used_client = session.get(Client, token.used_by_client_id) if session is not None and token.used_by_client_id else None
     return EnrollmentTokenRead(
         id=token.id,
         code_preview=token.code_preview,
@@ -753,12 +755,22 @@ def list_enrollment_tokens(
     session: Session = Depends(get_session),
     admin: User = Depends(get_current_superadmin_user),
 ):
-    stmt = select(EnrollmentToken).order_by(EnrollmentToken.created_at.desc())
-    tokens = session.exec(stmt).all()
+    stmt = select(EnrollmentToken, Client).join(
+        Client,
+        EnrollmentToken.used_by_client_id == Client.id,
+        isouter=True,
+    )
     if not include_history:
         now = utcnow()
-        tokens = [t for t in tokens if t.used_at is not None or (t.revoked_at is None and t.expires_at >= now)]
-    return [_token_to_read(t, session) for t in tokens]
+        stmt = stmt.where(
+            (EnrollmentToken.used_at.is_not(None))
+            | (
+                EnrollmentToken.revoked_at.is_(None)
+                & (EnrollmentToken.expires_at >= now)
+            )
+        )
+    rows = session.exec(stmt.order_by(EnrollmentToken.created_at.desc())).all()
+    return [_token_to_read(token, used_client) for token, used_client in rows]
 
 
 @router.post("/admin/enrollment-tokens/{token_id}/revoke", response_model=EnrollmentTokenRead)
@@ -790,7 +802,10 @@ def revoke_enrollment_token(
         )
         session.commit()
         session.refresh(token)
-    return _token_to_read(token, session)
+    used_client = (
+        session.get(Client, token.used_by_client_id) if token.used_by_client_id else None
+    )
+    return _token_to_read(token, used_client)
 
 
 def _credential_response(
