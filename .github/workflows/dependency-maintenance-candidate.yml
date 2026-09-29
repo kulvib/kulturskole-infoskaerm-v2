@@ -159,6 +159,20 @@ jobs:
           if validator.count(old) != 1:
               raise SystemExit("Expected exactly one @vitejs/plugin-react validator pin")
           validator_path.write_text(validator.replace(old, new), encoding="utf-8")
+
+          runtime_contract_path = root / "frontend/tests/dependencyRuntime.test.mjs"
+          runtime_contract = runtime_contract_path.read_text(encoding="utf-8")
+          runtime_replacements = {
+              'react: "19.2.7",': 'react: "19.3.0",',
+              '"react-dom": "19.2.7",': '"react-dom": "19.3.0",',
+              '"react-router-dom": "7.18.2",': '"react-router-dom": "7.18.3",',
+              '"react-router": "7.18.2",': '"react-router": "7.18.3",',
+          }
+          for old, new in runtime_replacements.items():
+              if runtime_contract.count(old) != 1:
+                  raise SystemExit(f"Expected exactly one frontend runtime contract pin: {old}")
+              runtime_contract = runtime_contract.replace(old, new)
+          runtime_contract_path.write_text(runtime_contract, encoding="utf-8")
           PY
 
       - name: Resolve hash-locked Python dependency graphs
@@ -211,6 +225,7 @@ jobs:
               "requirements-ci.lock.txt",
               "frontend/package.json",
               "frontend/package-lock.json",
+              "frontend/tests/dependencyRuntime.test.mjs",
               "scripts/validate_dependency_contract.py",
           }
 
@@ -264,7 +279,10 @@ jobs:
               refreshed.append(f"{old_digest}  {relative}")
 
           expected_updates = reviewed & manifest_paths
-          if expected_updates != {"frontend/package-lock.json"}:
+          if expected_updates != {
+              "frontend/package-lock.json",
+              "frontend/tests/dependencyRuntime.test.mjs",
+          }:
               raise SystemExit(
                   "Unexpected reviewed files covered by SHA256SUMS: "
                   f"{sorted(expected_updates)}"
@@ -318,13 +336,14 @@ jobs:
           rm -rf "$OUTPUT"
           mkdir -p \
             "$OUTPUT/backend" \
-            "$OUTPUT/frontend" \
+            "$OUTPUT/frontend/tests" \
             "$OUTPUT/scripts"
           cp "$CANDIDATE/backend/requirements.txt" "$OUTPUT/backend/requirements.txt"
           cp "$CANDIDATE/backend/requirements.lock.txt" "$OUTPUT/backend/requirements.lock.txt"
           cp "$CANDIDATE/requirements-ci.lock.txt" "$OUTPUT/requirements-ci.lock.txt"
           cp "$CANDIDATE/frontend/package.json" "$OUTPUT/frontend/package.json"
           cp "$CANDIDATE/frontend/package-lock.json" "$OUTPUT/frontend/package-lock.json"
+          cp "$CANDIDATE/frontend/tests/dependencyRuntime.test.mjs" "$OUTPUT/frontend/tests/dependencyRuntime.test.mjs"
           cp "$CANDIDATE/scripts/validate_dependency_contract.py" "$OUTPUT/scripts/validate_dependency_contract.py"
           cp "$CANDIDATE/SHA256SUMS.txt" "$OUTPUT/SHA256SUMS.txt"
           python - "$OUTPUT/dependency-maintenance-candidate.json" <<'PY'
