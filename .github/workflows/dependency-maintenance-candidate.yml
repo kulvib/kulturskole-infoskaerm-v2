@@ -122,6 +122,7 @@ jobs:
           replacements = {
               "fastapi==0.139.0": "fastapi==0.141.1",
               "uvicorn[standard]==0.50.1": "uvicorn[standard]==0.54.0",
+              "websockets==12.0": "websockets==17.1",
               "psycopg2-binary==2.9.12": "psycopg2-binary==2.9.13",
               "alembic==1.18.5": "alembic==1.20.0",
           }
@@ -251,6 +252,7 @@ jobs:
               "backend_direct_updates": {
                   "fastapi": "0.141.1",
                   "uvicorn": "0.54.0",
+                  "websockets": "17.1",
                   "psycopg2-binary": "2.9.13",
                   "alembic": "1.20.0",
               },
