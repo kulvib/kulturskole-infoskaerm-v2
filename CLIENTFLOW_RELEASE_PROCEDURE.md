@@ -54,6 +54,8 @@ python scripts/build_clientflow_runtime_input_transport.py \
 
 The input directory must contain exactly `python-runtime-amd64.tar` and the locked third-party wheels under `wheelhouse/`. The builder opens each source artifact with no-follow semantics, verifies size/SHA-256 against the repo lock, writes a deterministic USTAR archive with normalized ownership/mode/mtime metadata, re-verifies every member in the completed TAR, and uses no-replace publication for the output path. Two builds from the same locked bytes must therefore produce the same transport SHA-256. The resulting TAR may be hosted on any ordinary public HTTPS asset service (for example a repository release asset); the hosting location is transport only because the workflow independently requires both the exact outer TAR SHA-256 and every repo-locked inner artifact hash/size.
 
+The canonical transport workflow also binds its published transport identity to the exact source authority. Its no-replace prerelease tag is `runtime-inputs-<SEQUENCE>-<FULL_SOURCE_SHA>-transport`, and the asset filename carries the same full source SHA. A source re-freeze can therefore publish a new auditable transport for the same staged sequence without deleting, replacing or ambiguously reusing an older transport. Only the URL and SHA-256 emitted by the transport run for the exact green `expected_source_sha` may be supplied to the release-build workflow.
+
 Before building, the workflow:
 
 1. checks out exactly `expected_source_sha` with persisted Git credentials disabled;

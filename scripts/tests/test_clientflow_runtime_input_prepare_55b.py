@@ -148,6 +148,13 @@ def test_github_workflow_is_manual_exact_source_no_replace_transport_only():
     assert "verify_github_ci_run.py" in workflow
     assert "--head-branch main" in workflow
     assert "source release sequence is not staged ahead of catalog" in workflow
+    assert 'source_sha = os.environ["EXPECTED_SOURCE_SHA"]' in workflow
+    assert 'tag = f"runtime-inputs-{sequence}-{source_sha}-transport"' in workflow
+    assert (
+        'name = f"clientflow-runtime-inputs-python-{release_input[\'runtime_python\']}-amd64-'
+        '{sequence}-{source_sha}.tar"' in workflow
+    )
+    assert 'tag = f"runtime-inputs-{sequence}-transport"' not in workflow
     assert "gh release view \"$TAG\"" in workflow
     assert "gh release create \"$TAG\"" in workflow
     assert "--prerelease" in workflow

@@ -85,6 +85,12 @@ CI, the following remain forbidden:
 - immutable publication;
 - catalog promotion to 1.3.27/1228.
 
+## Refreeze-safe runtime-input transport identity
+
+A runtime-input transport is transport evidence, not release authority, but it must still be unambiguous about the source authority it was prepared for. Sequence-only transport tags cannot safely represent more than one source freeze of the same staged release sequence. The canonical transport workflow therefore uses a no-replace tag and asset name qualified by the full 40-character `expected_source_sha`. Any older sequence-1228 transport remains preserved as historical evidence and must not be deleted, overwritten or reused for a later re-freeze SHA.
+
+Only the transport URL and SHA-256 emitted for the exact final green re-freeze SHA may feed the reproducible release build.
+
 ## Next canonical gates
 
 After merge and green canonical push CI:
