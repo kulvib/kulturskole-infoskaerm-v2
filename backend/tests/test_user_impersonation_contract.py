@@ -173,7 +173,7 @@ def test_migration_and_schema_contract_include_impersonation_refresh_binding():
 
     assert 'revision = "20260929_57a_impersonation"' in migration
     assert 'down_revision = "20260922_56a_calendar_rev"' in migration
-    assert 'EXPECTED_HEAD_REVISION = "20260929_57a_impersonation"' in contract
+    assert 'EXPECTED_HEAD_REVISION = "20260929_58a_maintenance"' in contract
     assert 'session_id' in migration
     assert 'ix_refresh_tokens_session_id' in contract
     assert 'REVIEWED_IMPERSONATION_REVISION = "20260929_57a_impersonation"' in runner

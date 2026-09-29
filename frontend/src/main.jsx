@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { ThemeProvider, CssBaseline } from "@mui/material";
 import App from "./App";
 import { AuthProvider } from "./auth/AuthProvider";
+import MaintenanceGate from "./auth/MaintenanceGate";
 import { BrowserRouter } from "react-router-dom";
 import theme from "./theme";
 import { AppSnackbarProvider } from "./components/AppSnackbar";
@@ -16,7 +17,9 @@ root.render(
         <CssBaseline />
         <AppSnackbarProvider>
           <AuthProvider>
-            <App />
+            <MaintenanceGate>
+              <App />
+            </MaintenanceGate>
           </AuthProvider>
         </AppSnackbarProvider>
       </ThemeProvider>
