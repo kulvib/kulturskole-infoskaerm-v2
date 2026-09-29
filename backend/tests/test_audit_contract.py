@@ -19,8 +19,9 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from service1.audit import add_audit_log
+from service1.maintenance_state import invalidate_maintenance_cache
 from service1.auth import get_password_hash, login_for_access_token
-from service1.models import AuditLog, RefreshToken, User
+from service1.models import AuditLog, MaintenanceState, RefreshToken, User
 from service1.routers.users import AuditLogOut, AuditLogRetentionOut, UserCreate, create_user, delete_user, list_audit_logs
 from fastapi.security import OAuth2PasswordRequestForm
 
@@ -60,9 +61,12 @@ class AuditContractTests(unittest.IsolatedAsyncioTestCase):
         )
         SQLModel.metadata.create_all(
             self.engine,
-            tables=[User.__table__, RefreshToken.__table__, AuditLog.__table__],
+            tables=[User.__table__, MaintenanceState.__table__, RefreshToken.__table__, AuditLog.__table__],
         )
         self.session = Session(self.engine)
+        invalidate_maintenance_cache()
+        self.session.add(MaintenanceState(id=1, enabled=False))
+        self.session.commit()
         self.admin = User(
             username="audit-admin",
             email="audit-admin@example.invalid",
@@ -76,6 +80,7 @@ class AuditContractTests(unittest.IsolatedAsyncioTestCase):
         self.session.refresh(self.admin)
 
     def tearDown(self) -> None:
+        invalidate_maintenance_cache()
         self.session.close()
         self.engine.dispose()
 
