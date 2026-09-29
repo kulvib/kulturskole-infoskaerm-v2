@@ -132,6 +132,8 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CHANGED_FILES_1327_1228_SOURCE_FREEZE.txt" in seen
     assert "CLIENTFLOW_1.3.27_1228_SOURCE_REFREEZE_PYTHON_RUNTIME_BRIDGE_CLOSURE.md" in seen
     assert "CHANGED_FILES_1327_1228_SOURCE_REFREEZE.txt" in seen
+    assert "CLIENTFLOW_1.3.27_1228_FINAL_SOURCE_REFREEZE_CLOSURE.md" in seen
+    assert "CHANGED_FILES_1327_1228_FINAL_SOURCE_REFREEZE.txt" in seen
 
 
 def test_1323_1224_initial_freeze_is_explicitly_superseded_before_build() -> None:
@@ -161,6 +163,7 @@ def test_1325_1226_refreeze_contains_no_known_unused_runtime_or_template_files()
     leaked = [relative for relative in forbidden if (ROOT / relative).exists()]
     assert leaked == [], "known unused pre-1226 files remain: " + ", ".join(leaked)
 
+
 def test_1327_1228_initial_freeze_is_superseded_by_python_runtime_bridge_refreeze() -> None:
     initial = (ROOT / "CLIENTFLOW_1.3.27_1228_SOURCE_FREEZE_CLOSURE.md").read_text(
         encoding="utf-8"
@@ -177,4 +180,28 @@ def test_1327_1228_initial_freeze_is_superseded_by_python_runtime_bridge_refreez
     assert "runtime Python: `3.13.14`" in refreeze
     assert "Python 3.13.15" in refreeze
     assert "source release sequence" in refreeze and "catalog sequence" in refreeze
+
+
+def test_1327_1228_final_refreeze_supersedes_pre_audit_source_authority() -> None:
+    identity = (ROOT / "CLIENTFLOW_1.3.27_1228_SOURCE_IDENTITY.md").read_text(
+        encoding="utf-8"
+    )
+    bridge = (
+        ROOT / "CLIENTFLOW_1.3.27_1228_SOURCE_REFREEZE_PYTHON_RUNTIME_BRIDGE_CLOSURE.md"
+    ).read_text(encoding="utf-8")
+    final = (ROOT / "CLIENTFLOW_1.3.27_1228_FINAL_SOURCE_REFREEZE_CLOSURE.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "CLIENTFLOW_1.3.27_1228_FINAL_SOURCE_REFREEZE_CLOSURE.md" in identity
+    assert "SUPERSEDED BEFORE FINAL BUILD" in bridge
+    assert "678092b596806e0952de96163899c6bdecc0719d" in final
+    assert "#1090" in final
+    assert "36599288657" in final
+    assert "N+1" in final
+    assert "repository-root `service1/` / `tests/`" in final
+    assert "source-SHA-qualified" in final
+    assert "expected_source_sha" in final
+    assert "source release sequence: `1228`" in final
+    assert "catalog sequence: `1227`" in final
 
