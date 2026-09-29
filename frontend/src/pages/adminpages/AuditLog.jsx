@@ -95,6 +95,8 @@ const ACTION_META = {
   client_secret_revoked: { label: "Klienthemmelighed tilbagekaldt", category: "Adgang", color: "error", critical: true },
   organization_created: { label: "Organisation oprettet", category: "Organisation", color: "success" },
   organization_name_changed: { label: "Organisation omdøbt", category: "Organisation", color: "info" },
+  impersonation_started: { label: "Skift bruger startet", category: "Sikkerhed", color: "warning" },
+  impersonation_stopped: { label: "Skift bruger afsluttet", category: "Sikkerhed", color: "info" },
   organization_logo_updated: { label: "Organisationslogo ændret", category: "Organisation", color: "info" },
   organization_logo_deleted: { label: "Organisationslogo slettet", category: "Organisation", color: "warning" },
   organization_times_updated: { label: "Organisationstider ændret", category: "Kalender", color: "info" },

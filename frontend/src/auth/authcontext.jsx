@@ -15,8 +15,13 @@ import {
   refreshSession,
 } from "../api";
 import SessionTimeoutDialog from "./SessionTimeoutDialog";
-import { useSessionPolicy } from "./sessionPolicy";
+import { broadcastSessionContextChanged, useSessionPolicy } from "./sessionPolicy";
 import { getCanonicalUserRole, getRoleLabel, hasAdminOrSuperadminRole, hasSuperadminRole, isViewerRole } from "../utils/roleUtils";
+import {
+  listImpersonationCandidates as loadImpersonationCandidates,
+  startImpersonationSession,
+  stopImpersonationSession,
+} from "./impersonationApi";
 
 const AuthContext = createContext();
 
@@ -65,27 +70,34 @@ export function AuthProvider({ children }) {
     await serverLogout;
   }, [navigate]);
 
+  const applySessionUser = useCallback((userData, nextSessionExpiresAt = null) => {
+    const normalized = normalizeUserData(userData);
+    setUser(normalized);
+    setLoading(false);
+    setSessionExpiresAtState(nextSessionExpiresAt || getSessionExpiresAt() || null);
+    localStorage.setItem("user", JSON.stringify(normalized));
+    return normalized;
+  }, []);
+
   const validateCurrentSession = useCallback(async () => {
     const refreshed = await refreshSession();
     const nextExpiry = refreshed?.session_expires_at || getSessionExpiresAt() || null;
     setSessionExpiresAtState(nextExpiry);
+    if (refreshed?.user) applySessionUser(refreshed.user, nextExpiry);
     return refreshed;
-  }, []);
+  }, [applySessionUser]);
 
   const sessionPolicy = useSessionPolicy({
     active: Boolean(user),
     sessionExpiresAt,
     validateSession: validateCurrentSession,
     onSessionEnd: endLocalSession,
+    onSessionContextChanged: validateCurrentSession,
   });
 
   const loginUser = useCallback((userData, nextSessionExpiresAt = null) => {
-    const normalized = normalizeUserData(userData);
-    setUser(normalized);
-    setLoading(false);
-    setSessionExpiresAtState(nextSessionExpiresAt || getSessionExpiresAt() || null);
-    localStorage.setItem("user", JSON.stringify(normalized));
-  }, []);
+    applySessionUser(userData, nextSessionExpiresAt);
+  }, [applySessionUser]);
 
   useEffect(() => {
     let cancelled = false;
@@ -144,6 +156,24 @@ export function AuthProvider({ children }) {
     return () => { cancelled = true; };
   }, [bootPathname]);
 
+  const listImpersonationCandidates = useCallback((signal) => {
+    return loadImpersonationCandidates(signal);
+  }, []);
+
+  const startImpersonation = useCallback(async (targetUserId) => {
+    const result = await startImpersonationSession(targetUserId);
+    const normalized = applySessionUser(result.user, result.session_expires_at);
+    broadcastSessionContextChanged();
+    return normalized;
+  }, [applySessionUser]);
+
+  const stopImpersonation = useCallback(async () => {
+    const result = await stopImpersonationSession();
+    const normalized = applySessionUser(result.user, result.session_expires_at);
+    broadcastSessionContextChanged();
+    return normalized;
+  }, [applySessionUser]);
+
   const isSuperadmin = hasSuperadminRole(user);
   const isViewer = isViewerRole(user);
   const isAdministrator = getCanonicalUserRole(user) === "admin";
@@ -163,6 +193,14 @@ export function AuthProvider({ children }) {
       isViewer,
       isAdministrator,
       canReadAll,
+      isImpersonating: user?.impersonation_active === true,
+      actorUserId: user?.actor_user_id ?? null,
+      actorUsername: user?.actor_username ?? null,
+      actorFullName: user?.actor_full_name ?? null,
+      actorRole: user?.actor_role ?? null,
+      listImpersonationCandidates,
+      startImpersonation,
+      stopImpersonation,
     }}>
       {children}
       <SessionTimeoutDialog

@@ -45,6 +45,8 @@ CRITICAL_AUDIT_ACTIONS = {
     "client_permanently_deleted",
     "organization_deleted",
     "organization_season_calendars_replaced",
+    "impersonation_started",
+    "impersonation_stopped",
 }
 
 WARNING_AUDIT_ACTIONS = {
@@ -139,6 +141,10 @@ def add_audit_log(
     Funktionen committer ikke selv. Kald den før endpointets normale commit, så
     audit-log og ændringen gemmes i samme transaktion.
     """
+    real_actor = getattr(getattr(request, "state", None), "real_actor", None) if request is not None else None
+    effective_user = getattr(getattr(request, "state", None), "current_user", None) if request is not None else None
+    if real_actor is not None:
+        actor = real_actor
     actor_snapshot = make_user_snapshot(actor)
 
     if target_user is not None:
@@ -153,6 +159,14 @@ def add_audit_log(
         else bool(is_critical)
     )
     resolved_retention_days = retention_days or AUDIT_LOG_RETENTION_DAYS
+
+    resolved_details = dict(details or {})
+    if real_actor is not None and effective_user is not None and getattr(real_actor, "id", None) != getattr(effective_user, "id", None):
+        resolved_details.setdefault("impersonation_active", True)
+        resolved_details.setdefault("effective_user_id", getattr(effective_user, "id", None))
+        resolved_details.setdefault("effective_username", getattr(effective_user, "username", None))
+        resolved_details.setdefault("effective_role", _role_label(effective_user))
+        resolved_details.setdefault("effective_organization_id", getattr(effective_user, "organization_id", None))
 
     audit_log = AuditLog(
         action=action,
@@ -174,7 +188,7 @@ def add_audit_log(
         is_critical=resolved_is_critical,
         retention_days=resolved_retention_days,
         retain_until=default_retain_until(resolved_retention_days),
-        details=details or None,
+        details=resolved_details or None,
     )
     db.add(audit_log)
     return audit_log

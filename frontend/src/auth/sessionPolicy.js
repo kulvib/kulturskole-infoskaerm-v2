@@ -49,6 +49,10 @@ export function storeSessionEndReason(reason) {
   }
 }
 
+export function broadcastSessionContextChanged() {
+  writeSessionSyncEvent({ type: "context" });
+}
+
 export function consumeSessionEndMessage() {
   try {
     const reason = sessionStorage.getItem(SESSION_END_REASON_KEY);
@@ -71,6 +75,7 @@ export function useSessionPolicy({
   sessionExpiresAt,
   validateSession,
   onSessionEnd,
+  onSessionContextChanged,
 }) {
   const [dialogType, setDialogTypeState] = useState(null);
   const [secondsRemaining, setSecondsRemaining] = useState(0);
@@ -86,6 +91,7 @@ export function useSessionPolicy({
   const endingRef = useRef(false);
   const validateSessionRef = useRef(validateSession);
   const onSessionEndRef = useRef(onSessionEnd);
+  const onSessionContextChangedRef = useRef(onSessionContextChanged);
   const evaluateRef = useRef(() => {});
 
   useEffect(() => {
@@ -99,6 +105,10 @@ export function useSessionPolicy({
   useEffect(() => {
     onSessionEndRef.current = onSessionEnd;
   }, [onSessionEnd]);
+
+  useEffect(() => {
+    onSessionContextChangedRef.current = onSessionContextChanged;
+  }, [onSessionContextChanged]);
 
   const setDialogType = useCallback((nextType) => {
     dialogTypeRef.current = nextType;
@@ -264,6 +274,8 @@ export function useSessionPolicy({
           applyActivity(message.at, { force: true, broadcast: false });
         } else if (message.type === "logout") {
           void endSession(message.reason || "expired", { broadcast: false });
+        } else if (message.type === "context") {
+          void onSessionContextChangedRef.current?.();
         }
       } catch {
         // Ignorer ugyldige/ældre storage-events.

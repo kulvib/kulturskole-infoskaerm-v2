@@ -428,6 +428,8 @@ const AUDIT_ACTION_LABELS = {
   client_secret_revoked: "Klienthemmelighed tilbagekaldt",
   organization_created: "Organisation oprettet",
   organization_name_changed: "Organisation omdøbt",
+  impersonation_started: "Skift bruger startet",
+  impersonation_stopped: "Skift bruger afsluttet",
   organization_logo_updated: "Organisationslogo ændret",
   organization_logo_deleted: "Organisationslogo slettet",
   organization_times_updated: "Organisationstider ændret",

@@ -1066,3 +1066,34 @@ _calendar_columns.update(CALENDAR_DELIVERY_COLUMNS)
 EXPECTED_COLUMNS["calendarmarking"] = _calendar_columns
 # Replaced below after deterministic contract fingerprint calculation.
 EXPECTED_FINGERPRINT = "b218a48fee5fb31ffb2a0fe1e66df3dcc420c37f50564b2966a9d4eb153e2ad8"
+
+# Step 57A: secure administrator user-switch session context.
+EXPECTED_HEAD_REVISION = "20260929_57a_impersonation"
+_refresh_columns = dict(EXPECTED_COLUMNS["refresh_tokens"])
+_refresh_columns["session_id"] = {
+    "data_type": "character varying",
+    "default": None,
+    "length": 64,
+    "nullable": True,
+    "udt_name": "varchar",
+}
+_refresh_columns["impersonated_user_id"] = {
+    "data_type": "integer",
+    "default": None,
+    "length": None,
+    "nullable": True,
+    "udt_name": "int4",
+}
+EXPECTED_COLUMNS["refresh_tokens"] = _refresh_columns
+EXPECTED_CONSTRAINTS["refresh_tokens_impersonated_user_id_fkey"] = (
+    'FOREIGN KEY (impersonated_user_id) REFERENCES "user"(id) ON DELETE CASCADE'
+)
+EXPECTED_INDEXES["ix_refresh_tokens_impersonated_user_id"] = (
+    "CREATE INDEX ix_refresh_tokens_impersonated_user_id ON public.refresh_tokens USING btree (impersonated_user_id)"
+)
+EXPECTED_INDEXES["ix_refresh_tokens_session_id"] = (
+    "CREATE INDEX ix_refresh_tokens_session_id ON public.refresh_tokens USING btree (session_id)"
+)
+# Replaced below after deterministic contract fingerprint calculation.
+EXPECTED_FINGERPRINT = "03cda7a545c01c93eca0f8707a8000fd8ad076af0b8e0b2e095bf1fac736a095"
+
