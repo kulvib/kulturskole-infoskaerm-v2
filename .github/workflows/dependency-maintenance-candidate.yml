@@ -129,6 +129,8 @@ jobs:
               if text.count(old) != 1:
                   raise SystemExit(f"Expected exactly one dependency pin: {old}")
               text = text.replace(old, new)
+          if text.count("PyJWT==2.14.0") != 1:
+              raise SystemExit("PyJWT security floor must remain exactly 2.14.0")
           requirements.write_text(text, encoding="utf-8")
 
           package_path = root / "frontend/package.json"
@@ -258,6 +260,7 @@ jobs:
                   "react-router-dom": "7.18.3",
                   "@vitejs/plugin-react": "6.1.1",
               },
+              "security_floor": {"PyJWT": "2.14.0"},
               "resolver": {"uv": "0.12.19", "npm": "11.19.0"},
           }
           with open(sys.argv[1], "w", encoding="utf-8") as handle:
