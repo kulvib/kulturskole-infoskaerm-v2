@@ -14,9 +14,9 @@ const lockfile = JSON.parse(
 );
 
 const EXPECTED = Object.freeze({
-  react: "19.2.7",
-  "react-dom": "19.2.7",
-  "react-router-dom": "7.18.2",
+  react: "19.3.0",
+  "react-dom": "19.3.0",
+  "react-router-dom": "7.18.3",
   "@mui/material": "9.4.0",
   "@mui/icons-material": "9.4.0",
   "@mui/x-date-pickers": "9.14.0",
@@ -46,7 +46,7 @@ test("kendte frontend security-remediations er låst i package-lock", () => {
     "js-yaml": "4.3.2",
     nanoid: "3.3.18",
     postcss: "8.5.23",
-    "react-router": "7.18.2",
+    "react-router": "7.18.3",
   };
 
   for (const [name, version] of Object.entries(expected)) {
