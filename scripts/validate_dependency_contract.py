@@ -148,7 +148,7 @@ def main() -> int:
         "eslint": "9.39.5",
         "eslint-plugin-react-hooks": "7.1.1",
         "globals": "15.14.0",
-        "@vitejs/plugin-react": "6.0.3",
+        "@vitejs/plugin-react": "6.1.1",
         "vite": "8.1.4",
     }
     packages = lock.get("packages") or {}
