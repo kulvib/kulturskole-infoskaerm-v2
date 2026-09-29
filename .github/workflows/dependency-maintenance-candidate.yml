@@ -1,0 +1,277 @@
+name: Build dependency maintenance candidate
+
+"on":
+  workflow_dispatch:
+    inputs:
+      expected_source_sha:
+        description: Full 40-character main SHA; canonical CI must already be green for this exact commit
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: clientflow-dependency-maintenance-${{ inputs.expected_source_sha }}
+  cancel-in-progress: false
+
+env:
+  CLIENTFLOW_PYTHON_VERSION: "3.13.15"
+  CLIENTFLOW_NODE_VERSION: "24.21.0"
+  CLIENTFLOW_NPM_VERSION: "11.19.0"
+  CLIENTFLOW_PIP_VERSION: "26.1.2"
+  CLIENTFLOW_UV_VERSION: "0.12.19"
+
+jobs:
+  build:
+    name: Resolve and validate dependency maintenance candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      actions: read
+      contents: read
+
+    services:
+      postgres:
+        image: postgres:18.4
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: planiq_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d planiq_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/planiq_ci
+      ENVIRONMENT: development
+      SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+      PYTHONPATH: backend
+      MIGRATION_ALLOW_EMPTY_DATABASE: "true"
+      MIGRATION_ADVISORY_LOCK_TIMEOUT_SECONDS: "30"
+      MIGRATION_LOCK_TIMEOUT_SECONDS: "10"
+      MIGRATION_STATEMENT_TIMEOUT_SECONDS: "120"
+
+    steps:
+      - name: Checkout exact source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up exact Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.15"
+          pip-version: "26.1.2"
+
+      - name: Set up exact Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.21.0"
+          package-manager-cache: false
+
+      - name: Require exact main source and green canonical CI
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF_NAME" = "main"
+          test "$GITHUB_SHA" = "$EXPECTED_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test "$(python -c 'import platform; print(platform.python_version())')" = "$CLIENTFLOW_PYTHON_VERSION"
+          test "$(python -m pip --version | awk '{print $2}')" = "$CLIENTFLOW_PIP_VERSION"
+          test "$(node --version)" = "v$CLIENTFLOW_NODE_VERSION"
+          test "$(npm --version)" = "$CLIENTFLOW_NPM_VERSION"
+          python scripts/verify_github_ci_run.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --sha "$EXPECTED_SOURCE_SHA" \
+            --workflow ci.yml \
+            --head-branch main
+
+      - name: Create isolated candidate tree
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          CANDIDATE="$RUNNER_TEMP/dependency-candidate"
+          mkdir -p "$CANDIDATE"
+          rsync -a --delete --exclude=.git "$GITHUB_WORKSPACE/" "$CANDIDATE/"
+          echo "path=$CANDIDATE" >> "$GITHUB_OUTPUT"
+
+      - name: Apply reviewed direct dependency targets
+        working-directory: ${{ steps.candidate.outputs.path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          root = Path.cwd()
+          requirements = root / "backend/requirements.txt"
+          text = requirements.read_text(encoding="utf-8")
+          replacements = {
+              "fastapi==0.139.0": "fastapi==0.141.1",
+              "uvicorn[standard]==0.50.1": "uvicorn[standard]==0.54.0",
+              "psycopg2-binary==2.9.12": "psycopg2-binary==2.9.13",
+              "alembic==1.18.5": "alembic==1.20.0",
+          }
+          for old, new in replacements.items():
+              if text.count(old) != 1:
+                  raise SystemExit(f"Expected exactly one dependency pin: {old}")
+              text = text.replace(old, new)
+          requirements.write_text(text, encoding="utf-8")
+
+          package_path = root / "frontend/package.json"
+          package = json.loads(package_path.read_text(encoding="utf-8"))
+          frontend_targets = {
+              "react": "19.3.0",
+              "react-dom": "19.3.0",
+              "react-router-dom": "7.18.3",
+          }
+          dev_targets = {"@vitejs/plugin-react": "6.1.1"}
+          for name, version in frontend_targets.items():
+              if name not in package["dependencies"]:
+                  raise SystemExit(f"Missing frontend dependency: {name}")
+              package["dependencies"][name] = version
+          for name, version in dev_targets.items():
+              if name not in package["devDependencies"]:
+                  raise SystemExit(f"Missing frontend devDependency: {name}")
+              package["devDependencies"][name] = version
+          package_path.write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
+
+          validator_path = root / "scripts/validate_dependency_contract.py"
+          validator = validator_path.read_text(encoding="utf-8")
+          old = '"@vitejs/plugin-react": "6.0.3"'
+          new = '"@vitejs/plugin-react": "6.1.1"'
+          if validator.count(old) != 1:
+              raise SystemExit("Expected exactly one @vitejs/plugin-react validator pin")
+          validator_path.write_text(validator.replace(old, new), encoding="utf-8")
+          PY
+
+      - name: Resolve hash-locked Python dependency graphs
+        working-directory: ${{ steps.candidate.outputs.path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "uv==$CLIENTFLOW_UV_VERSION"
+          uv pip compile backend/requirements.txt \
+            --upgrade \
+            --generate-hashes \
+            --python-version 3.13 \
+            --python-platform x86_64-manylinux_2_17 \
+            --no-emit-index-url \
+            --output-file backend/requirements.lock.txt
+          uv pip compile backend/requirements.txt requirements-ci.txt \
+            --upgrade \
+            --generate-hashes \
+            --python-version 3.13 \
+            --python-platform x86_64-manylinux_2_17 \
+            --no-emit-index-url \
+            --output-file requirements-ci.lock.txt
+
+      - name: Resolve exact frontend lock
+        working-directory: ${{ steps.candidate.outputs.path }}/frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          test "$(node --version)" = "v$CLIENTFLOW_NODE_VERSION"
+          test "$(npm --version)" = "$CLIENTFLOW_NPM_VERSION"
+
+      - name: Validate candidate backend and dependency contracts
+        working-directory: ${{ steps.candidate.outputs.path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements-ci.lock.txt
+          python -m pip check
+          python scripts/validate_dependency_contract.py
+          python backend/scripts/validate_display_baseline.py
+          python -m ruff check backend/service1 backend/scripts scripts --select F
+          python -m ruff check backend/clientflow_release_format --select F
+          python -m compileall -q backend/clientflow_release_format backend/service1 backend/migrations client/runtime client/release/lib scripts
+          python -m pip_audit --disable-pip --no-deps --progress-spinner off -r backend/requirements.lock.txt
+          python backend/scripts/run_migrations.py
+          python backend/scripts/run_migrations.py
+          python -m pytest -q backend/tests scripts/tests
+
+      - name: Validate candidate frontend and bundle budget
+        working-directory: ${{ steps.candidate.outputs.path }}/frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run audit:dependencies
+          npm run test:dependency-runtime
+          npm run test:mui-react-upgrade
+          npm run test:snackbar-contract
+          node --test tests/*.test.mjs
+          npm run lint
+          npm run build
+
+      - name: Assemble reviewed candidate files
+        id: output
+        shell: bash
+        env:
+          CANDIDATE: ${{ steps.candidate.outputs.path }}
+        run: |
+          set -euo pipefail
+          OUTPUT="$RUNNER_TEMP/dependency-maintenance-output"
+          rm -rf "$OUTPUT"
+          mkdir -p \
+            "$OUTPUT/backend" \
+            "$OUTPUT/frontend" \
+            "$OUTPUT/scripts"
+          cp "$CANDIDATE/backend/requirements.txt" "$OUTPUT/backend/requirements.txt"
+          cp "$CANDIDATE/backend/requirements.lock.txt" "$OUTPUT/backend/requirements.lock.txt"
+          cp "$CANDIDATE/requirements-ci.lock.txt" "$OUTPUT/requirements-ci.lock.txt"
+          cp "$CANDIDATE/frontend/package.json" "$OUTPUT/frontend/package.json"
+          cp "$CANDIDATE/frontend/package-lock.json" "$OUTPUT/frontend/package-lock.json"
+          cp "$CANDIDATE/scripts/validate_dependency_contract.py" "$OUTPUT/scripts/validate_dependency_contract.py"
+          python - "$OUTPUT/dependency-maintenance-candidate.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          payload = {
+              "schema_version": 1,
+              "source_sha": os.environ["GITHUB_SHA"],
+              "backend_direct_updates": {
+                  "fastapi": "0.141.1",
+                  "uvicorn": "0.54.0",
+                  "psycopg2-binary": "2.9.13",
+                  "alembic": "1.20.0",
+              },
+              "frontend_direct_updates": {
+                  "react": "19.3.0",
+                  "react-dom": "19.3.0",
+                  "react-router-dom": "7.18.3",
+                  "@vitejs/plugin-react": "6.1.1",
+              },
+              "resolver": {"uv": "0.12.19", "npm": "11.19.0"},
+          }
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              json.dump(payload, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          PY
+          echo "path=$OUTPUT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload validated dependency maintenance candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: clientflow-dependency-maintenance-${{ inputs.expected_source_sha }}
+          path: ${{ steps.output.outputs.path }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+          overwrite: false
