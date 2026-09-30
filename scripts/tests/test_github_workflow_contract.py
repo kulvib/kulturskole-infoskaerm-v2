@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import re
 
 import yaml
@@ -67,4 +68,43 @@ def test_dependency_maintenance_candidate_keeps_pyjwt_security_floor():
     source, _ = _load("dependency-maintenance-candidate.yml")
     assert 'text.count("PyJWT==2.14.0") != 1' in source
     assert '"security_floor": {"PyJWT": "2.14.0"}' in source
+
+def test_backend_ci_does_not_duplicate_dedicated_python_gates():
+    source, _ = _load("ci.yml")
+    manifest = json.loads((ROOT / "client/legacy-client-parity.json").read_text(encoding="utf-8"))
+
+    broad_start = source.index("- name: Run Python test suite")
+    operational_start = source.index("- name: Execute ClientFlow synthetic end-to-end operational gate")
+    legacy_start = source.index("- name: Execute legacy 1.1.19 capability parity gate")
+    host_start = source.index("  client-host-ubuntu-2604:")
+
+    broad = source[broad_start:operational_start]
+    operational = source[operational_start:legacy_start]
+    legacy = source[legacy_start:host_start]
+
+    path_re = re.compile(r"(?:backend|scripts)/tests/[A-Za-z0-9_./-]+\.py")
+    ignored = {item.removeprefix("--ignore=") for item in re.findall(r"--ignore=((?:backend|scripts)/tests/[A-Za-z0-9_./-]+\.py)", broad)}
+    operational_paths = set(path_re.findall(operational))
+    legacy_paths = {
+        proof["path"]
+        for capability in manifest["capabilities"]
+        for proof in capability.get("proofs", [])
+        if proof.get("scope") == "python" and proof.get("execution", "gate") == "gate"
+    }
+
+    assert operational_paths
+    assert legacy_paths
+    assert not (operational_paths & legacy_paths)
+    assert ignored == operational_paths | legacy_paths
+    assert "python -m pytest -q" in broad
+    assert "backend/tests scripts/tests" in broad
+    assert "--scope python" in legacy
+
+
+def test_backend_ci_uses_fast_postgres_health_probe_and_hash_lock_cache():
+    source, _ = _load("ci.yml")
+    assert '--health-interval 1s' in source
+    assert '--health-interval 10s' not in source
+    assert 'cache: "pip"' in source
+    assert 'cache-dependency-path: requirements-ci.lock.txt' in source
 

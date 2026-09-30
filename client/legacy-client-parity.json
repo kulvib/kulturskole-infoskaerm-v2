@@ -47,7 +47,8 @@
         {
           "scope": "python",
           "path": "backend/tests/test_clientflow_claim_operational_http_integration.py",
-          "proof_class": "integration"
+          "proof_class": "integration",
+          "execution": "ci_external"
         },
         {
           "scope": "python",
@@ -100,7 +101,8 @@
         {
           "scope": "python",
           "path": "backend/tests/test_clientflow_operational_compatibility_gate.py",
-          "proof_class": "behavior"
+          "proof_class": "behavior",
+          "execution": "ci_external"
         }
       ]
     },
@@ -260,7 +262,8 @@
         {
           "scope": "python",
           "path": "backend/tests/test_clientflow_operational_http_integration.py",
-          "proof_class": "integration"
+          "proof_class": "integration",
+          "execution": "ci_external"
         },
         {
           "scope": "python",
@@ -292,7 +295,8 @@
         {
           "scope": "python",
           "path": "backend/tests/test_clientflow_update_chain_operational_integration.py",
-          "proof_class": "integration"
+          "proof_class": "integration",
+          "execution": "ci_external"
         },
         {
           "scope": "python",
@@ -327,7 +331,8 @@
         {
           "scope": "python",
           "path": "backend/tests/test_clientflow_operational_http_integration.py",
-          "proof_class": "integration"
+          "proof_class": "integration",
+          "execution": "ci_external"
         },
         {
           "scope": "python",
