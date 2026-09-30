@@ -108,3 +108,35 @@ def test_backend_ci_uses_fast_postgres_health_probe_and_hash_lock_cache():
     assert 'cache: "pip"' in source
     assert 'cache-dependency-path: requirements-ci.lock.txt' in source
 
+def test_ubuntu_2604_required_gate_parallelizes_independent_executable_proofs():
+    source, workflow = _load("ci.yml")
+    jobs = workflow["jobs"]
+
+    required = jobs["client-host-ubuntu-2604"]
+    preclaim = jobs["client-host-ubuntu-2604-preclaim"]
+    platform = jobs["client-host-ubuntu-2604-platform"]
+
+    assert required["name"] == "Ubuntu 26.04 client host executable contracts"
+    assert set(required["needs"]) == {
+        "client-host-ubuntu-2604-preclaim",
+        "client-host-ubuntu-2604-platform",
+    }
+    assert required["if"] == "${{ always() }}"
+    assert required["runs-on"] == "ubuntu-latest"
+    assert preclaim["runs-on"] == "ubuntu-26.04"
+    assert platform["runs-on"] == "ubuntu-26.04"
+
+    preclaim_source = source[
+        source.index("  client-host-ubuntu-2604-preclaim:"):
+        source.index("  client-host-ubuntu-2604-platform:")
+    ]
+    platform_source = source[
+        source.index("  client-host-ubuntu-2604-platform:"):
+        source.index("  frontend:")
+    ]
+    assert "verify_clientflow_preclaim_bootstrap_ubuntu2604.py" in preclaim_source
+    assert "--install-platform-requirements" not in preclaim_source
+    assert "verify_clientflow_ubuntu2604_host.py" in platform_source
+    assert "--install-platform-requirements" in platform_source
+    assert "--scope host" in platform_source
+
