@@ -1020,25 +1020,58 @@ def reconcile_viewer_lifecycle(session: Session, client_id: int) -> str | None:
     return "stop"
 
 
+def _active_viewer_client_ids(
+    session: Session,
+    *,
+    now: datetime | None = None,
+) -> set[int]:
+    """Return live viewer clients while expiring stale leases in one sweep query."""
+    now = now or _now()
+    cutoff = now - timedelta(seconds=VIEWER_LEASE_SECONDS)
+    rows = session.exec(
+        select(LivestreamV2Viewer).where(LivestreamV2Viewer.ended_at.is_(None))
+    ).all()
+    active: set[int] = set()
+    for row in rows:
+        if row.last_seen_at < cutoff:
+            row.ended_at = row.last_seen_at + timedelta(seconds=VIEWER_LEASE_SECONDS)
+            row.end_reason = "lease_expired"
+            session.add(row)
+            continue
+        active.add(int(row.client_id))
+    return active
+
+
 def reconcile_all_viewer_lifecycles(session: Session) -> list[tuple[int, str]]:
-    candidate_ids = set(
+    now = _now()
+    active_generation_client_ids = set(
         session.exec(
             select(LivestreamV2Generation.client_id).where(
                 LivestreamV2Generation.state.in_(ACTIVE_GENERATION_STATES)
             )
         ).all()
     )
-    candidate_ids.update(
-        session.exec(
-            select(LivestreamV2Viewer.client_id).where(LivestreamV2Viewer.ended_at.is_(None))
-        ).all()
-    )
-    candidate_ids.update(active_livestream_activity_client_ids(session))
+    active_viewer_client_ids = _active_viewer_client_ids(session, now=now)
+    active_activity_client_ids = active_livestream_activity_client_ids(session, now=now)
+    steady_presence_client_ids = active_viewer_client_ids | active_activity_client_ids
+    candidate_ids = active_generation_client_ids | steady_presence_client_ids
+
     actions: list[tuple[int, str]] = []
     for client_id in sorted(candidate_ids):
-        action = reconcile_viewer_lifecycle(session, int(client_id))
+        client_id = int(client_id)
+        # The sweep-wide reads already prove the common steady state: an active
+        # generation still has authenticated browser presence. Avoid repeating
+        # per-client locks and the same generation/viewer/activity reads every
+        # five seconds. Clients that need a start/stop transition still take the
+        # existing locked reconciliation path below.
+        if (
+            client_id in active_generation_client_ids
+            and client_id in steady_presence_client_ids
+        ):
+            continue
+        action = reconcile_viewer_lifecycle(session, client_id)
         if action:
-            actions.append((int(client_id), action))
+            actions.append((client_id, action))
     return actions
 
 
