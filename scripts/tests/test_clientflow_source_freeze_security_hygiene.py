@@ -92,7 +92,7 @@ def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() 
         }
     ]
 
-def test_1327_1228_source_is_staged_exactly_one_ahead_of_promoted_1227_catalog() -> None:
+def test_1327_1228_source_and_promoted_catalog_are_aligned() -> None:
     assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.27"
     release_input = json.loads(
         (ROOT / "client" / "release" / "release-input.json").read_text(encoding="utf-8")
@@ -104,11 +104,11 @@ def test_1327_1228_source_is_staged_exactly_one_ahead_of_promoted_1227_catalog()
             encoding="utf-8"
         )
     )
-    assert catalog["catalog_sequence"] == 1227
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert catalog["latest_stable"] == "1.3.26"
-    assert catalog["default_install_version"] == "1.3.26"
-    assert catalog["releases"][0]["release_id"] == "clientflow-1.3.26-seq-1227"
+    assert catalog["catalog_sequence"] == 1228
+    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert catalog["latest_stable"] == "1.3.27"
+    assert catalog["default_install_version"] == "1.3.27"
+    assert catalog["releases"][0]["release_id"] == "clientflow-1.3.27-seq-1228"
 
 
 def test_source_checksum_manifest_matches_current_files() -> None:
@@ -168,6 +168,8 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CHANGED_FILES_1327_1228_FINAL_SOURCE_REFREEZE.txt" in seen
     assert "CLIENTFLOW_1.3.27_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE_CLOSURE.md" in seen
     assert "CHANGED_FILES_1327_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE.txt" in seen
+    assert "CLIENTFLOW_1.3.27_1228_CATALOG_PROMOTION.md" in seen
+    assert "CHANGED_FILES_1327_1228_CATALOG_PROMOTION.txt" in seen
 
 
 def test_1323_1224_initial_freeze_is_explicitly_superseded_before_build() -> None:
