@@ -9,7 +9,7 @@ description = "Domain-isolated ClientFlow client runtime"
 requires-python = "==3.13.14"
 dependencies = [
   "evdev==1.9.3",
-  "PyJWT==2.13.0",
+  "PyJWT==2.15.1",
   "websockets==12.0",
 ]
 

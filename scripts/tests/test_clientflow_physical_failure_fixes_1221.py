@@ -49,19 +49,19 @@ def _method_local_tuple(source: str, class_name: str, method_name: str, name: st
                             return ast.literal_eval(child.value)
     raise AssertionError(f"{class_name}.{method_name} local {name} not found")
 
-def test_staged_1327_1228_source_identity_leads_promoted_runtime_catalog_by_one():
-    # Runtime-input transport requires the new source/build identity to be staged
-    # exactly one sequence ahead while runtime selection remains on promoted 1227.
-    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.27"
+def test_staged_1328_1229_security_replacement_skips_rejected_1228():
+    # 1228 was security-rejected before catalog promotion. The replacement
+    # consumes the next immutable sequence while runtime selection stays on 1227.
+    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.28"
     release_input = json.loads(_source(RELEASE_INPUT))
-    assert release_input["release_sequence"] == 1228
+    assert release_input["release_sequence"] == 1229
     assert release_input["minimum_ubuntu_lts"] == "26.04"
     assert release_input["architecture"] == "amd64"
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
     assert catalog["catalog_sequence"] == 1227
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 2
     assert catalog["latest_stable"] == "1.3.26"
     assert catalog["default_install_version"] == "1.3.26"
     selected = catalog["releases"][0]

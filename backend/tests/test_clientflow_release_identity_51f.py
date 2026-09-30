@@ -29,7 +29,15 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     source_tuple = tuple(int(part) for part in version.split("."))
 
     assert source_sequence >= catalog_sequence
-    assert source_sequence - catalog_sequence in {0, 1}
+    sequence_gap = source_sequence - catalog_sequence
+    if sequence_gap == 2:
+        # Exact security-replacement exception: immutable 1.3.27/1228 was
+        # rejected before catalog promotion due CVE-2026-101918.
+        assert catalog_sequence == 1227
+        assert source_sequence == 1229
+        assert version == "1.3.28"
+    else:
+        assert sequence_gap in {0, 1}
     assert len(source_tuple) == 3
 
     assert len(catalog["releases"]) == 1

@@ -1,3 +1,24 @@
+ClientFlow 1.3.28 / sequence 1229 PyJWT security-replacement validation
+Date: 2026-09-30
+
+PASS: promoted runtime catalog remains 1.3.26 / sequence 1227.
+PASS: immutable 1.3.27 / sequence 1228 is security-rejected before catalog promotion due CVE-2026-101918.
+PASS: replacement source/build identity = 1.3.28 / sequence 1229.
+PASS: embedded runtime Python remains 3.13.14 for compatibility with the promoted 1.3.26/1227 updater.
+PASS: backend/CI PyJWT pin and hash locks are raised to 2.15.1.
+PASS: embedded ClientFlow runtime PyJWT pin, locked wheel and release-build contracts are raised to 2.15.1.
+PASS: runtime-input transport can replace only the explicitly named stale PyJWT base member with current lock-verified HTTPS bytes.
+PASS: active PyJWT 2.15.1 wheel = 33860 bytes / SHA-256 42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193.
+PASS: 1228 immutable publication remains historical evidence and is never overwritten or reused.
+
+PENDING: merge this security replacement to canonical main and require green CI.
+PENDING: source-freeze the exact resulting main SHA for 1.3.28/1229.
+PENDING: build a new source-SHA-qualified 1229 runtime-input transport and reproducible candidate.
+PENDING: manual approval, immutable publication and only then catalog promotion directly from 1227 to 1229.
+PENDING: physical 1.3.26 -> 1.3.28 compatibility-bridge update verification before any Python 3.13.15 embedded-runtime release.
+
+---
+
 ClientFlow 1.3.27 / sequence 1228 post-maintenance final source re-freeze validation
 Date: 2026-09-30
 

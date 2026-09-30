@@ -75,7 +75,7 @@ def test_current_platform_lock_is_source_independent_and_matches_physically_veri
     assert actual == {
         "evdev-1.9.3-cp313-cp313-linux_x86_64.whl": (76711, "8fa20b121c58bf286520f65149d1dd9f37c1e8eedea3811a5e1e1f5755d8f71d"),
         "pip-26.1.2-py3-none-any.whl": (1813144, "382ff9f685ee3bc25864f820aa50505825f10f5458ffff07e30a6d96e5715cab"),
-        "pyjwt-2.13.0-py3-none-any.whl": (31273, "aacb2c3c08263deeb6278cf9211cffcf835604346421f9fa1dc36d971762cb79"),
+        "pyjwt-2.15.1-py3-none-any.whl": (33860, "42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193"),
         "python-runtime-amd64.tar": (77547520, "a57cd52a31a466a9c3290cf05cf20bf10e293afae736526d76d3593ca3ea0d15"),
         "websockets-12.0-cp313-cp313-linux_x86_64.whl": (122647, "98b9b9088ca8dca67bf538fad84b14f69196a534f21d6a363ad1f4f1f50b0243"),
     }

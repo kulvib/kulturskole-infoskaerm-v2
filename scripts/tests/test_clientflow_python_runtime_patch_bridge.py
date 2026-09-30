@@ -31,8 +31,8 @@ from clientflow_release_format.manifest import ManifestError, validate_manifest 
 
 
 def _manifest(runtime_python: str) -> dict:
-    version = "1.3.27"
-    release_sequence = 1228
+    version = "1.3.28"
+    release_sequence = 1229
     installer = b"installer"
     payload = b"payload"
     return {

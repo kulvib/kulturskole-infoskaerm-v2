@@ -160,6 +160,111 @@ def test_github_workflow_is_manual_exact_source_no_replace_transport_only():
     assert "--prerelease" in workflow
     assert "Transport only. Not release authority." in workflow
     assert "RUNTIME_INPUT_TRANSPORT_READY=PASS" in workflow
+    assert "runtime_artifact_url:" in workflow
+    assert "pyjwt-2.15.1-py3-none-any.whl" in workflow
+    assert '--drop-base-runtime "pyjwt-2.13.0-py3-none-any.whl"' in workflow
+    assert "runtime-inputs-1228-8525ecf5491a1dfb16cc6880302020e83dac74f5-transport" in workflow
     forbidden = ["release-approve", "clientflow_release_catalog.json >", "latest_stable", "default_install_version="]
     for token in forbidden:
         assert token not in workflow
+
+
+def test_prepare_transport_replaces_one_locked_runtime_wheel_fail_closed(tmp_path: Path, monkeypatch):
+    module = _load_module()
+    old_wheel = b"old-pyjwt"
+    new_wheel = b"new-pyjwt"
+    runtime = b"runtime"
+    platform = b"new-platform"
+    bootstrap = b"bootstrap"
+    lock = {
+        "schema_version": 1,
+        "runtime_python": "3.13.14",
+        "architecture": "amd64",
+        "artifacts": [
+            {
+                "file": "python-runtime-amd64.tar",
+                "size": len(runtime),
+                "sha256": hashlib.sha256(runtime).hexdigest(),
+            },
+            {
+                "file": "pyjwt-2.15.1-py3-none-any.whl",
+                "size": len(new_wheel),
+                "sha256": hashlib.sha256(new_wheel).hexdigest(),
+            },
+        ],
+        "platform_artifacts": [
+            {
+                "file": "chrome.deb",
+                "package": "google-chrome-stable",
+                "version": "152.0.0-1",
+                "architecture": "amd64",
+                "size": len(platform),
+                "sha256": hashlib.sha256(platform).hexdigest(),
+            }
+        ],
+        "preclaim_bootstrap_artifacts": [
+            {
+                "file": "apt.deb",
+                "package": "apt",
+                "version": "1",
+                "architecture": "amd64",
+                "size": len(bootstrap),
+                "sha256": hashlib.sha256(bootstrap).hexdigest(),
+            }
+        ],
+    }
+    lock_path = tmp_path / "replacement-lock.json"
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    base = tmp_path / "replacement-base.tar"
+    with tarfile.open(base, "w", format=tarfile.USTAR_FORMAT) as tf:
+        for directory in ("wheelhouse", "platform", "bootstrap"):
+            info = tarfile.TarInfo(directory)
+            info.type = tarfile.DIRTYPE
+            info.mode = 0o700
+            tf.addfile(info)
+        import io
+        members = {
+            "python-runtime-amd64.tar": runtime,
+            "wheelhouse/pyjwt-2.13.0-py3-none-any.whl": old_wheel,
+            "platform/old-chrome.deb": b"old-platform",
+            "bootstrap/apt.deb": bootstrap,
+        }
+        for name, data in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.mode = 0o400
+            tf.addfile(info, io.BytesIO(data))
+
+    def fake_fetch(url, target, *, expected_size, expected_sha256):
+        if url.endswith("pyjwt.whl"):
+            data = new_wheel
+        elif url.endswith("chrome.deb"):
+            data = platform
+        else:
+            raise AssertionError(url)
+        assert len(data) == expected_size
+        assert hashlib.sha256(data).hexdigest() == expected_sha256
+        target.write_bytes(data)
+
+    monkeypatch.setattr(module, "_fetch_exact", fake_fetch)
+    output = tmp_path / "replacement-output.tar"
+    module.prepare_transport(
+        base_archive=base,
+        lock_path=lock_path,
+        runtime_urls={"pyjwt-2.15.1-py3-none-any.whl": "https://example.invalid/pyjwt.whl"},
+        ignored_base_runtime={"pyjwt-2.13.0-py3-none-any.whl"},
+        platform_urls={"chrome.deb": "https://example.invalid/chrome.deb"},
+        output=output,
+    )
+    with tarfile.open(output, "r:") as tf:
+        names = {member.name for member in tf.getmembers() if member.isfile()}
+    assert "wheelhouse/pyjwt-2.15.1-py3-none-any.whl" in names
+    assert "wheelhouse/pyjwt-2.13.0-py3-none-any.whl" not in names
+
+    with pytest.raises(ValueError, match="Unexpected reusable base transport member"):
+        module.seed_reusable_inputs(
+            base,
+            tmp_path / "should-fail",
+            lock_path,
+            replaced_runtime={"pyjwt-2.15.1-py3-none-any.whl"},
+        )
