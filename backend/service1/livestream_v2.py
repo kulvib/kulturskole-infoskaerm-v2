@@ -322,6 +322,28 @@ def _expire_stale_viewers(session: Session, client_id: int, *, now: datetime) ->
         session.add(row)
 
 
+def active_livestream_viewer_client_ids(
+    session: Session,
+    *,
+    now: datetime | None = None,
+) -> set[int]:
+    """Return live viewer client ids while expiring stale leases in one sweep query."""
+    now = now or _now()
+    cutoff = now - timedelta(seconds=VIEWER_LEASE_SECONDS)
+    rows = session.exec(
+        select(LivestreamV2Viewer).where(LivestreamV2Viewer.ended_at.is_(None))
+    ).all()
+    active: set[int] = set()
+    for row in rows:
+        if row.last_seen_at < cutoff:
+            row.ended_at = row.last_seen_at + timedelta(seconds=VIEWER_LEASE_SECONDS)
+            row.end_reason = "lease_expired"
+            session.add(row)
+            continue
+        active.add(int(row.client_id))
+    return active
+
+
 def active_viewer_count(session: Session, client_id: int) -> int:
     now = _now()
     _expire_stale_viewers(session, client_id, now=now)
@@ -1021,21 +1043,29 @@ def reconcile_viewer_lifecycle(session: Session, client_id: int) -> str | None:
 
 
 def reconcile_all_viewer_lifecycles(session: Session) -> list[tuple[int, str]]:
-    candidate_ids = set(
+    now = _now()
+    active_generation_ids = set(
         session.exec(
             select(LivestreamV2Generation.client_id).where(
                 LivestreamV2Generation.state.in_(ACTIVE_GENERATION_STATES)
             )
         ).all()
     )
-    candidate_ids.update(
-        session.exec(
-            select(LivestreamV2Viewer.client_id).where(LivestreamV2Viewer.ended_at.is_(None))
-        ).all()
-    )
-    candidate_ids.update(active_livestream_activity_client_ids(session))
+    active_viewer_ids = active_livestream_viewer_client_ids(session, now=now)
+    active_activity_ids = active_livestream_activity_client_ids(session, now=now)
+    presence_ids = active_viewer_ids | active_activity_ids
+    candidate_ids = active_generation_ids | presence_ids
+
+    # The common steady-state path is already authoritative after the three
+    # sweep-wide reads above: an active generation plus authenticated presence
+    # requires no mutation. Avoid reloading/locking the very wide Client row and
+    # repeating viewer/activity/generation reads every five seconds. Candidates
+    # that can transition (presence without a generation or generation without
+    # presence) still enter the per-client locked reconciliation path below.
+    transition_candidate_ids = candidate_ids - (active_generation_ids & presence_ids)
+
     actions: list[tuple[int, str]] = []
-    for client_id in sorted(candidate_ids):
+    for client_id in sorted(transition_candidate_ids):
         action = reconcile_viewer_lifecycle(session, int(client_id))
         if action:
             actions.append((int(client_id), action))

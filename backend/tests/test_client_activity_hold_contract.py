@@ -55,7 +55,19 @@ def test_activity_only_clients_are_sweeper_candidates_for_start():
     start = source.index("def reconcile_all_viewer_lifecycles(")
     end = source.index("def _sweeper_loop(", start)
     block = source[start:end]
-    assert "candidate_ids.update(active_livestream_activity_client_ids(session))" in block
+    assert "active_activity_ids = active_livestream_activity_client_ids(session, now=now)" in block
+    assert "presence_ids = active_viewer_ids | active_activity_ids" in block
+    assert "candidate_ids = active_generation_ids | presence_ids" in block
+
+
+def test_sweeper_fast_path_skips_redundant_per_client_reconciliation_for_steady_hold():
+    source = read("service1/livestream_v2.py")
+    start = source.index("def reconcile_all_viewer_lifecycles(")
+    end = source.index("def _sweeper_loop(", start)
+    block = source[start:end]
+    assert "active_livestream_viewer_client_ids(session, now=now)" in block
+    assert "transition_candidate_ids = candidate_ids - (active_generation_ids & presence_ids)" in block
+    assert "for client_id in sorted(transition_candidate_ids):" in block
 
 
 def test_recovery_and_stale_media_respect_terminal_or_rd_activity():
