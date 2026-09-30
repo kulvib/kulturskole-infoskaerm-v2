@@ -144,15 +144,48 @@ def _target_path(root: Path, name: str, item: dict[str, object]) -> Path:
     return root / _member_path(name, item)
 
 
-def seed_reusable_inputs(base_archive: Path, source_dir: Path, lock_path: Path) -> None:
-    """Copy only current runtime/bootstrap bytes from a previous transport.
+def _validate_plain_filename(name: str, *, option: str) -> None:
+    if not name or "/" in name or "\\" in name or name in {".", ".."}:
+        raise ValueError(f"{option} requires a plain filename")
 
-    Previous platform members are deliberately ignored. Every reused byte is
-    independently verified against the *current* lock before publication.
+
+def seed_reusable_inputs(
+    base_archive: Path,
+    source_dir: Path,
+    lock_path: Path,
+    *,
+    replaced_runtime: set[str] | None = None,
+    ignored_base_runtime: set[str] | None = None,
+) -> None:
+    """Copy current reusable bytes from a previous transport.
+
+    Previous platform members are deliberately ignored. A runtime artifact can
+    be replaced only when its *current* locked filename is explicitly supplied
+    in ``replaced_runtime``. A stale base-runtime member can be skipped only when
+    its exact filename is explicitly supplied in ``ignored_base_runtime``. Every
+    byte that reaches the final transport is independently verified against the
+    current canonical lock.
     """
     _, expected = _load_lock(lock_path)
-    reusable = {name: item for name, item in expected.items() if item["_kind"] != "platform"}
+    replaced_runtime = set(replaced_runtime or ())
+    ignored_base_runtime = set(ignored_base_runtime or ())
+    for name in replaced_runtime:
+        _validate_plain_filename(name, option="replaced runtime")
+        item = expected.get(name)
+        if item is None or item["_kind"] != "runtime":
+            raise ValueError(f"Replacement runtime artifact is not current locked runtime input: {name}")
+    for name in ignored_base_runtime:
+        _validate_plain_filename(name, option="ignored base runtime")
+        if name in expected:
+            raise ValueError(f"Ignored base runtime must not be a current locked artifact: {name}")
+
+    reusable = {
+        name: item
+        for name, item in expected.items()
+        if item["_kind"] != "platform" and name not in replaced_runtime
+    }
     member_map = {_member_path(name, item): name for name, item in reusable.items()}
+    ignored_member_paths = {f"wheelhouse/{name}" for name in ignored_base_runtime}
     source_dir.mkdir(parents=True, mode=0o700, exist_ok=False)
     (source_dir / "wheelhouse").mkdir(mode=0o700)
     if any(item["_kind"] == "bootstrap" for item in reusable.values()):
@@ -174,6 +207,8 @@ def seed_reusable_inputs(base_archive: Path, source_dir: Path, lock_path: Path) 
             name = member_map.get(member.name)
             if name is None:
                 if len(pure.parts) == 2 and pure.parts[0] == "platform":
+                    continue
+                if member.name in ignored_member_paths:
                     continue
                 raise ValueError(f"Unexpected reusable base transport member: {member.name}")
             if name in seen:
@@ -211,14 +246,29 @@ def seed_reusable_inputs(base_archive: Path, source_dir: Path, lock_path: Path) 
         raise ValueError("Base transport is missing reusable locked artifacts: " + ", ".join(missing))
 
 
-def _parse_platform_urls(values: list[str]) -> dict[str, str]:
+def _parse_named_urls(values: list[str], *, option: str) -> dict[str, str]:
     result: dict[str, str] = {}
     for raw in values:
         name, sep, url = raw.partition("=")
         if not sep or not name or not url or name in result:
-            raise ValueError("--platform-url must be supplied as unique FILE=https://...")
+            raise ValueError(f"{option} must be supplied as unique FILE=https://...")
+        _validate_plain_filename(name, option=option)
         result[name] = url
     return result
+
+
+def fetch_runtime_inputs(source_dir: Path, lock_path: Path, runtime_urls: dict[str, str]) -> None:
+    _, expected = _load_lock(lock_path)
+    for name, url in sorted(runtime_urls.items()):
+        item = expected.get(name)
+        if item is None or item["_kind"] != "runtime":
+            raise ValueError(f"Runtime URL is not a current locked runtime artifact: {name}")
+        _fetch_exact(
+            url,
+            _target_path(source_dir, name, item),
+            expected_size=int(item["size"]),
+            expected_sha256=str(item["sha256"]),
+        )
 
 
 def fetch_platform_inputs(source_dir: Path, lock_path: Path, platform_urls: dict[str, str]) -> None:
@@ -243,6 +293,8 @@ def prepare_transport(
     lock_path: Path,
     platform_urls: dict[str, str],
     output: Path,
+    runtime_urls: dict[str, str] | None = None,
+    ignored_base_runtime: set[str] | None = None,
 ) -> tuple[int, str]:
     builder = _load_script("clientflow_runtime_transport_builder", "build_clientflow_runtime_input_transport.py")
     materializer = _load_script("clientflow_runtime_transport_materializer", "materialize_clientflow_runtime_inputs.py")
@@ -252,7 +304,15 @@ def prepare_transport(
     with tempfile.TemporaryDirectory(prefix="clientflow-runtime-input-prepare-") as tmp_name:
         tmp = Path(tmp_name)
         source = tmp / "source"
-        seed_reusable_inputs(base_archive.resolve(), source, lock_path.resolve())
+        runtime_urls = dict(runtime_urls or {})
+        seed_reusable_inputs(
+            base_archive.resolve(),
+            source,
+            lock_path.resolve(),
+            replaced_runtime=set(runtime_urls),
+            ignored_base_runtime=set(ignored_base_runtime or ()),
+        )
+        fetch_runtime_inputs(source, lock_path.resolve(), runtime_urls)
         fetch_platform_inputs(source, lock_path.resolve(), platform_urls)
         first = tmp / "first.tar"
         second = tmp / "second.tar"
@@ -273,6 +333,8 @@ def prepare_transport(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-archive", type=Path, required=True)
+    parser.add_argument("--runtime-url", action="append", default=[], metavar="FILE=HTTPS_URL")
+    parser.add_argument("--drop-base-runtime", action="append", default=[], metavar="FILE")
     parser.add_argument("--platform-url", action="append", default=[], metavar="FILE=HTTPS_URL")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--lock", type=Path, default=ROOT / "client/release/runtime-platform-inputs.lock.json")
@@ -280,7 +342,9 @@ def main() -> int:
     size, digest = prepare_transport(
         base_archive=args.base_archive,
         lock_path=args.lock,
-        platform_urls=_parse_platform_urls(args.platform_url),
+        runtime_urls=_parse_named_urls(args.runtime_url, option="--runtime-url"),
+        ignored_base_runtime=set(args.drop_base_runtime),
+        platform_urls=_parse_named_urls(args.platform_url, option="--platform-url"),
         output=args.output,
     )
     print(f"runtime_inputs_transport_size={size}")

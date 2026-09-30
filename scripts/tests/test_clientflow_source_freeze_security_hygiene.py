@@ -92,12 +92,12 @@ def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() 
         }
     ]
 
-def test_1327_1228_source_is_staged_exactly_one_ahead_of_promoted_1227_catalog() -> None:
-    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.27"
+def test_1328_1229_security_replacement_skips_rejected_1228_without_promoting_catalog() -> None:
+    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.28"
     release_input = json.loads(
         (ROOT / "client" / "release" / "release-input.json").read_text(encoding="utf-8")
     )
-    assert release_input["release_sequence"] == 1228
+    assert release_input["release_sequence"] == 1229
 
     catalog = json.loads(
         (ROOT / "backend" / "service1" / "clientflow_release_catalog.json").read_text(
@@ -105,10 +105,16 @@ def test_1327_1228_source_is_staged_exactly_one_ahead_of_promoted_1227_catalog()
         )
     )
     assert catalog["catalog_sequence"] == 1227
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 2
     assert catalog["latest_stable"] == "1.3.26"
     assert catalog["default_install_version"] == "1.3.26"
     assert catalog["releases"][0]["release_id"] == "clientflow-1.3.26-seq-1227"
+
+    rejection = (ROOT / "CLIENTFLOW_1.3.28_1229_SECURITY_REPLACEMENT.md").read_text(encoding="utf-8")
+    assert "CVE-2026-101918" in rejection
+    assert "1.3.27 / 1228" in rejection
+    assert "must not be catalog-promoted" in rejection
+    assert "PyJWT `2.15.1`" in rejection
 
 
 def test_source_checksum_manifest_matches_current_files() -> None:
@@ -168,6 +174,8 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CHANGED_FILES_1327_1228_FINAL_SOURCE_REFREEZE.txt" in seen
     assert "CLIENTFLOW_1.3.27_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE_CLOSURE.md" in seen
     assert "CHANGED_FILES_1327_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE.txt" in seen
+    assert "CLIENTFLOW_1.3.28_1229_SECURITY_REPLACEMENT.md" in seen
+    assert "CLIENTFLOW_1.3.28_1229_SECURITY_REPLACEMENT.md" in seen
 
 
 def test_1323_1224_initial_freeze_is_explicitly_superseded_before_build() -> None:

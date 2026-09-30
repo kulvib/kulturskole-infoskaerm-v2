@@ -28,7 +28,7 @@ from .manifest import validate_manifest
 EXCLUDED_NAMES = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", "node_modules", "dist", "build"}
 REQUIRED_WHEELS = (
     "clientflow_runtime-{version}-",
-    "PyJWT-2.13.0-",
+    "PyJWT-2.15.1-",
     "websockets-12.0-",
     "evdev-1.9.3-",
     "pip-26.1.2-",

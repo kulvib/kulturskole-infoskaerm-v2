@@ -5,12 +5,12 @@
 - Backend/CI Python: `3.13.15`
 - Node.js: `24.21.0` LTS
 - npm: `11.19.0`
-- ClientFlow 1.3.27/1228 embedded runtime Python: `3.13.14` (compatibility bridge; intentionally unchanged)
+- ClientFlow 1.3.28/1229 embedded runtime Python: `3.13.14` (security replacement compatibility bridge; intentionally unchanged)
 - pip i Render/CI: `26.1.2`
 
 Render, GitHub Actions, `backend/.python-version`, `frontend/package.json` og lockfilerne skal ændres samlet for backend/frontend toolchains.
 
-ClientFlow release-artifact production is a separate compatibility boundary. Sequence 1228 must remain on embedded Python `3.13.14` so the currently promoted 1.3.26/1227 updater can consume the bridge. The already-proven deterministic Python `3.13.15` runtime candidate is reserved for the first post-1228 runtime upgrade after 1228 has been promoted and update-tested.
+ClientFlow release-artifact production is a separate compatibility boundary. Sequence 1228 was security-rejected before catalog promotion after CVE-2026-101918 was published. Replacement sequence 1229 must remain on embedded Python `3.13.14` so the currently promoted 1.3.26/1227 updater can consume the bridge. Both backend and embedded-runtime PyJWT are pinned to `2.15.1`. The already-proven deterministic Python `3.13.15` runtime candidate is reserved for the first post-1229 runtime upgrade after 1229 has been promoted and update-tested.
 
 ## Python
 

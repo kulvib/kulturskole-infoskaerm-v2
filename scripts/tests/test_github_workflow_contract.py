@@ -68,8 +68,8 @@ def test_production_smoke_is_manual_main_only_and_uses_dispatched_sha():
 
 def test_dependency_maintenance_candidate_keeps_pyjwt_security_floor():
     source, _ = _load("dependency-maintenance-candidate.yml")
-    assert 'text.count("PyJWT==2.14.0") != 1' in source
-    assert '"security_floor": {"PyJWT": "2.14.0"}' in source
+    assert 'text.count("PyJWT==2.15.1") != 1' in source
+    assert '"security_floor": {"PyJWT": "2.15.1"}' in source
 
 def test_backend_ci_does_not_duplicate_dedicated_python_gates():
     source, _ = _load("ci.yml")

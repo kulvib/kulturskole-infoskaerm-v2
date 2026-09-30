@@ -1,5 +1,8 @@
 # ClientFlow 1.3.27 / sequence 1228 — post-maintenance final source re-freeze closure
 
+> **SECURITY STATUS 2026-09-30:** 1.3.27/1228 was security-rejected after immutable publication and before catalog promotion due CVE-2026-101918. It must not be catalog-promoted. Current replacement authority is `CLIENTFLOW_1.3.28_1229_SECURITY_REPLACEMENT.md`.
+
+
 Date: 2026-09-30
 
 ## Status

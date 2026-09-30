@@ -63,7 +63,7 @@ def test_catalog_1227_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1227_remains_selector_authority_while_1327_1228_is_staged() -> None:
+def test_catalog_1227_remains_selector_authority_while_1328_1229_replaces_rejected_1228() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -73,13 +73,13 @@ def test_catalog_1227_remains_selector_authority_while_1327_1228_is_staged() -> 
     )
     source_sequence = int(release_input["release_sequence"])
 
-    # Source/build identity is intentionally staged exactly one sequence ahead.
-    # The selector catalog must stay on the last approved/published release until
-    # the new 1228 bytes complete build, approval and immutable publication.
-    assert source_version == "1.3.27"
-    assert source_sequence == 1228
+    # Sequence 1228 was built/approved/published but security-rejected before
+    # catalog promotion after CVE-2026-101918. The replacement therefore uses
+    # the next immutable identity while selector authority stays on 1227.
+    assert source_version == "1.3.28"
+    assert source_sequence == 1229
     assert data["catalog_sequence"] == 1227
-    assert source_sequence == data["catalog_sequence"] + 1
+    assert source_sequence == data["catalog_sequence"] + 2
 
     assert data["latest_stable"] == "1.3.26"
     assert data["default_install_version"] == "1.3.26"

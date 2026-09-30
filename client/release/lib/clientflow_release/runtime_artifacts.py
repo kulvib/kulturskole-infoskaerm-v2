@@ -17,7 +17,7 @@ MAX_PYTHON_MEMBER_BYTES = 1024 * 1024 * 1024
 
 REQUIRED_DISTRIBUTIONS = {
     "clientflow-runtime": None,
-    "pyjwt": "2.13.0",
+    "pyjwt": "2.15.1",
     "websockets": "12.0",
     "evdev": "1.9.3",
     "pip": "26.1.2",
