@@ -1,5 +1,9 @@
 # ClientFlow 1.3.27 / sequence 1228 — final source re-freeze closure
 
+> **SUPERSEDED BEFORE BUILD:** This pre-maintenance final re-freeze is preserved
+> as historical evidence. Current source authority is
+> `CLIENTFLOW_1.3.27_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE_CLOSURE.md`.
+
 Date: 2026-09-29
 
 ## Status

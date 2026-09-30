@@ -4,7 +4,7 @@
 > superseded by the Python 3.13 patch-compatibility bridge and was later
 > superseded again after the final pre-release integrity/performance closure.
 > Current source authority is documented in
-> `CLIENTFLOW_1.3.27_1228_FINAL_SOURCE_REFREEZE_CLOSURE.md`.
+> `CLIENTFLOW_1.3.27_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE_CLOSURE.md`.
 
 ## Scope
 

@@ -3,7 +3,7 @@
 > **CURRENT STATUS:** The staged identity remains 1.3.27/1228. The earlier
 > source-freeze boundaries were superseded before candidate approval,
 > publication or catalog promotion. See
-> `CLIENTFLOW_1.3.27_1228_FINAL_SOURCE_REFREEZE_CLOSURE.md` for the current
+> `CLIENTFLOW_1.3.27_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE_CLOSURE.md` for the current
 > source authority and next gates.
 
 ## Status
