@@ -19,6 +19,7 @@ test("Skift bruger is wired through the central auth/session context", () => {
   assert.match(api, /\/api\/auth\/impersonation\/candidates/);
   assert.match(api, /\/api\/auth\/impersonation\/start/);
   assert.match(api, /\/api\/auth\/impersonation\/stop/);
+  assert.equal((api.match(/sameOrigin: true/g) || []).length, 2);
 });
 
 test("password change is hidden while acting as another user", () => {

@@ -18,13 +18,19 @@ function applySessionResponse(data) {
 }
 
 export async function startImpersonationSession(targetUserId) {
-  const { data } = await client.post("/api/auth/impersonation/start", {
-    target_user_id: Number(targetUserId),
-  });
+  const { data } = await client.post(
+    "/api/auth/impersonation/start",
+    { target_user_id: Number(targetUserId) },
+    { sameOrigin: true },
+  );
   return applySessionResponse(data);
 }
 
 export async function stopImpersonationSession() {
-  const { data } = await client.post("/api/auth/impersonation/stop", {});
+  const { data } = await client.post(
+    "/api/auth/impersonation/stop",
+    {},
+    { sameOrigin: true },
+  );
   return applySessionResponse(data);
 }

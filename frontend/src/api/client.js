@@ -1,4 +1,4 @@
-import { apiUrl, authHeaders, clearAuthToken, performBootRefresh as apiPerformBootRefresh, setAuthToken } from "./api";
+import { apiUrl, authHeaders, clearAuthToken, performBootRefresh as apiPerformBootRefresh, refreshSession as apiRefreshSession, setAuthToken } from "./api";
 import { createApiError, normalizeApiError } from "./apiError";
 
 const NETWORK_ERROR_MESSAGE = "Netværksfejl – tjek din internetforbindelse og prøv igen.";
@@ -22,13 +22,14 @@ function handle401() {
   window.location.href = "/login";
 }
 
-function buildUrl(path, params) {
+function buildUrl(path, params, { sameOrigin = false } = {}) {
   let clean = String(path || "");
   if (clean === "/api/users/organizations/my") clean = "/api/organizations/";
   if (clean.startsWith("/api/superadmin/organizations")) {
     clean = clean.replace("/api/superadmin/organizations", "/api/organizations");
   }
-  const base = clean.startsWith("http://") || clean.startsWith("https://") ? clean : `${apiUrl}${clean}`;
+  const absolute = clean.startsWith("http://") || clean.startsWith("https://");
+  const base = absolute || sameOrigin ? clean : `${apiUrl}${clean}`;
   const url = new URL(base, window.location.origin);
   if (params && typeof params === "object") {
     Object.entries(params).forEach(([key, value]) => {
@@ -124,7 +125,7 @@ async function parseResponse(res, path) {
 }
 
 async function request(method, path, body, config = {}) {
-  const built = buildUrl(path, config?.params);
+  const built = buildUrl(path, config?.params, { sameOrigin: config?.sameOrigin === true });
 
   const isFormData = body instanceof FormData;
   const headers = authHeaders({ ...(config?.headers || {}) });
@@ -143,7 +144,13 @@ async function request(method, path, body, config = {}) {
   });
 
   if (res.status === 401) {
-    const refreshed = await apiPerformBootRefresh();
+    let refreshed = false;
+    try {
+      await apiRefreshSession();
+      refreshed = true;
+    } catch {
+      // parseResponse håndterer den oprindelige 401 og afslutter den lokale session.
+    }
     if (refreshed) {
       res = await fetchWithFriendlyErrors(built, {
         method,
