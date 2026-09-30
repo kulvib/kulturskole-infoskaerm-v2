@@ -51,6 +51,8 @@ def test_ci_uses_read_only_permissions_and_safe_triggers():
     source, workflow = _load("ci.yml")
     assert workflow["permissions"] == {"contents": "read"}
     assert set(workflow["on"]) == {"push", "pull_request", "workflow_dispatch"}
+    assert workflow["on"]["push"] == {"branches": ["main"]}
+    assert workflow["on"]["pull_request"] == {"branches": ["main"]}
     assert "pull_request_target" not in source
     assert "secrets." not in source
 
@@ -108,23 +110,53 @@ def test_backend_ci_uses_fast_postgres_health_probe_and_hash_lock_cache():
     assert 'cache: "pip"' in source
     assert 'cache-dependency-path: requirements-ci.lock.txt' in source
 
-def test_ubuntu_2604_required_gate_parallelizes_independent_executable_proofs():
+def test_ubuntu_2604_required_gate_parallelizes_and_scopes_expensive_executable_proofs():
     source, workflow = _load("ci.yml")
     jobs = workflow["jobs"]
 
+    scope = jobs["client-host-ubuntu-2604-scope"]
     required = jobs["client-host-ubuntu-2604"]
     preclaim = jobs["client-host-ubuntu-2604-preclaim"]
     platform = jobs["client-host-ubuntu-2604-platform"]
 
+    assert scope["name"] == "Ubuntu 26.04 executable proof scope"
+    assert scope["runs-on"] == "ubuntu-latest"
+    assert set(scope["outputs"]) == {"preclaim_required", "platform_required"}
+
     assert required["name"] == "Ubuntu 26.04 client host executable contracts"
     assert set(required["needs"]) == {
+        "client-host-ubuntu-2604-scope",
         "client-host-ubuntu-2604-preclaim",
         "client-host-ubuntu-2604-platform",
     }
     assert required["if"] == "${{ always() }}"
     assert required["runs-on"] == "ubuntu-latest"
+
+    assert preclaim["needs"] == "client-host-ubuntu-2604-scope"
+    assert preclaim["if"] == "${{ needs.client-host-ubuntu-2604-scope.outputs.preclaim_required == 'true' }}"
     assert preclaim["runs-on"] == "ubuntu-26.04"
+
+    assert platform["needs"] == "client-host-ubuntu-2604-scope"
+    assert platform["if"] == "${{ needs.client-host-ubuntu-2604-scope.outputs.platform_required == 'true' }}"
     assert platform["runs-on"] == "ubuntu-26.04"
+
+    scope_source = source[
+        source.index("  client-host-ubuntu-2604-scope:"):
+        source.index("  client-host-ubuntu-2604:")
+    ]
+    assert 'if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]' in scope_source
+    assert "client/release/runtime-platform-inputs.lock.json" in scope_source
+    assert "client/release/lib/clientflow_release/*" in scope_source
+    assert "client/*" in scope_source
+    assert "backend/clientflow_release_format/*" in scope_source
+
+    required_source = source[
+        source.index("  client-host-ubuntu-2604:"):
+        source.index("  client-host-ubuntu-2604-preclaim:")
+    ]
+    assert 'test "$SCOPE_RESULT" = "success"' in required_source
+    assert 'test "$PRECLAIM_RESULT" = "skipped"' in required_source
+    assert 'test "$PLATFORM_RESULT" = "skipped"' in required_source
 
     preclaim_source = source[
         source.index("  client-host-ubuntu-2604-preclaim:"):
