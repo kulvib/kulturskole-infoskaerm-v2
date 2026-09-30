@@ -55,7 +55,25 @@ def test_activity_only_clients_are_sweeper_candidates_for_start():
     start = source.index("def reconcile_all_viewer_lifecycles(")
     end = source.index("def _sweeper_loop(", start)
     block = source[start:end]
-    assert "candidate_ids.update(active_livestream_activity_client_ids(session))" in block
+    assert "active_activity_client_ids = active_livestream_activity_client_ids(session, now=now)" in block
+    assert "steady_presence_client_ids = active_viewer_client_ids | active_activity_client_ids" in block
+    assert "candidate_ids = active_generation_client_ids | steady_presence_client_ids" in block
+
+
+def test_sweeper_fast_path_only_skips_active_generation_with_live_presence():
+    source = read("service1/livestream_v2.py")
+    helper_start = source.index("def _active_viewer_client_ids(")
+    lifecycle_start = source.index("def reconcile_all_viewer_lifecycles(", helper_start)
+    helper = source[helper_start:lifecycle_start]
+    end = source.index("def _sweeper_loop(", lifecycle_start)
+    block = source[lifecycle_start:end]
+
+    assert "select(LivestreamV2Viewer).where(LivestreamV2Viewer.ended_at.is_(None))" in helper
+    assert "if row.last_seen_at < cutoff:" in helper
+    assert 'row.end_reason = "lease_expired"' in helper
+    assert "client_id in active_generation_client_ids" in block
+    assert "client_id in steady_presence_client_ids" in block
+    assert "reconcile_viewer_lifecycle(session, client_id)" in block
 
 
 def test_recovery_and_stale_media_respect_terminal_or_rd_activity():
