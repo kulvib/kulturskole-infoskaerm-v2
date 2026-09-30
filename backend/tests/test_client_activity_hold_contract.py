@@ -71,6 +71,9 @@ def test_sweeper_fast_path_only_skips_active_generation_with_live_presence():
     assert "select(LivestreamV2Viewer).where(LivestreamV2Viewer.ended_at.is_(None))" in helper
     assert "if row.last_seen_at < cutoff:" in helper
     assert 'row.end_reason = "lease_expired"' in helper
+    assert "stopping_generation_client_ids" in block
+    assert 'if state == "stopping"' in block
+    assert "if client_id in stopping_generation_client_ids:" in block
     assert "client_id in active_generation_client_ids" in block
     assert "client_id in steady_presence_client_ids" in block
     assert "reconcile_viewer_lifecycle(session, client_id)" in block

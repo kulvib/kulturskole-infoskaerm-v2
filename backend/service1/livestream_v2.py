@@ -1044,13 +1044,21 @@ def _active_viewer_client_ids(
 
 def reconcile_all_viewer_lifecycles(session: Session) -> list[tuple[int, str]]:
     now = _now()
-    active_generation_client_ids = set(
-        session.exec(
-            select(LivestreamV2Generation.client_id).where(
-                LivestreamV2Generation.state.in_(ACTIVE_GENERATION_STATES)
-            )
-        ).all()
-    )
+    generation_rows = session.exec(
+        select(LivestreamV2Generation.client_id, LivestreamV2Generation.state).where(
+            LivestreamV2Generation.state.in_(ACTIVE_GENERATION_STATES)
+        )
+    ).all()
+    stopping_generation_client_ids = {
+        int(client_id)
+        for client_id, state in generation_rows
+        if state == "stopping"
+    }
+    active_generation_client_ids = {
+        int(client_id)
+        for client_id, state in generation_rows
+        if state != "stopping"
+    }
     active_viewer_client_ids = _active_viewer_client_ids(session, now=now)
     active_activity_client_ids = active_livestream_activity_client_ids(session, now=now)
     steady_presence_client_ids = active_viewer_client_ids | active_activity_client_ids
@@ -1059,6 +1067,11 @@ def reconcile_all_viewer_lifecycles(session: Session) -> list[tuple[int, str]]:
     actions: list[tuple[int, str]] = []
     for client_id in sorted(candidate_ids):
         client_id = int(client_id)
+        # A stopping generation is finalized only from authoritative agent
+        # status. The viewer sweeper cannot safely advance it, so polling it
+        # every five seconds only repeats locks and presence/generation reads.
+        if client_id in stopping_generation_client_ids:
+            continue
         # The sweep-wide reads already prove the common steady state: an active
         # generation still has authenticated browser presence. Avoid repeating
         # per-client locks and the same generation/viewer/activity reads every

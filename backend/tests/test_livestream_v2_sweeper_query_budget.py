@@ -45,6 +45,16 @@ class LivestreamV2SweeperQueryBudgetTests(unittest.TestCase):
             )
         )
 
+    def seed_stopping_generation(self, session: Session) -> None:
+        session.add(
+            LivestreamV2Generation(
+                id=self.GENERATION_ID,
+                client_id=self.CLIENT_ID,
+                state="stopping",
+                requested_action="stop",
+            )
+        )
+
     def test_running_generation_with_live_viewer_skips_per_client_reconcile(self) -> None:
         with Session(self.engine) as session:
             self.seed_client(session)
@@ -115,6 +125,34 @@ class LivestreamV2SweeperQueryBudgetTests(unittest.TestCase):
             ).one()
             self.assertIsNotNone(viewer.ended_at)
             self.assertEqual(viewer.end_reason, "lease_expired")
+
+    def test_stopping_generation_without_presence_skips_per_client_reconcile(self) -> None:
+        with Session(self.engine) as session:
+            self.seed_client(session)
+            self.seed_stopping_generation(session)
+            session.commit()
+
+            with patch.object(livestream_v2, "reconcile_viewer_lifecycle") as reconcile:
+                self.assertEqual(livestream_v2.reconcile_all_viewer_lifecycles(session), [])
+                reconcile.assert_not_called()
+
+    def test_stopping_generation_with_live_presence_skips_per_client_reconcile(self) -> None:
+        with Session(self.engine) as session:
+            self.seed_client(session)
+            self.seed_stopping_generation(session)
+            session.add(
+                LivestreamV2Viewer(
+                    client_id=self.CLIENT_ID,
+                    viewer_id="viewer-during-stop",
+                    principal_key="admin:1",
+                    last_seen_at=livestream_v2._now(),
+                )
+            )
+            session.commit()
+
+            with patch.object(livestream_v2, "reconcile_viewer_lifecycle") as reconcile:
+                self.assertEqual(livestream_v2.reconcile_all_viewer_lifecycles(session), [])
+                reconcile.assert_not_called()
 
     def test_live_presence_without_generation_keeps_transition_reconcile(self) -> None:
         with Session(self.engine) as session:
