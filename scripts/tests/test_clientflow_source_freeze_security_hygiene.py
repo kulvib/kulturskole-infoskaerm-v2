@@ -60,6 +60,38 @@ def test_nanoid_high_severity_advisory_is_fixed_without_waiver() -> None:
         assert "GHSA-2v37-7h3g-55p8" not in exception.get("advisories", [])
 
 
+
+def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() -> None:
+    lock = json.loads((ROOT / "frontend" / "package-lock.json").read_text(encoding="utf-8"))
+    brace = lock["packages"]["node_modules/brace-expansion"]
+    assert brace["version"] == "1.1.21"
+
+    allowlist = json.loads(
+        (ROOT / "frontend" / "dependency-audit-allowlist.json").read_text(encoding="utf-8")
+    )
+    exceptions = allowlist.get("exceptions", [])
+    brace_exceptions = [item for item in exceptions if item.get("package") == "brace-expansion"]
+    assert brace_exceptions == [
+        {
+            "package": "brace-expansion",
+            "advisories": [
+                "GHSA-q2hr-2g5m-vwhr",
+                "GHSA-qhr7-859c-m2p7",
+                "GHSA-6j4f-fj2g-mc7p",
+            ],
+            "expires": "2026-10-07",
+            "scope": (
+                "npm audit registry-feed false positive for exact patched "
+                "brace-expansion 1.1.21 only"
+            ),
+            "replacementPlan": (
+                "Remove this exception as soon as npm audit stops reporting these three "
+                "advisories against brace-expansion 1.1.21; do not extend without "
+                "re-verifying the published affected ranges."
+            ),
+        }
+    ]
+
 def test_1327_1228_source_is_staged_exactly_one_ahead_of_promoted_1227_catalog() -> None:
     assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.27"
     release_input = json.loads(
