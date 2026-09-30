@@ -3,7 +3,7 @@
 > **SUPERSEDED BEFORE FINAL BUILD:** This source boundary is preserved as
 > historical bridge evidence. Subsequent audited source changes were re-frozen
 > before candidate approval, publication or catalog promotion. Current source
-> authority is `CLIENTFLOW_1.3.27_1228_FINAL_SOURCE_REFREEZE_CLOSURE.md`.
+> authority is `CLIENTFLOW_1.3.27_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE_CLOSURE.md`.
 
 Date: 2026-09-28
 

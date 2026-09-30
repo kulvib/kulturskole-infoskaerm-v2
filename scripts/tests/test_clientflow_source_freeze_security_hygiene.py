@@ -166,6 +166,8 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CHANGED_FILES_1327_1228_SOURCE_REFREEZE.txt" in seen
     assert "CLIENTFLOW_1.3.27_1228_FINAL_SOURCE_REFREEZE_CLOSURE.md" in seen
     assert "CHANGED_FILES_1327_1228_FINAL_SOURCE_REFREEZE.txt" in seen
+    assert "CLIENTFLOW_1.3.27_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE_CLOSURE.md" in seen
+    assert "CHANGED_FILES_1327_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE.txt" in seen
 
 
 def test_1323_1224_initial_freeze_is_explicitly_superseded_before_build() -> None:
@@ -221,17 +223,22 @@ def test_1327_1228_final_refreeze_supersedes_pre_audit_source_authority() -> Non
     bridge = (
         ROOT / "CLIENTFLOW_1.3.27_1228_SOURCE_REFREEZE_PYTHON_RUNTIME_BRIDGE_CLOSURE.md"
     ).read_text(encoding="utf-8")
-    final = (ROOT / "CLIENTFLOW_1.3.27_1228_FINAL_SOURCE_REFREEZE_CLOSURE.md").read_text(
-        encoding="utf-8"
-    )
+    historical_final = (
+        ROOT / "CLIENTFLOW_1.3.27_1228_FINAL_SOURCE_REFREEZE_CLOSURE.md"
+    ).read_text(encoding="utf-8")
+    final = (
+        ROOT / "CLIENTFLOW_1.3.27_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE_CLOSURE.md"
+    ).read_text(encoding="utf-8")
 
-    assert "CLIENTFLOW_1.3.27_1228_FINAL_SOURCE_REFREEZE_CLOSURE.md" in identity
+    assert "CLIENTFLOW_1.3.27_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE_CLOSURE.md" in identity
     assert "SUPERSEDED BEFORE FINAL BUILD" in bridge
-    assert "678092b596806e0952de96163899c6bdecc0719d" in final
-    assert "#1090" in final
-    assert "36599288657" in final
-    assert "N+1" in final
-    assert "repository-root `service1/` / `tests/`" in final
+    assert "SUPERSEDED BEFORE BUILD" in historical_final
+    assert "CLIENTFLOW_1.3.27_1228_POST_MAINTENANCE_FINAL_SOURCE_REFREEZE_CLOSURE.md" in historical_final
+    assert "cd0482434f18866a52ceddefe12f1464219d9b71" in final
+    assert "#1161" in final
+    assert "36734756428" in final
+    assert "embedded runtime Python: `3.13.14`" in final
+    assert "Python `3.13.15`" in final
     assert "source-SHA-qualified" in final
     assert "expected_source_sha" in final
     assert "source release sequence: `1228`" in final
