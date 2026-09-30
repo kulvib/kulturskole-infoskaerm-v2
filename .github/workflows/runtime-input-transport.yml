@@ -10,12 +10,17 @@ name: Prepare ClientFlow runtime-input transport
       base_runtime_inputs_url:
         description: Exact HTTPS URL for a previous transport used only to reuse still-locked runtime/bootstrap bytes
         required: true
-        default: https://github.com/kulvib/kulturskole-infoskaerm-v2/releases/download/runtime-inputs-1219-transport/clientflow-runtime-inputs-python-3.13.14-amd64-1219.tar
+        default: https://github.com/kulvib/kulturskole-infoskaerm-v2/releases/download/runtime-inputs-1228-8525ecf5491a1dfb16cc6880302020e83dac74f5-transport/clientflow-runtime-inputs-python-3.13.14-amd64-1228-8525ecf5491a1dfb16cc6880302020e83dac74f5.tar
         type: string
       base_runtime_inputs_sha256:
         description: SHA-256 of the previous transport (transport integrity only; inner bytes are reverified against current lock)
         required: true
-        default: 1765b37fead2cefb250d36860db91b2317eab2469c2735bd8fd3a7767586d767
+        default: 233e2e36323bcb7c15bf3d44eeb03c46a00edf84746a50598cde18d565976619
+        type: string
+      runtime_artifact_url:
+        description: Exact HTTPS URL for the current locked PyJWT replacement wheel
+        required: true
+        default: https://files.pythonhosted.org/packages/50/ca/44de4e75f8aadc457f0634be3b542815078ded46dca30efb960edeecad6e/pyjwt-2.15.1-py3-none-any.whl
         type: string
       platform_artifact_url:
         description: Exact HTTPS URL for the current lock's single platform artifact
@@ -105,23 +110,32 @@ jobs:
         id: transport
         shell: bash
         env:
+          RUNTIME_URL: ${{ inputs.runtime_artifact_url }}
           PLATFORM_URL: ${{ inputs.platform_artifact_url }}
           ASSET_NAME: ${{ steps.identity.outputs.asset_name }}
         run: |
           set -euo pipefail
-          PLATFORM_FILE="$(python - <<'PY'
+          readarray -t LOCKED_FILES < <(python - <<'PY'
           import json
           from pathlib import Path
           lock = json.loads(Path('client/release/runtime-platform-inputs.lock.json').read_text(encoding='utf-8'))
-          rows = lock.get('platform_artifacts') or []
-          if len(rows) != 1:
+          runtime_rows = [row for row in (lock.get('artifacts') or []) if str(row.get('file', '')).lower().startswith('pyjwt-')]
+          platform_rows = lock.get('platform_artifacts') or []
+          if len(runtime_rows) != 1:
+              raise SystemExit('workflow currently requires exactly one locked PyJWT runtime artifact')
+          if len(platform_rows) != 1:
               raise SystemExit('workflow currently requires exactly one locked platform artifact')
-          print(rows[0]['file'])
+          print(runtime_rows[0]['file'])
+          print(platform_rows[0]['file'])
           PY
-          )"
+          )
+          RUNTIME_FILE="${LOCKED_FILES[0]}"
+          PLATFORM_FILE="${LOCKED_FILES[1]}"
           OUTPUT="$RUNNER_TEMP/$ASSET_NAME"
           python scripts/prepare_clientflow_runtime_input_transport.py \
             --base-archive "$RUNNER_TEMP/base-runtime-inputs.tar" \
+            --drop-base-runtime "pyjwt-2.13.0-py3-none-any.whl" \
+            --runtime-url "$RUNTIME_FILE=$RUNTIME_URL" \
             --platform-url "$PLATFORM_FILE=$PLATFORM_URL" \
             --output "$OUTPUT" | tee "$RUNNER_TEMP/prepare.log"
           SHA256="$(sha256sum "$OUTPUT" | awk '{print $1}')"
