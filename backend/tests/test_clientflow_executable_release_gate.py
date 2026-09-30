@@ -89,7 +89,10 @@ def test_release_workflow_requires_target_host_candidate_gate_before_handoff():
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     release = (ROOT / ".github/workflows/release-build.yml").read_text(encoding="utf-8")
     assert "client-host-ubuntu-2604:" in ci
-    assert "runs-on: ubuntu-26.04" in ci
+    assert "client-host-ubuntu-2604-preclaim:" in ci
+    assert "client-host-ubuntu-2604-platform:" in ci
+    assert ci.count("runs-on: ubuntu-26.04") >= 2
+    assert "verify_clientflow_preclaim_bootstrap_ubuntu2604.py" in ci
     assert "verify_clientflow_ubuntu2604_host.py" in ci
     assert "candidate-runtime:" in release
     assert "verify_clientflow_release_candidate_runtime.py" in release
