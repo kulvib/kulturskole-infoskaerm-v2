@@ -2,7 +2,11 @@ name: CI
 
 "on":
   push:
+    branches:
+      - main
   pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -135,9 +139,80 @@ jobs:
       - name: Execute legacy 1.1.19 capability parity gate
         run: python scripts/verify_clientflow_legacy119_capability_gate.py --repo "$GITHUB_WORKSPACE" --scope python
 
+  client-host-ubuntu-2604-scope:
+    name: Ubuntu 26.04 executable proof scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      preclaim_required: ${{ steps.scope.outputs.preclaim_required }}
+      platform_required: ${{ steps.scope.outputs.platform_required }}
+
+    steps:
+      - name: Checkout repository with history for change classification
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Classify Ubuntu 26.04 executable proof scope
+        id: scope
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "preclaim_required=true" >> "$GITHUB_OUTPUT"
+            echo "platform_required=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
+          else
+            base="${{ github.event.before }}"
+            head="${{ github.sha }}"
+          fi
+
+          if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
+            echo "preclaim_required=true" >> "$GITHUB_OUTPUT"
+            echo "platform_required=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          preclaim_required=false
+          platform_required=false
+          mapfile -t changed_files < <(git diff --name-only "$base" "$head")
+
+          printf 'Ubuntu 26.04 scope changed files (%s):\n' "${#changed_files[@]}"
+          printf '  %s\n' "${changed_files[@]}"
+
+          for path in "${changed_files[@]}"; do
+            case "$path" in
+              .github/workflows/ci.yml)
+                preclaim_required=true
+                platform_required=true
+                ;;
+              client/release/runtime-platform-inputs.lock.json|client/release/lib/clientflow_release/*)
+                preclaim_required=true
+                platform_required=true
+                ;;
+              scripts/verify_clientflow_preclaim_bootstrap_ubuntu2604.py)
+                preclaim_required=true
+                ;;
+              client/*|backend/clientflow_release_format/*|scripts/verify_clientflow_ubuntu2604_host.py|scripts/verify_clientflow_legacy119_capability_gate.py)
+                platform_required=true
+                ;;
+            esac
+          done
+
+          echo "preclaim_required=$preclaim_required" >> "$GITHUB_OUTPUT"
+          echo "platform_required=$platform_required" >> "$GITHUB_OUTPUT"
+
   client-host-ubuntu-2604:
     name: Ubuntu 26.04 client host executable contracts
     needs:
+      - client-host-ubuntu-2604-scope
       - client-host-ubuntu-2604-preclaim
       - client-host-ubuntu-2604-platform
     if: ${{ always() }}
@@ -145,18 +220,34 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Require both Ubuntu 26.04 executable proof jobs
+      - name: Require applicable Ubuntu 26.04 executable proof jobs
         shell: bash
         env:
+          SCOPE_RESULT: ${{ needs.client-host-ubuntu-2604-scope.result }}
+          PRECLAIM_REQUIRED: ${{ needs.client-host-ubuntu-2604-scope.outputs.preclaim_required }}
+          PLATFORM_REQUIRED: ${{ needs.client-host-ubuntu-2604-scope.outputs.platform_required }}
           PRECLAIM_RESULT: ${{ needs.client-host-ubuntu-2604-preclaim.result }}
           PLATFORM_RESULT: ${{ needs.client-host-ubuntu-2604-platform.result }}
         run: |
           set -euo pipefail
-          test "$PRECLAIM_RESULT" = "success"
-          test "$PLATFORM_RESULT" = "success"
+          test "$SCOPE_RESULT" = "success"
+
+          if [ "$PRECLAIM_REQUIRED" = "true" ]; then
+            test "$PRECLAIM_RESULT" = "success"
+          else
+            test "$PRECLAIM_RESULT" = "skipped"
+          fi
+
+          if [ "$PLATFORM_REQUIRED" = "true" ]; then
+            test "$PLATFORM_RESULT" = "success"
+          else
+            test "$PLATFORM_RESULT" = "skipped"
+          fi
 
   client-host-ubuntu-2604-preclaim:
     name: Ubuntu 26.04 preclaim recovery proof
+    needs: client-host-ubuntu-2604-scope
+    if: ${{ needs.client-host-ubuntu-2604-scope.outputs.preclaim_required == 'true' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 20
 
@@ -175,6 +266,8 @@ jobs:
 
   client-host-ubuntu-2604-platform:
     name: Ubuntu 26.04 platform capability proof
+    needs: client-host-ubuntu-2604-scope
+    if: ${{ needs.client-host-ubuntu-2604-scope.outputs.platform_required == 'true' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 20
 
