@@ -105,6 +105,7 @@ export default function SessionSecurityPage() {
   const [reauthAction, setReauthAction] = React.useState(null);
   const [reauthPending, setReauthPending] = React.useState(false);
   const [reauthError, setReauthError] = React.useState("");
+  const revokeInFlightRef = React.useRef(false);
   const requestRef = React.useRef({ id: 0, controller: null });
 
   const load = React.useCallback(async ({ preserveMessages = false } = {}) => {
@@ -147,21 +148,23 @@ export default function SessionSecurityPage() {
   };
 
   const closeReauthentication = () => {
-    if (reauthPending) return;
+    if (revokeInFlightRef.current) return;
     setReauthAction(null);
     setReauthError("");
   };
 
   const submitReauthentication = async (password) => {
-    if (!reauthAction || reauthPending) return;
+    if (!reauthAction || revokeInFlightRef.current) return;
+    const action = reauthAction;
+    revokeInFlightRef.current = true;
     setReauthPending(true);
     setReauthError("");
     try {
-      if (reauthAction.type === "others") {
+      if (action.type === "others") {
         const result = expectSessionRevokePayload(await revokeOtherSessions(password));
         setSuccess(`${result.revoked_count} andre sessioner er afsluttet.`);
       } else {
-        expectSessionRevokePayload(await revokeSession(reauthAction.sessionId, password));
+        expectSessionRevokePayload(await revokeSession(action.sessionId, password));
         setSuccess("Sessionen er afsluttet.");
       }
       setReauthAction(null);
@@ -169,6 +172,7 @@ export default function SessionSecurityPage() {
     } catch (err) {
       setReauthError(err?.message || "Handlingen kunne ikke gennemføres.");
     } finally {
+      revokeInFlightRef.current = false;
       setReauthPending(false);
     }
   };
