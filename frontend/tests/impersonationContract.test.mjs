@@ -22,6 +22,15 @@ test("Skift bruger is wired through the central auth/session context", () => {
   assert.equal((api.match(/sameOrigin: true/g) || []).length, 2);
 });
 
+test("impersonation banner exposes the active-user layout and role-based return label", () => {
+  const banner = read("src/auth/ImpersonationBanner.jsx");
+
+  assert.match(banner, /Aktiv bruger/);
+  assert.match(banner, /Tilbage til \$\{actorRole\}/);
+  assert.match(banner, /actor_role/);
+  assert.match(banner, /logget ind som/);
+});
+
 test("password change is hidden while acting as another user", () => {
   const dashboard = read("src/Dashboard.jsx");
   assert.match(dashboard, /!isImpersonating &&[\s\S]*Skift adgangskode/);
