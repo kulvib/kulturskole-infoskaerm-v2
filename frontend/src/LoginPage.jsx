@@ -95,6 +95,7 @@ export default function LoginPage() {
   const [warmupMsg, setWarmupMsg] = React.useState("");
   const [sessionEndMessage, setSessionEndMessage] = React.useState(() => consumeSessionEndMessage());
   const warmupPromiseRef = React.useRef(null);
+  const submitInFlightRef = React.useRef(false);
   const [searchParams] = useSearchParams();
 
   const { loginUser } = useAuth();
@@ -127,6 +128,9 @@ export default function LoginPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
+
     setError("");
     setStatusMsg("");
     setSessionEndMessage("");
@@ -186,6 +190,7 @@ export default function LoginPage() {
         }
       }
     } finally {
+      submitInFlightRef.current = false;
       clearInterval(msgInterval);
       setLoading(false);
       setStatusMsg("");

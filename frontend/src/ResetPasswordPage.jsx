@@ -99,6 +99,7 @@ export default function ResetPassword() {
   const [error, setError] = React.useState("");
   const [success, setSuccess] = React.useState("");
   const [progress, setProgress] = React.useState(0);
+  const submitInFlightRef = React.useRef(false);
 
   React.useEffect(() => {
     if (!success) return undefined;
@@ -119,6 +120,8 @@ export default function ResetPassword() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (submitInFlightRef.current) return;
+
     setError("");
     setSuccess("");
 
@@ -137,6 +140,7 @@ export default function ResetPassword() {
       return;
     }
 
+    submitInFlightRef.current = true;
     setLoading(true);
     try {
       const res = await fetch(`${apiUrl}/api/users/reset-password`, {
@@ -155,6 +159,7 @@ export default function ResetPassword() {
     } catch (err) {
       setError(formatApiError(err, "Kunne ikke nulstille adgangskode."));
     } finally {
+      submitInFlightRef.current = false;
       setLoading(false);
     }
   };
