@@ -18,7 +18,6 @@ import {
   Typography,
 } from "@mui/material";
 import DevicesIcon from "@mui/icons-material/Devices";
-import SecurityIcon from "@mui/icons-material/Security";
 import { useAuth } from "./auth/AuthProvider";
 import {
   listActiveSessions,
@@ -176,7 +175,7 @@ export default function SessionSecurityPage() {
 
   if (isImpersonating) {
     return (
-      <Box sx={{ maxWidth: 980, mx: "auto" }}>
+      <Box sx={{ maxWidth: 900, mx: "auto", p: { xs: 2, md: 3 } }}>
         <Alert severity="warning">
           Afslut Skift bruger, før du administrerer sessionerne for din egen konto.
         </Alert>
@@ -187,7 +186,7 @@ export default function SessionSecurityPage() {
   const otherSessions = sessions.filter((session) => !session.current);
 
   return (
-    <Box sx={{ maxWidth: 980, mx: "auto" }}>
+    <Box sx={{ maxWidth: 900, mx: "auto", p: { xs: 2, md: 3 } }}>
       <Stack
         direction={{ xs: "column", sm: "row" }}
         justifyContent="space-between"
@@ -196,22 +195,18 @@ export default function SessionSecurityPage() {
         sx={{ mb: 3 }}
       >
         <Box>
-          <Stack direction="row" spacing={1.25} alignItems="center" sx={{ mb: 0.5 }}>
-            <SecurityIcon color="primary" />
-            <Typography variant="h4" component="h1">Sessioner og sikkerhed</Typography>
-          </Stack>
+          <Typography variant="h4" component="h1">Sessioner og sikkerhed</Typography>
           <Typography color="text.secondary">
-            Se dine aktive login-sessioner, og afslut sessioner du ikke genkender.
+            Se hvor din konto er logget ind, og afslut sessioner du ikke genkender.
           </Typography>
         </Box>
         <Button
           variant="outlined"
-          color="error"
           onClick={() => openReauthentication({ type: "others" })}
           disabled={loading || otherSessions.length === 0}
-          sx={{ flexShrink: 0 }}
+          sx={{ ml: { sm: "auto" }, alignSelf: { xs: "stretch", sm: "flex-start" }, flexShrink: 0 }}
         >
-          Log ud af alle andre sessioner
+          Log ud på alle andre enheder
         </Button>
       </Stack>
 
@@ -237,32 +232,23 @@ export default function SessionSecurityPage() {
                     <DevicesIcon sx={{ mt: 0.25, flexShrink: 0 }} />
                     <Box sx={{ minWidth: 0 }}>
                       <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap" sx={{ mb: 0.75 }}>
-                        <Typography fontWeight={700}>Aktiv browsersession</Typography>
+                        <Typography fontWeight={700}>{session.user_agent || "Ukendt browser/enhed"}</Typography>
                         {session.current && <Chip size="small" color="success" label="Denne session" />}
                         {session.impersonation_active && <Chip size="small" color="warning" label="Skift bruger aktivt" />}
                       </Stack>
                       <Typography variant="body2" color="text.secondary">
-                        Senest fornyet: {formatDateTime(session.refreshed_at)} · Udløber senest: {formatDateTime(session.session_expires_at)}
+                        Senest fornyet: {formatDateTime(session.refreshed_at)}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Udløber senest: {formatDateTime(session.session_expires_at)}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
                         IP ved seneste fornyelse: {session.ip_address || "—"}
                       </Typography>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ mt: 0.5, wordBreak: "break-word" }}
-                      >
-                        Browser/enhed: {session.user_agent || "Ukendt"}
-                      </Typography>
                     </Box>
                   </Stack>
                   {!session.current && (
-                    <Button
-                      color="error"
-                      variant="text"
-                      onClick={() => openReauthentication({ type: "single", sessionId: session.session_id })}
-                      sx={{ alignSelf: { xs: "flex-start", sm: "center" }, flexShrink: 0 }}
-                    >
+                    <Button color="error" onClick={() => openReauthentication({ type: "single", sessionId: session.session_id })}>
                       Afslut
                     </Button>
                   )}

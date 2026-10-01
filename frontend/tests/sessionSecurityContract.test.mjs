@@ -15,7 +15,7 @@ test("Sessioner og sikkerhed is routed through the authenticated user menu", () 
   assert.match(dashboard, /!isImpersonating &&[\s\S]*Sessioner og sikkerhed/);
 });
 
-test("session security API uses server-owned session endpoints and password reauthentication", () => {
+test("session security page keeps server-owned session controls while matching the Flow layout", () => {
   const adapter = read("src/auth/sessionSecurityApi.js");
   const api = read("src/api/api.js");
   const page = read("src/SessionSecurityPage.jsx");
@@ -29,8 +29,11 @@ test("session security API uses server-owned session endpoints and password reau
   assert.match(page, /autoComplete="current-password"/);
   assert.match(page, /slotProps=\{\{ htmlInput: \{ maxLength: 256 \} \}\}/);
   assert.doesNotMatch(page, /inputProps=/);
+  assert.match(page, /maxWidth: 900/);
+  assert.match(page, /Se hvor din konto er logget ind, og afslut sessioner du ikke genkender\./);
+  assert.match(page, /Log ud på alle andre enheder/);
+  assert.match(page, /Ukendt browser\/enhed/);
   assert.match(page, /Denne session/);
-  assert.match(page, /Log ud af alle andre sessioner/);
   assert.match(page, /Afslut Skift bruger/);
 });
 
