@@ -43,3 +43,23 @@ test("session payload integrity requires exactly one current session", () => {
   assert.match(integrity, /session_expires_at/);
   assert.match(integrity, /impersonation_active/);
 });
+
+
+test("session revocation is synchronously single-flight before the first await", () => {
+  const page = read("src/SessionSecurityPage.jsx");
+  const start = page.indexOf("const submitReauthentication = async");
+  const end = page.indexOf("\n  };", start);
+  assert.ok(start >= 0 && end > start, "submitReauthentication handler must exist");
+
+  const handler = page.slice(start, end);
+  const guard = handler.indexOf("if (!reauthAction || revokeInFlightRef.current) return;");
+  const acquire = handler.indexOf("revokeInFlightRef.current = true;");
+  const firstAwait = handler.indexOf("await ");
+  const release = handler.lastIndexOf("revokeInFlightRef.current = false;");
+
+  assert.match(page, /const revokeInFlightRef = React\.useRef\(false\);/);
+  assert.ok(guard >= 0, "revoke handler must reject a second in-flight submission synchronously");
+  assert.ok(acquire > guard && acquire < firstAwait, "in-flight guard must be acquired before the first await");
+  assert.ok(release > firstAwait, "in-flight guard must be released after the sensitive action settles");
+  assert.match(page, /const closeReauthentication = \(\) => \{[\s\S]*if \(revokeInFlightRef\.current\) return;/);
+});
