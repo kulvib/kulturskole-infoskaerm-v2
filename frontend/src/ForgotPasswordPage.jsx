@@ -49,9 +49,12 @@ export default function ForgotPassword() {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
   const [success, setSuccess] = React.useState("");
+  const submitInFlightRef = React.useRef(false);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (submitInFlightRef.current) return;
+
     setError("");
     setSuccess("");
 
@@ -61,6 +64,7 @@ export default function ForgotPassword() {
       return;
     }
 
+    submitInFlightRef.current = true;
     setLoading(true);
     try {
       const res = await fetch(`${apiUrl}/api/users/forgot-password`, {
@@ -77,6 +81,7 @@ export default function ForgotPassword() {
     } catch (err) {
       setError(formatApiError(err, "Kunne ikke sende nulstillingslink."));
     } finally {
+      submitInFlightRef.current = false;
       setLoading(false);
     }
   };

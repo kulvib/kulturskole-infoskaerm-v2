@@ -63,6 +63,7 @@ export default function ChangePassword() {
   const [success, setSuccess] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [progress, setProgress] = React.useState(0);
+  const submitInFlightRef = React.useRef(false);
 
   const isForcedChange = Boolean(me?.must_change_password || me?.mustChangePassword);
 
@@ -89,6 +90,8 @@ export default function ChangePassword() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitInFlightRef.current) return;
+
     setError("");
 
     if (!me?.id) {
@@ -121,6 +124,7 @@ export default function ChangePassword() {
       body.current_password = currentPassword;
     }
 
+    submitInFlightRef.current = true;
     setLoading(true);
     try {
       await patchUser(me.id, body);
@@ -128,6 +132,7 @@ export default function ChangePassword() {
     } catch (err) {
       setError(errorToString(err) || "Kunne ikke skifte adgangskode");
     } finally {
+      submitInFlightRef.current = false;
       setLoading(false);
     }
   };
