@@ -49,19 +49,19 @@ def _method_local_tuple(source: str, class_name: str, method_name: str, name: st
                             return ast.literal_eval(child.value)
     raise AssertionError(f"{class_name}.{method_name} local {name} not found")
 
-def test_promoted_1328_1229_security_replacement_skips_rejected_1228():
-    # 1228 was security-rejected before catalog promotion. The replacement
-    # consumes the next immutable sequence and is promoted directly from 1227.
-    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.28"
+def test_staged_1329_1230_keeps_promoted_1328_1229_and_skips_rejected_1228():
+    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.29"
     release_input = json.loads(_source(RELEASE_INPUT))
-    assert release_input["release_sequence"] == 1229
+    assert release_input["release_sequence"] == 1230
     assert release_input["minimum_ubuntu_lts"] == "26.04"
     assert release_input["architecture"] == "amd64"
+    # Do not advance the embedded runtime until the compatibility bridge has
+    # completed its required physical update proof.
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
     assert catalog["catalog_sequence"] == 1229
-    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
     assert catalog["latest_stable"] == "1.3.28"
     assert catalog["default_install_version"] == "1.3.28"
     selected = catalog["releases"][0]
