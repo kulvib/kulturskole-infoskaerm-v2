@@ -1047,6 +1047,19 @@ def _activation_wait() -> int:
             continue
         try:
             _publish_post_reboot_approval_readiness(state)
+        except urllib.error.HTTPError as exc:
+            # The readiness endpoint is intentionally pending-only. Once an
+            # administrator approves the client it therefore returns 401, but
+            # the canonical staged activation must still get a chance to prove
+            # that approved state through the status-token boundary. This does
+            # not weaken the gate: all local post-reboot readiness checks have
+            # already passed before the HTTP request, and activation remains
+            # fail-closed until the backend-approved proof succeeds.
+            if exc.code != 401:
+                _ensure_preactivation_gui_started()
+                print(f"ClientFlow afventer post-reboot approval-readiness: {exc}", file=sys.stderr)
+                time.sleep(10)
+                continue
         except Exception as exc:
             _ensure_preactivation_gui_started()
             print(f"ClientFlow afventer post-reboot approval-readiness: {exc}", file=sys.stderr)
