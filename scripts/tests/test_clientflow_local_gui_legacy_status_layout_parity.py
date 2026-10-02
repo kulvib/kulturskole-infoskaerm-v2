@@ -88,3 +88,15 @@ def test_system_broker_preserves_reboot_shutdown_source_without_broadening_autho
     assert 'transition_source = "pending_reboot" if action == "reboot" else "pending_shutdown"' in source
     assert '"action": "stop_browser"' in source
     assert '"action": "record_system_transition"' in source
+
+def test_local_gui_calendar_replaces_pending_gray_with_live_on_off_color() -> None:
+    source = _source("client/libexec/local-gui")
+    start = source.index("for labels, values in zip(self.calendar_labels, calendar):")
+    end = source.index('state = str(runtime.get("state") or "").lower()', start)
+    calendar_refresh = source[start:end]
+
+    assert 'row_color = COLOR_GRAY if PREACTIVATION_MODE else (COLOR_GREEN if values[1] == "On" else COLOR_RED)' in calendar_refresh
+    assert 'for old in ("status-green", "status-red", "status-orange", "status-blue", "status-gray"):' in calendar_refresh
+    assert "label.remove_css_class(old)" in calendar_refresh
+    assert "label.add_css_class(css)" in calendar_refresh
+

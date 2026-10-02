@@ -60,6 +60,16 @@ def test_browser_guard_uses_dynamic_display_configuration_and_loopback_devtools(
     assert 'browser_refresh_interval_sec' in frontend
     assert '0 = slået fra. Ellers 60–86400 sekunder.' in frontend
 
+    # Accept-mode is a single canonical policy for every Chrome start source:
+    # accept first, then hide known consent UI once complete; failed acceptance
+    # also falls back to hide instead of leaving a blocking notification behind.
+    assert 'VERSION = "1.6.7"' in guard
+    assert "const IS_KIOSK_REFRESH" not in guard
+    assert "if (document.readyState === 'complete')" in guard
+    assert "hiddenAfterAccept = hideKnown();" in guard
+    assert "const hiddenAfterAccept = hideKnown();" in guard
+    assert "const hiddenAfterFallback = hideKnown();" in guard
+
 
 def test_display_resolution_is_real_command_result_flow() -> None:
     backend = read("backend/service1/display_control.py")

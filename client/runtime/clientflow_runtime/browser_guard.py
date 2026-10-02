@@ -71,7 +71,7 @@ ENABLE_AGGRESSIVE_HIDE = os.environ.get("CLIENTFLOW_BROWSER_GUARD_ENABLE_AGGRESS
 # At override window.open/alert/confirm kan påvirke enkelte sites. Derfor default off.
 ENABLE_NATIVE_BLOCK = os.environ.get("CLIENTFLOW_BROWSER_GUARD_ENABLE_NATIVE_BLOCK", "1").strip().lower() in ("1", "true", "yes", "y")
 
-VERSION = "1.6.6"
+VERSION = "1.6.7"
 
 DEBUG_URL = f"http://{HOST}:{PORT}/json"
 
@@ -202,7 +202,7 @@ def is_main_page_target(tab: dict) -> bool:
 
 HIDE_JS = r"""
 (() => {
-  const VERSION = '1.6.2';
+  const VERSION = '1.6.7';
 
   function safe(fn, fallback) {
     try { return fn(); } catch (e) { return fallback; }
@@ -212,7 +212,6 @@ HIDE_JS = r"""
   const COOKIE_MODE = '__COOKIE_MODE__';
   const ENABLE_AGGRESSIVE_HIDE = __ENABLE_AGGRESSIVE_HIDE__;
   const ENABLE_NATIVE_BLOCK = __ENABLE_NATIVE_BLOCK__;
-  const IS_KIOSK_REFRESH = safe(() => new URL(location.href).searchParams.has('_kiosk_refresh'), false);
 
   // v1.5.2:
   // Accept-mode må gerne forsøge at klikke cookie-knappen før readyState=complete,
@@ -244,13 +243,11 @@ HIDE_JS = r"""
   if (COOKIE_MODE === 'accept') {
     acceptResult = tryAcceptCookies();
     if (acceptResult && acceptResult.clicked) {
-      // v1.6.2:
-      // Ved almindelig URL change må dialogen gerne være synlig kortvarigt.
-      // Efter kiosk auto-refresh (_kiosk_refresh) må den ikke stå tilbage.
-      // Derfor skjuler vi kun aggressivt i accept-mode, når det er et
-      // tidsstyret refresh, ikke ved første URL change.
+      // v1.6.7: accept-mode means accept first, then enforce the visual hide
+      // fallback as soon as the page is complete.  This applies equally to
+      // GUI/backend/system starts, URL changes, reset-browser and timed refresh.
       let hiddenAfterAccept = 0;
-      if (IS_KIOSK_REFRESH && document.readyState === 'complete') {
+      if (document.readyState === 'complete') {
         ensureHideLoop();
         hiddenAfterAccept = hideKnown();
       } else {
@@ -310,25 +307,24 @@ HIDE_JS = r"""
   }
 
   function tryAcceptCookies() {
-    // Fjern eventuel gammel guard-CSS først. Tidligere hide-mode kan have
-    // skjult #coiOverlay, så knappen ikke længere er "visible".
+    const successKey = '__clientflowCookieAcceptSuccess:' + location.href;
+    const attemptsKey = '__clientflowCookieAcceptAttempts:' + location.href;
+    window[attemptsKey] = (window[attemptsKey] || 0) + 1;
+
+    // v1.6.7: Once this exact URL has been accepted, keep the guard CSS/DOM
+    // protection intact. Removing it on every poll can briefly re-expose the
+    // consent overlay even though acceptance has already succeeded.
+    if (window[successKey]) {
+      return { clicked: true, method: 'already-accepted-this-url', alreadyAccepted: true, attempts: window[attemptsKey] };
+    }
+
+    // Fjern eventuel gammel guard-CSS kun mens et nyt accept-forsøg kræver,
+    // at en tidligere skjult cookie-knap gøres synlig og klikbar.
     safe(() => {
       const oldCss = document.getElementById('clientflow-browser-guard-css');
       if (oldCss) oldCss.remove();
     });
     restorePage();
-
-    const successKey = '__clientflowCookieAcceptSuccess:' + location.href;
-    const attemptsKey = '__clientflowCookieAcceptAttempts:' + location.href;
-    window[attemptsKey] = (window[attemptsKey] || 0) + 1;
-
-    // v1.6.0:
-    // Lås kun efter faktisk succes. Mislykkede forsøg må gerne prøves igen.
-    // Når accept allerede er lykkedes på samme URL, returnerer vi accepted=True,
-    // så vi undgår at kalde Cookie Information API hvert loop.
-    if (window[successKey]) {
-      return { clicked: true, method: 'already-accepted-this-url', alreadyAccepted: true, attempts: window[attemptsKey] };
-    }
 
     const rejectRe = /afvis|reject|decline|deny|kun nødvendige|only necessary|necessary only|nødvendige cookies|essential only|settings|indstillinger|tilpas|customize|manage|præferencer|preferences/i;
 
@@ -813,13 +809,8 @@ HIDE_JS = r"""
   if (COOKIE_MODE === 'accept') {
     acceptResult = tryAcceptCookies();
     if (acceptResult && acceptResult.clicked) {
-      let hiddenAfterAccept = 0;
-      if (IS_KIOSK_REFRESH) {
-        ensureHideLoop();
-        hiddenAfterAccept = hideKnown();
-      } else {
-        restorePage();
-      }
+      ensureHideLoop();
+      const hiddenAfterAccept = hideKnown();
       return {
         version: VERSION,
         href: location.href,
@@ -834,29 +825,11 @@ HIDE_JS = r"""
       };
     }
 
-    // v1.6.2:
-    // I accept-mode skjuler vi stadig ikke ved almindelig URL change, så
-    // URL-change-politikken bevares. Men efter et tidsstyret kiosk-refresh
-    // (_kiosk_refresh) skal en eventuel dialog/iframe fjernes visuelt, så
-    // den ikke står på infoskærmen, selv hvis accept-API'en ikke finder en knap.
-    if (IS_KIOSK_REFRESH) {
-      ensureHideLoop();
-      const hiddenAfterRefresh = hideKnown();
-      return {
-        version: VERSION,
-        href: location.href,
-        readyState: document.readyState,
-        marker: document.documentElement.getAttribute('data-clientflow-browser-guard'),
-        cookieMode: COOKIE_MODE,
-        accepted: false,
-        acceptResult,
-        hidden: hiddenAfterRefresh,
-        overlay: document.querySelector('#coiOverlay') ? 'present' : null,
-        css: !!document.getElementById('clientflow-browser-guard-css')
-      };
-    }
-
-    restorePage();
+    // v1.6.7: documented accept-mode falls back to hiding known consent UI
+    // whenever acceptance cannot be confirmed.  Never leave a blocking cookie
+    // notification on screen merely because this is a normal start/URL change.
+    ensureHideLoop();
+    const hiddenAfterFallback = hideKnown();
     return {
       version: VERSION,
       href: location.href,
@@ -865,7 +838,7 @@ HIDE_JS = r"""
       cookieMode: COOKIE_MODE,
       accepted: false,
       acceptResult,
-      hidden: 0,
+      hidden: hiddenAfterFallback,
       overlay: document.querySelector('#coiOverlay') ? 'present' : null,
       css: !!document.getElementById('clientflow-browser-guard-css')
     };
@@ -900,7 +873,7 @@ HIDE_JS = r"""
 
 COUNTDOWN_JS = r"""
 (() => {
-  const VERSION = '1.6.2';
+  const VERSION = '1.6.7';
   window.__clientflowBrowserGuardRefreshSec = __REFRESH_SEC__;
   window.__clientflowBrowserGuardStartDelaySec = __START_DELAY_SEC__;
 
