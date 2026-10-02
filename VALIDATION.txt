@@ -34,9 +34,12 @@ UNVERIFIED: 1.3.28 -> 1.3.29 in-place update; no authentic older physical baseli
 PENDING: after merge/deploy, final 1.3.29/1230 clean-install acceptance including Remote Desktop, Browser Guard, calendar colours, service health and 10-second timing contracts.
 
 Local gates:
-PASS: focused catalog/release regression suite = 83 passed locally.
-PASS: canonical SHA256SUMS self-check passed for all 162 listed files.
-PENDING: GitHub CI after branch upload is the final code gate.
+PASS: initial focused catalog/release regression suite = 83 passed locally before GitHub CI feedback.
+PASS: GitHub CI exposed one stale-fixture assumption in test_clientflow_update_safety_baseline.py after the canonical selector became fresh-install-only; production policy was not weakened.
+PASS: the hypothetical in-place release fixture now explicitly declares in_place_update + update_allowed=true, preserving the safe 1.3.11 predecessor assertion.
+PASS: focused post-fix catalog/release regression suite = 58 passed locally, including the previously failing update-safety test.
+PASS: canonical SHA256SUMS self-check passed for all 163 listed files after this correction.
+PENDING: GitHub CI after branch update is the final code gate.
 
 ---
 

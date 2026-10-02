@@ -68,6 +68,14 @@ catalog block reason, while `resolve_fresh_install_release()` selects the exact
 1.3.29/1230 release. This prevents Control Room from offering an update that has
 not been physically proven.
 
+The legacy update-safety regression fixture is also made explicit: when it tests
+a hypothetical post-1211 in-place-capable release, it now sets
+`install_modes=["fresh_install", "in_place_update"]` and `update_allowed=true`
+instead of inheriting selector flags from the current catalog. This preserves
+the original security assertion that an in-place-capable release may not
+advertise a predecessor older than the safe 1.3.11 baseline, while allowing the
+real 1.3.29 selector to remain intentionally fresh-install-only.
+
 ## Physical evidence boundary
 
 The current clean-machine baseline has been verified on Ubuntu 26.04.1 LTS,

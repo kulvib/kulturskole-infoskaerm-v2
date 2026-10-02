@@ -6,5 +6,6 @@ backend/service1/clientflow_release_catalog.json
 backend/service1/clientflow_releases.py
 backend/tests/test_clientflow_release_catalog_1212.py
 backend/tests/test_clientflow_release_identity_51f.py
+backend/tests/test_clientflow_update_safety_baseline.py
 scripts/tests/test_clientflow_physical_failure_fixes_1221.py
 scripts/tests/test_clientflow_source_freeze_security_hygiene.py
