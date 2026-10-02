@@ -10,7 +10,6 @@ from service1.clientflow_releases import (
     load_catalog,
     resolve_fresh_install_release,
     resolve_release,
-    validate_release_compatibility,
 )
 
 
@@ -18,12 +17,12 @@ ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = ROOT / "backend/service1/clientflow_release_catalog.json"
 
 
-def test_catalog_1229_promotes_exact_1328_release_identity() -> None:
+def test_catalog_1230_promotes_exact_1329_fresh_install_identity() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    assert data["catalog_sequence"] == 1229
-    assert data["latest_stable"] == "1.3.28"
-    assert data["default_install_version"] == "1.3.28"
+    assert data["catalog_sequence"] == 1230
+    assert data["latest_stable"] == "1.3.29"
+    assert data["default_install_version"] == "1.3.29"
     assert data["retention_policy"] == {
         "max_installable_versions": 1,
         "keep_blocked_metadata": False,
@@ -31,39 +30,22 @@ def test_catalog_1229_promotes_exact_1328_release_identity() -> None:
 
     assert len(data["releases"]) == 1
     release = data["releases"][0]
-    assert release["version"] == "1.3.28"
-    assert release["client_version"] == "1.3.28"
-    assert release["release_sequence"] == 1229
-    assert release["release_id"] == "clientflow-1.3.28-seq-1229"
-    assert release["revision"] == "clientflow-1.3.28-seq-1229"
+    assert release["version"] == "1.3.29"
+    assert release["client_version"] == "1.3.29"
+    assert release["release_sequence"] == 1230
+    assert release["release_id"] == "clientflow-1.3.29-seq-1230"
+    assert release["revision"] == "clientflow-1.3.29-seq-1230"
     assert release["status"] == "stable"
     assert release["installable"] is True
-    assert release["update_allowed"] is True
+    assert release["update_allowed"] is False
     assert release["rollback_allowed"] is False
     assert release["requires_reboot"] is True
-    assert release["install_modes"] == ["fresh_install", "in_place_update"]
-    assert release["min_current_version"] == "1.3.11"
+    assert release["install_modes"] == ["fresh_install"]
+    assert "min_current_version" not in release
+    assert "ikke fysisk verificeret" in release["block_reason"]
 
 
-def test_catalog_1229_rejects_1310_and_accepts_safe_1311_in_place_source() -> None:
-    load_catalog.cache_clear()
-    release = resolve_release("1.3.28")
-
-    with pytest.raises(ClientFlowCatalogError, match="kræver mindst ClientFlow 1.3.11"):
-        validate_release_compatibility(
-            release,
-            current_version="1.3.10",
-            ubuntu_version="26.04",
-        )
-
-    validate_release_compatibility(
-        release,
-        current_version="1.3.11",
-        ubuntu_version="26.04",
-    )
-
-
-def test_catalog_1229_remains_promoted_while_1329_1230_is_staged() -> None:
+def test_catalog_1230_source_and_selector_are_aligned_without_rejected_1228() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -71,28 +53,17 @@ def test_catalog_1229_remains_promoted_while_1329_1230_is_staged() -> None:
     release_input = json.loads(
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
-    source_sequence = int(release_input["release_sequence"])
 
-    # 1.3.29/1230 contains the post-physical-acceptance runtime fixes, but it
-    # is source/build identity only until exact candidate bytes cross the
-    # reproducible build, physical acceptance, approval and publication gates.
     assert source_version == "1.3.29"
-    assert source_sequence == 1230
-    assert data["catalog_sequence"] == 1229
-    assert source_sequence == data["catalog_sequence"] + 1
-
-    # The selector must remain on the last approved/published authority.
-    assert data["latest_stable"] == "1.3.28"
-    assert data["default_install_version"] == "1.3.28"
-    assert release["version"] == "1.3.28"
-    assert release["release_sequence"] == 1229
-    assert release["release_id"] == "clientflow-1.3.28-seq-1229"
-    assert release["requires_reboot"] is True
+    assert release_input["release_sequence"] == 1230
+    assert release_input["runtime_python"] == "3.13.14"
+    assert data["catalog_sequence"] == 1230
+    assert data["latest_stable"] == source_version
+    assert data["default_install_version"] == source_version
+    assert release["release_id"] == "clientflow-1.3.29-seq-1230"
     assert all(item.get("release_sequence") != 1228 for item in data["releases"])
     assert all(item.get("version") != "1.3.27" for item in data["releases"])
 
-    # Artifact integrity/approval authority remains the immutable store, not
-    # duplicated mutable metadata inside the selector catalog.
     for field in (
         "bundle_sha256",
         "bundle_size",
@@ -104,22 +75,35 @@ def test_catalog_1229_remains_promoted_while_1329_1230_is_staged() -> None:
         assert field not in release
 
 
-def test_catalog_1229_resolvers_select_1328_for_update_and_fresh_install() -> None:
+def test_catalog_1230_fresh_install_resolves_but_update_resolution_is_fail_closed() -> None:
     load_catalog.cache_clear()
-    update = resolve_release("1.3.28")
     fresh = resolve_fresh_install_release()
 
-    for release in (update, fresh):
-        assert release["version"] == "1.3.28"
-        assert release["release_id"] == "clientflow-1.3.28-seq-1229"
-        assert release["release_sequence"] == 1229
-        assert release["status"] == "stable"
-        assert release["requires_reboot"] is True
-
-    assert update["update_allowed"] is True
+    assert fresh["version"] == "1.3.29"
+    assert fresh["release_id"] == "clientflow-1.3.29-seq-1230"
+    assert fresh["release_sequence"] == 1230
+    assert fresh["status"] == "stable"
     assert fresh["installable"] is True
-    assert "in_place_update" in update["install_modes"]
-    assert "fresh_install" in fresh["install_modes"]
+    assert fresh["update_allowed"] is False
+    assert fresh["install_modes"] == ["fresh_install"]
+
+    with pytest.raises(ClientFlowCatalogError, match="kun frigivet til fresh install"):
+        resolve_release("1.3.29")
+
+
+def test_catalog_rejects_update_allowed_without_in_place_update_mode(tmp_path: Path, monkeypatch) -> None:
+    data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    data["releases"][0]["update_allowed"] = True
+    test_catalog = tmp_path / "clientflow_release_catalog.json"
+    test_catalog.write_text(json.dumps(data), encoding="utf-8")
+
+    monkeypatch.setattr("service1.clientflow_releases.CATALOG_PATH", test_catalog)
+    load_catalog.cache_clear()
+    try:
+        with pytest.raises(ClientFlowCatalogError, match="update_allowed uden in_place_update"):
+            load_catalog()
+    finally:
+        load_catalog.cache_clear()
 
 
 @pytest.mark.parametrize("requested", [None, "", "   ", "latest", "LATEST", "stable", "StAbLe"])

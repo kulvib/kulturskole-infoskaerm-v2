@@ -1,3 +1,45 @@
+ClientFlow 1.3.29 / sequence 1230 fresh-install-only catalog-promotion validation
+Date: 2026-10-02
+
+Immutable authority before selector change:
+PASS: source commit = e0f0986c7c7a214d8b25d3fe3bcfb1df93149e30.
+PASS: exact-source CI = #1185 / run 37020483780 / success.
+PASS: runtime-input transport #13 / run 37022128292 / success.
+PASS: runtime-input SHA-256 = 14c5fee3193b8a8c93559643afa5bf96de910ca64233e483628aafee643021fb.
+PASS: release build #34 / run 37022826670 produced byte-identical candidates.
+PASS: candidate SHA-256 = db998add1acefeae384bb293ece0e077faab075cf161afb9ed633dcdf3c48251.
+PASS: installer SHA-256 = eabd9d84bcfb09243ba409a77fd63ecaccb72e7af2c017b604169471f984c4c1.
+PASS: payload SHA-256 = 1bb53dd490988d5ed5010125a33a47011d30fa0a72b8d3d8f1cfe7d544f242c0.
+PASS: approval #17 / run 37024325019 / success.
+PASS: approved bundle size = 224153600.
+PASS: approved bundle SHA-256 = aa0fc65730b2b7be925eca33f0a2028af675f42e3e2826bc1bd7533e43a94b40.
+PASS: immutable Render store path = /var/data/clientflow-release-artifacts/store/clientflow-1.3.29-seq-1230.tar.
+PASS: independent store re-read = CLIENTFLOW_1_3_29_STORE_VERIFY=PASS.
+
+Catalog policy in this package:
+PASS: catalog/source aligned at 1.3.29 / sequence 1230.
+PASS: 1.3.29 is the only default fresh-install selection.
+PASS: update_allowed = false and install_modes = [fresh_install].
+PASS: update resolver fails closed with an explicit evidence-bound block reason.
+PASS: fresh-install resolver selects 1.3.29/1230.
+PASS: immutable security-rejected sequence 1228 remains absent.
+PASS: rollback remains disabled and controlled reboot remains required.
+PASS: Ubuntu minimum remains 26.04 / amd64 / GNOME Wayland preflight.
+PASS: embedded runtime Python remains 3.13.14; Python 3.13.15 remains blocked.
+PASS: no artificial downgrade is used to manufacture update evidence.
+
+Physical evidence:
+PASS: clean physical baseline verified on Ubuntu 26.04.1 LTS / amd64 / Wayland with no ClientFlow directories, accounts or units.
+UNVERIFIED: 1.3.28 -> 1.3.29 in-place update; no authentic older physical baseline exists.
+PENDING: after merge/deploy, final 1.3.29/1230 clean-install acceptance including Remote Desktop, Browser Guard, calendar colours, service health and 10-second timing contracts.
+
+Local gates:
+PASS: focused catalog/release regression suite = 83 passed locally.
+PASS: canonical SHA256SUMS self-check passed for all 162 listed files.
+PENDING: GitHub CI after branch upload is the final code gate.
+
+---
+
 ClientFlow 1.3.29 / sequence 1230 physical-acceptance repair source-freeze validation
 Date: 2026-10-02
 
