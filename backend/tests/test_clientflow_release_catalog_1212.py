@@ -63,7 +63,7 @@ def test_catalog_1229_rejects_1310_and_accepts_safe_1311_in_place_source() -> No
     )
 
 
-def test_catalog_1229_promotes_security_replacement_without_selecting_rejected_1228() -> None:
+def test_catalog_1229_remains_promoted_while_1329_1230_is_staged() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -73,15 +73,15 @@ def test_catalog_1229_promotes_security_replacement_without_selecting_rejected_1
     )
     source_sequence = int(release_input["release_sequence"])
 
-    # Sequence 1228 crossed immutable publication but was security-rejected
-    # before selector promotion due CVE-2026-101918. The replacement consumes
-    # sequence 1229 and is promoted directly from 1227; 1228 never becomes
-    # selectable catalog authority.
-    assert source_version == "1.3.28"
-    assert source_sequence == 1229
+    # 1.3.29/1230 contains the post-physical-acceptance runtime fixes, but it
+    # is source/build identity only until exact candidate bytes cross the
+    # reproducible build, physical acceptance, approval and publication gates.
+    assert source_version == "1.3.29"
+    assert source_sequence == 1230
     assert data["catalog_sequence"] == 1229
-    assert source_sequence == data["catalog_sequence"]
+    assert source_sequence == data["catalog_sequence"] + 1
 
+    # The selector must remain on the last approved/published authority.
     assert data["latest_stable"] == "1.3.28"
     assert data["default_install_version"] == "1.3.28"
     assert release["version"] == "1.3.28"
