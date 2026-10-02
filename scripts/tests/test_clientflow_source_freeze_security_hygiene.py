@@ -92,7 +92,7 @@ def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() 
         }
     ]
 
-def test_1329_1230_is_staged_while_1328_1229_remains_promoted() -> None:
+def test_1329_1230_is_promoted_fresh_only_while_update_authority_stays_closed() -> None:
     assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.29"
     release_input = json.loads(
         (ROOT / "client" / "release" / "release-input.json").read_text(encoding="utf-8")
@@ -105,11 +105,14 @@ def test_1329_1230_is_staged_while_1328_1229_remains_promoted() -> None:
             encoding="utf-8"
         )
     )
-    assert catalog["catalog_sequence"] == 1229
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert catalog["latest_stable"] == "1.3.28"
-    assert catalog["default_install_version"] == "1.3.28"
-    assert catalog["releases"][0]["release_id"] == "clientflow-1.3.28-seq-1229"
+    assert catalog["catalog_sequence"] == 1230
+    assert catalog["latest_stable"] == "1.3.29"
+    assert catalog["default_install_version"] == "1.3.29"
+    selected = catalog["releases"][0]
+    assert selected["release_id"] == "clientflow-1.3.29-seq-1230"
+    assert selected["installable"] is True
+    assert selected["update_allowed"] is False
+    assert selected["install_modes"] == ["fresh_install"]
     assert all(item.get("release_sequence") != 1228 for item in catalog["releases"])
 
     rejection = (ROOT / "CLIENTFLOW_1.3.28_1229_SECURITY_REPLACEMENT.md").read_text(encoding="utf-8")
@@ -117,7 +120,6 @@ def test_1329_1230_is_staged_while_1328_1229_remains_promoted() -> None:
     assert "1.3.27 / 1228" in rejection
     assert "must not be catalog-promoted" in rejection
     assert "PyJWT `2.15.1`" in rejection
-
 
 def test_source_checksum_manifest_matches_current_files() -> None:
     import hashlib
@@ -182,6 +184,8 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CLIENTFLOW_1.3.29_1230_SOURCE_IDENTITY.md" in seen
     assert "CLIENTFLOW_1.3.29_1230_SOURCE_FREEZE_CLOSURE.md" in seen
     assert "CHANGED_FILES_1329_1230_SOURCE_FREEZE.txt" in seen
+    assert "CLIENTFLOW_1.3.29_1230_FRESH_INSTALL_CATALOG_PROMOTION.md" in seen
+    assert "CHANGED_FILES_1329_1230_FRESH_INSTALL_CATALOG_PROMOTION.txt" in seen
 
 
 def test_1323_1224_initial_freeze_is_explicitly_superseded_before_build() -> None:

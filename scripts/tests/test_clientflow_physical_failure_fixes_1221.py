@@ -49,26 +49,26 @@ def _method_local_tuple(source: str, class_name: str, method_name: str, name: st
                             return ast.literal_eval(child.value)
     raise AssertionError(f"{class_name}.{method_name} local {name} not found")
 
-def test_staged_1329_1230_keeps_promoted_1328_1229_and_skips_rejected_1228():
+def test_promoted_1329_1230_is_fresh_only_and_skips_rejected_1228():
     assert VERSION.read_text(encoding="utf-8").strip() == "1.3.29"
     release_input = json.loads(_source(RELEASE_INPUT))
     assert release_input["release_sequence"] == 1230
     assert release_input["minimum_ubuntu_lts"] == "26.04"
     assert release_input["architecture"] == "amd64"
-    # Do not advance the embedded runtime until the compatibility bridge has
-    # completed its required physical update proof.
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
-    assert catalog["catalog_sequence"] == 1229
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert catalog["latest_stable"] == "1.3.28"
-    assert catalog["default_install_version"] == "1.3.28"
+    assert catalog["catalog_sequence"] == 1230
+    assert catalog["latest_stable"] == "1.3.29"
+    assert catalog["default_install_version"] == "1.3.29"
     selected = catalog["releases"][0]
-    assert selected["release_id"] == "clientflow-1.3.28-seq-1229"
-    assert selected["release_sequence"] == 1229
+    assert selected["release_id"] == "clientflow-1.3.29-seq-1230"
+    assert selected["release_sequence"] == 1230
+    assert selected["installable"] is True
+    assert selected["update_allowed"] is False
+    assert selected["install_modes"] == ["fresh_install"]
+    assert "ikke fysisk verificeret" in selected["block_reason"]
     assert all(item.get("release_sequence") != 1228 for item in catalog["releases"])
-
 
 def test_dispatch_uses_staged_immutable_release_cli_not_stable_updater():
     source = _source(HELPER)

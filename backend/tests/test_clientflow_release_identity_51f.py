@@ -56,23 +56,20 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
         assert selected_tuple < source_tuple
 
 
-def test_51f_promoted_1328_keeps_1311_safe_in_place_baseline_and_requires_reboot() -> None:
+def test_51f_promoted_1329_is_fresh_install_only_and_requires_reboot() -> None:
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = catalog["releases"][0]
 
-    # 1.3.11/1212 remains the first release containing the corrected
-    # activation/update transaction implementation. 1.3.28/1229 is now the
-    # selected fresh/update target while preserving 1.3.11 as the minimum
-    # safe in-place predecessor and continuing to exclude immutable 1.3.10.
-    # Its kiosk/GDM host policy becomes authoritative after a controlled reboot.
-    assert release["version"] == "1.3.28"
+    assert release["version"] == "1.3.29"
     assert release["version"] == catalog["latest_stable"]
     assert release["version"] == catalog["default_install_version"]
-    assert release["min_current_version"] == "1.3.11"
+    assert release["release_sequence"] == 1230
     assert release["requires_reboot"] is True
-    assert "fresh_install" in release["install_modes"]
-    assert "in_place_update" in release["install_modes"]
-
+    assert release["installable"] is True
+    assert release["update_allowed"] is False
+    assert release["install_modes"] == ["fresh_install"]
+    assert "min_current_version" not in release
+    assert "autentisk ældre ClientFlow-baseline" in release["block_reason"]
 
 def test_51f_runtime_wheel_version_is_dynamic_from_canonical_version_module() -> None:
     pyproject = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))

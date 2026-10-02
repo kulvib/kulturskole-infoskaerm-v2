@@ -121,9 +121,18 @@ def load_catalog() -> dict[str, Any]:
         if release.get("artifact_type") != "runtime_release":
             raise ClientFlowCatalogError(f"Ugyldig artifact_type for {version}")
         install_modes = release.get("install_modes")
-        if not isinstance(install_modes, list) or "in_place_update" not in install_modes:
-            raise ClientFlowCatalogError(f"Release {version} understøtter ikke in-place update")
-        if sequence >= SAFE_IN_PLACE_UPDATE_BASELINE_SEQUENCE:
+        allowed_install_modes = {"fresh_install", "in_place_update"}
+        if (
+            not isinstance(install_modes, list)
+            or not install_modes
+            or any(mode not in allowed_install_modes for mode in install_modes)
+        ):
+            raise ClientFlowCatalogError(f"Release {version} har ugyldige install_modes")
+        if release.get("update_allowed") is True and "in_place_update" not in install_modes:
+            raise ClientFlowCatalogError(
+                f"Release {version} må ikke have update_allowed uden in_place_update"
+            )
+        if "in_place_update" in install_modes and sequence >= SAFE_IN_PLACE_UPDATE_BASELINE_SEQUENCE:
             minimum_current = str(release.get("min_current_version") or "").strip().lstrip("vV")
             if (
                 not minimum_current

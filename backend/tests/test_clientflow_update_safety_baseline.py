@@ -23,6 +23,12 @@ def _future_catalog(*, minimum_current: str) -> dict:
             "release_sequence": 1212,
             "revision": "clientflow-1.3.11-seq-1212",
             "release_id": "clientflow-1.3.11-seq-1212",
+            # This fixture must explicitly model an in-place-capable future
+            # release. The canonical catalog may legitimately be fresh-only,
+            # so inheriting its selector flags would no longer exercise the
+            # safe 1.3.11 predecessor boundary this test protects.
+            "install_modes": ["fresh_install", "in_place_update"],
+            "update_allowed": True,
             "min_current_version": minimum_current,
         }
     )
