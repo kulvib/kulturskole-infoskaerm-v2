@@ -13,13 +13,22 @@ test("Control Room list uses the narrow summary transport and adaptive cadence",
   const api = read("src/api/api.js");
 
   assert.match(api, /export async function getControlRoomClients\(\)/);
-  assert.match(api, /\/api\/clients\/control-room-summary/);
+  const controlRoomTransport = api.slice(
+    api.indexOf("export async function getControlRoomClients()"),
+    api.indexOf("export async function getClient(id)"),
+  );
+  assert.match(controlRoomTransport, /\/api\/clients\/control-room-summary/);
+  assert.match(controlRoomTransport, /cache: "no-store"/);
   assert.match(page, /getControlRoomClients/);
   assert.doesNotMatch(page, /getMyClients/);
   assert.match(page, /CLIENT_LIST_ACTIVE_POLL_MS = 2_000/);
   assert.match(page, /CLIENT_LIST_IDLE_POLL_MS = 5_000/);
   assert.match(page, /clientListNeedsFastPolling/);
   assert.match(page, /status !== "approved"/);
+  assert.match(page, /ca\.approval_ready_at !== cb\.approval_ready_at/);
+  assert.match(page, /ca\.approval_ready_boot_id !== cb\.approval_ready_boot_id/);
+  assert.match(page, /label: "Klar til godkendelse"/);
+  assert.match(page, /label: "Afventer reboot"/);
   assert.match(page, /pendingAction && pendingAction !== "none"/);
   assert.match(page, /client\?\.pending_reboot === true/);
   assert.match(page, /client\?\.pending_shutdown === true/);

@@ -40,9 +40,17 @@ def test_backend_readiness_endpoint_does_not_mint_pending_runtime_token() -> Non
 
 def test_control_room_disables_approval_until_readiness_projection_exists() -> None:
     frontend = read("frontend/src/pages/ClientInfoPage.jsx")
+    api = read("frontend/src/api/api.js")
     assert "const isApprovalReady = Boolean(client.approval_ready_at);" in frontend
     assert "disabled={isApproving || isRemoving || !isApprovalReady}" in frontend
-    assert '"Afventer reboot"' in frontend
+    assert "ca.approval_ready_at !== cb.approval_ready_at" in frontend
+    assert "ca.approval_ready_boot_id !== cb.approval_ready_boot_id" in frontend
+    assert 'label: "Klar til godkendelse"' in frontend
+    assert 'label: "Afventer reboot"' in frontend
+    control_room_transport = api[
+        api.index("export async function getControlRoomClients") : api.index("export async function getClient(id)")
+    ]
+    assert 'cache: "no-store"' in control_room_transport
 
 
 def test_host_update_is_non_removing_upgrade_and_chrome_is_not_live_updated() -> None:

@@ -244,7 +244,8 @@ function getNetworkCopyValue(client, key) {
   return value === "ukendt" || value === "ikke tilsluttet" ? "" : value;
 }
 
-function getClientStatusChipProps(status) {
+function getClientStatusChipProps(client) {
+  const status = client?.status;
   const value = String(status || "").toLowerCase();
 
   if (value === "approved") {
@@ -252,7 +253,10 @@ function getClientStatusChipProps(status) {
   }
 
   if (value === "pending" || value === "awaiting_approval") {
-    return { label: "Afventer", color: "warning" };
+    if (client?.approval_ready_at) {
+      return { label: "Klar til godkendelse", color: "info" };
+    }
+    return { label: "Afventer reboot", color: "warning" };
   }
 
   if (value === "rejected" || value === "disabled") {
@@ -415,6 +419,8 @@ function isClientListEqual(a = [], b = []) {
       ca.locality !== cb.locality ||
       ca.location !== cb.location ||
       ca.status !== cb.status ||
+      ca.approval_ready_at !== cb.approval_ready_at ||
+      ca.approval_ready_boot_id !== cb.approval_ready_boot_id ||
       ca.state !== cb.state ||
       ca.pending_chrome_action !== cb.pending_chrome_action ||
       ca.chrome_step !== cb.chrome_step ||
@@ -1767,9 +1773,7 @@ export default function ClientInfoPage() {
                     </TableRow>
                   ) : (
                     unapprovedClients.map((client) => {
-                      const statusChip = getClientStatusChipProps(
-                        client.status,
-                      );
+                      const statusChip = getClientStatusChipProps(client);
                       const isApproving = approvingClientId === client.id;
                       const isRemoving = removingClientId === client.id;
                       const isApprovalReady = Boolean(client.approval_ready_at);

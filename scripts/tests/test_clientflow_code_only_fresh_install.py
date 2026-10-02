@@ -7,6 +7,7 @@ import io
 import json
 from pathlib import Path
 import tarfile
+import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / "client/bootstrap/clientflow-fresh-install"
@@ -156,6 +157,56 @@ def test_same_helper_activates_pending_install_through_staged_release_cli_withou
     assert "CF-" not in " ".join(command)
     assert "authorization" not in " ".join(command).lower()
     assert captured["kwargs"]["env"]["PYTHONPATH"] == str(release_root / "release/lib")
+
+
+def test_approved_transition_401_from_pending_readiness_still_reaches_canonical_activation(monkeypatch):
+    module = _load_helper()
+    activated = False
+    cleaned = []
+
+    pending = {
+        "status": "pending_manual_activation",
+        "fresh_install_binding": {
+            "release_id": "clientflow-1.3.28-seq-1229",
+            "release_approval_reference": "clientflow-1.3.28-seq-1229/operator-approval",
+        },
+    }
+
+    def existing_state():
+        return {"status": "activated"} if activated else pending
+
+    def pending_only_readiness(_state):
+        raise urllib.error.HTTPError(
+            module.BACKEND_URL + module.APPROVAL_READINESS_ENDPOINT,
+            401,
+            "Unauthorized",
+            hdrs=None,
+            fp=None,
+        )
+
+    def canonical_activation(release_id, approval):
+        nonlocal activated
+        assert release_id == "clientflow-1.3.28-seq-1229"
+        assert approval == "clientflow-1.3.28-seq-1229/operator-approval"
+        activated = True
+        return 0
+
+    monkeypatch.setattr(module, "require_root", lambda: None)
+    monkeypatch.setattr(module, "_existing_install_state", existing_state)
+    monkeypatch.setattr(module, "_canonical_kiosk_session", lambda: "7")
+    monkeypatch.setattr(module, "_publish_post_reboot_approval_readiness", pending_only_readiness)
+    monkeypatch.setattr(module, "_canonical_staged_activation", canonical_activation)
+    monkeypatch.setattr(module, "_cleanup_completed_bootstrap", lambda: cleaned.append(True))
+    monkeypatch.setattr(module, "_ensure_preactivation_gui_started", lambda: None)
+    monkeypatch.setattr(
+        module.time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(AssertionError("must not sleep after approved transition")),
+    )
+
+    assert module._activation_wait() == 0
+    assert activated is True
+    assert cleaned == [True]
 
 
 def test_pending_helper_repairs_missing_kiosk_session_before_attempting_activation(monkeypatch):
