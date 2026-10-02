@@ -37,6 +37,10 @@ def test_brand_mark_is_persisted_and_removed_with_exact_bootstrap_cleanup() -> N
         in start
     )
     assert (
+        "mapfile -t expected < <(printf '%s\\n' \"${expected[@]}\" | LC_ALL=C sort)"
+        in start
+    )
+    assert (
         'sudo install -o root -g root -m 0444 '
         '"$PAYLOAD_DIR/planiq-display-mark.png" "$TARGET/planiq-display-mark.png"'
         in start
@@ -44,6 +48,27 @@ def test_brand_mark_is_persisted_and_removed_with_exact_bootstrap_cleanup() -> N
     assert (
         'sudo install -o root -g root -m 0444 '
         '"$PAYLOAD_DIR/planiq-display-logo-on-dark.png" "$TARGET/planiq-display-logo-on-dark.png"'
+        in start
+    )
+
+
+def test_usb_payload_fileset_contract_matches_builder_and_normalizes_order() -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("clientflow_usb_contract_builder", USB_BUILDER)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    start = USB_START.read_text(encoding="utf-8")
+    contract_line = next(
+        line for line in start.splitlines() if line.startswith("expected=(")
+    )
+    contract_names = contract_line.removeprefix("expected=(").removesuffix(")").split()
+
+    assert sorted(contract_names) == sorted(module.PAYLOAD_SOURCES)
+    assert (
+        "mapfile -t expected < <(printf '%s\\n' \"${expected[@]}\" | LC_ALL=C sort)"
         in start
     )
 

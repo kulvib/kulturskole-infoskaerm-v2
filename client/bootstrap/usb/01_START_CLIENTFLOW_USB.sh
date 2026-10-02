@@ -45,6 +45,7 @@ command -v sha256sum >/dev/null 2>&1 || fail "sha256sum mangler på Ubuntu-klien
 
 mapfile -t actual < <(find "$PAYLOAD_DIR" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
 expected=(clientflow-factory-prepare clientflow-fresh-install clientflow_bootstrap_common.py planiq-display-mark.png planiq-display-logo-on-dark.png)
+mapfile -t expected < <(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)
 [[ "${actual[*]}" == "${expected[*]}" ]] || fail "USB-payloadens filset matcher ikke den canonical ClientFlow-kontrakt."
 
 (
