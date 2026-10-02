@@ -35,6 +35,31 @@ def test_remote_desktop_agent_systemd_confines_home_access():
     assert "ReadWritePaths=/etc" not in source
 
 
+def test_file_area_preserves_externally_owned_home_mode_and_privatises_only_staging(tmp_path: Path):
+    root = tmp_path / "home"
+    root.mkdir()
+    root.chmod(0o770)
+    staging = tmp_path / "staging"
+
+    FileArea(root, staging)
+
+    assert root.stat().st_mode & 0o777 == 0o770
+    assert staging.stat().st_mode & 0o777 == 0o700
+
+
+def test_file_area_rejects_symlink_root_without_mutating_target(tmp_path: Path):
+    real_root = tmp_path / "real-home"
+    real_root.mkdir()
+    real_root.chmod(0o770)
+    linked_root = tmp_path / "linked-home"
+    linked_root.symlink_to(real_root, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="ikke en almindelig mappe"):
+        FileArea(linked_root, tmp_path / "staging")
+
+    assert real_root.stat().st_mode & 0o777 == 0o770
+
+
 def test_release_provisions_physical_acl_without_following_symlinks():
     source = _read("client/release/lib/clientflow_release/transaction.py")
     assert "def _prepare_remote_desktop_home_access" in source

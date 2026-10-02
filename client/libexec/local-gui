@@ -1216,7 +1216,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 row_color = COLOR_GRAY if PREACTIVATION_MODE else (COLOR_GREEN if values[1] == "On" else COLOR_RED)
                 css = self._color_class(row_color)
                 for label, value in zip(labels, values):
-                    for old in ("status-green", "status-red"):
+                    for old in ("status-green", "status-red", "status-orange", "status-blue", "status-gray"):
                         label.remove_css_class(old)
                     if css:
                         label.add_css_class(css)

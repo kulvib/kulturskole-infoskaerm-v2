@@ -127,7 +127,7 @@ def test_activation_health_excludes_only_explicitly_optional_units():
 
 def test_browser_guard_is_quiet_when_chrome_is_intentionally_unavailable_but_reports_empty_running_chrome():
     source = _source(GUARD)
-    assert 'VERSION = "1.6.6"' in source
+    assert 'VERSION = "1.6.7"' in source
     assert "return None" in source[source.index("def get_tabs():"):source.index("def is_main_page_target")]
     run_once = source[source.index("async def run_once"):source.index("async def _async_main")]
     assert "if tab_payload is None:" in run_once

@@ -1,4 +1,4 @@
-"""Remote Desktop file channel restricted to one dedicated transfer root."""
+"""Remote Desktop file channel confined to the canonical kiosk home and private staging."""
 from __future__ import annotations
 
 import base64
@@ -33,6 +33,22 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _validate_file_root_directory(path: Path) -> None:
+    """Validate the externally owned kiosk-home root without changing its mode.
+
+    The release transaction grants the isolated Remote Desktop agent a physical
+    ACL on /home/clientflow-kiosk.  The file channel may validate and confine
+    access to that directory, but it must never take ownership of the kiosk
+    account's home permissions by chmod'ing the root itself.
+    """
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise ValueError(f"Remote Desktop-filområde er ikke tilgængeligt: {path}") from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise ValueError(f"Remote Desktop-filområde er ikke en almindelig mappe: {path}")
+
+
 def _ensure_private_directory(path: Path, *, create_parents: bool) -> None:
     try:
         path.mkdir(mode=0o700, parents=create_parents, exist_ok=True)
@@ -52,7 +68,7 @@ class FileArea:
     def __init__(self, root: Path, staging_root: Path | None = None) -> None:
         self.root = root
         self.staging_root = staging_root or root.parent / "uploads"
-        _ensure_private_directory(self.root, create_parents=True)
+        _validate_file_root_directory(self.root)
         _ensure_private_directory(self.staging_root, create_parents=True)
         self.uploads: dict[tuple[str, str], dict[str, Any]] = {}
 
