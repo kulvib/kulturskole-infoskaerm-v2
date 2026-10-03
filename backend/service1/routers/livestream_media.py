@@ -12,13 +12,14 @@ import time
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from sqlmodel import Session
 
 from ..auth import get_current_user_or_client, principal_is_client, require_client_self_or_user
 from ..db import engine
 from ..models import Client
 from ..observability import log_safe_exception
+from ..livestream_media_capability import bearer_token, verify_livestream_media_capability
 
 router = APIRouter()
 logger_name = __name__
@@ -159,10 +160,7 @@ def get_last_segment_info(client_id: str, response: Response, user=Depends(get_c
     }
 
 
-@router.get("/hls/{client_id}/health")
-def health_check(client_id: str, response: Response, user=Depends(get_current_user_or_client)):
-    require_hls_access(user, client_id)
-    _apply_hls_no_cache(response)
+def _health_payload(client_id: str) -> dict:
     client_dir = safe_client_dir(client_id)
     if _hls_stop_marker_exists(client_id):
         return {"online": False, "has_segments": False, "is_stale": False, "last_update": None, "stream_stopped": True, "message": "Stream er stoppet"}
@@ -198,3 +196,25 @@ def health_check(client_id: str, response: Response, user=Depends(get_current_us
     except Exception as exc:
         log_safe_exception(logger, exc, event="hls_health_check_failed", level=logging.WARNING, client_id=client_id)
         return {"online": False, "has_segments": False, "is_stale": False, "last_update": None, "message": "Fejl ved health check"}
+
+
+@router.get("/hls/{client_id}/health")
+def health_check(client_id: str, response: Response, user=Depends(get_current_user_or_client)):
+    require_hls_access(user, client_id)
+    _apply_hls_no_cache(response)
+    return _health_payload(client_id)
+
+
+@router.get("/hls-cap/{client_id}/health")
+def capability_health_check(
+    client_id: str,
+    response: Response,
+    authorization: str | None = Header(default=None),
+):
+    try:
+        cid = int(client_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="HLS stream ikke fundet") from exc
+    verify_livestream_media_capability(bearer_token(authorization), client_id=cid)
+    _apply_hls_no_cache(response)
+    return _health_payload(client_id)

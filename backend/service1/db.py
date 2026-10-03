@@ -246,3 +246,17 @@ def get_session():
     """
     with Session(engine) as session:
         yield session
+
+
+# ClientFlow command wake-up publication is deliberately commit-coupled: an
+# agent must never wake for a command that later rolls back.
+from sqlalchemy import event as _sa_event
+from .realtime_wakeup import publish_session_wakeups as _publish_command_wakeups, discard_session_wakeups as _discard_command_wakeups
+
+@_sa_event.listens_for(Session, "after_commit")
+def _clientflow_publish_command_wakeups(session):
+    _publish_command_wakeups(session)
+
+@_sa_event.listens_for(Session, "after_rollback")
+def _clientflow_discard_command_wakeups(session):
+    _discard_command_wakeups(session)

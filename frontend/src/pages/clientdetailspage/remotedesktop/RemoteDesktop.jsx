@@ -72,6 +72,11 @@ function formatBytes(value) {
 }
 
 const UPLOAD_TOTAL_LIMIT_BYTES = 100 * 1024 * 1024;
+const RD_ACTIVE_FPS = 6;
+const RD_IDLE_FPS = 1;
+const RD_DEEP_IDLE_FPS = 0.2;
+const RD_IDLE_AFTER_MS = 20_000;
+const RD_DEEP_IDLE_AFTER_MS = 120_000;
 
 function sumFileSizes(files) {
   return Array.from(files || []).reduce((sum, file) => sum + Number(file?.size || 0), 0);
@@ -170,6 +175,9 @@ export default function RemoteDesktop() {
   const pendingDeleteCountRef = useRef(0);
   const pendingDeleteTotalRef = useRef(0);
   const pendingDeleteErrorsRef = useRef([]);
+  const streamModeRef = useRef("stopped");
+  const lastInteractionAtRef = useRef(Date.now());
+  const pageVisibleRef = useRef(document.visibilityState !== "hidden");
 
   const [connected, setConnected] = useState(false);
   const [agentConnected, setAgentConnected] = useState(false);
@@ -225,6 +233,7 @@ export default function RemoteDesktop() {
     // Native geometry is authoritative on the physical client. The browser
     // must not turn stale inventory/fallback dimensions into a capture cap.
     native: true,
+    quality: 85,
   }), []);
   const streamStartPayloadRef = useRef(streamStartPayload);
   const effectiveRemoteResolutionTextRef = useRef(effectiveRemoteResolutionText);
@@ -278,13 +287,24 @@ export default function RemoteDesktop() {
     setActionMessage(String(message || ""));
   }, []);
 
-  const startStream = useCallback(() => {
-    send(streamStartPayloadRef.current);
+  const startStream = useCallback((mode = "active", force = false) => {
+    const fps = mode === "deep_idle" ? RD_DEEP_IDLE_FPS : mode === "idle" ? RD_IDLE_FPS : RD_ACTIVE_FPS;
+    if (!force && streamModeRef.current === mode) return true;
+    const ok = send({ ...streamStartPayloadRef.current, fps });
+    if (ok) streamModeRef.current = mode;
+    return ok;
   }, [send]);
 
   const stopStream = useCallback(() => {
-    send({ type: "stop_stream" });
+    const ok = send({ type: "stop_stream" });
+    streamModeRef.current = "stopped";
+    return ok;
   }, [send]);
+
+  const markRemoteActivity = useCallback(() => {
+    lastInteractionAtRef.current = Date.now();
+    if (pageVisibleRef.current) startStream("active");
+  }, [startStream]);
 
   const connect = useCallback(async () => {
     if (!clientId) return;
@@ -397,7 +417,7 @@ export default function RemoteDesktop() {
         }
         setStatus(msg.agent_connected ? "Remote desktop klar" : "Venter på klient-agent");
         if (msg.agent_connected) {
-          setTimeout(() => startStream(), 200);
+          setTimeout(() => startStream("active", true), 200);
           setTimeout(() => {
             setFileBrowserLoading(true);
             send({ type: "file_list_request", path: "", show_hidden: fileBrowserShowHiddenRef.current });
@@ -414,7 +434,7 @@ export default function RemoteDesktop() {
         }
         setStatus(msg.agent_connected ? "Klient-agent forbundet" : "Klient-agent ikke forbundet");
         if (msg.agent_connected) {
-          setTimeout(() => startStream(), 200);
+          setTimeout(() => startStream("active", true), 200);
           setTimeout(() => {
             setFileBrowserLoading(true);
             send({ type: "file_list_request", path: "", show_hidden: fileBrowserShowHiddenRef.current });
@@ -642,6 +662,45 @@ export default function RemoteDesktop() {
   }, [connect]);
 
   useEffect(() => {
+    if (!connected || !agentConnected) return undefined;
+
+    const applyIdleMode = () => {
+      if (!pageVisibleRef.current) return;
+      const idleFor = Date.now() - lastInteractionAtRef.current;
+      if (idleFor >= RD_DEEP_IDLE_AFTER_MS) startStream("deep_idle");
+      else if (idleFor >= RD_IDLE_AFTER_MS) startStream("idle");
+      else startStream("active");
+    };
+
+    const handleVisibility = () => {
+      const visible = document.visibilityState !== "hidden";
+      pageVisibleRef.current = visible;
+      if (!visible) {
+        stopStream();
+      } else {
+        lastInteractionAtRef.current = Date.now();
+        startStream("active", true);
+      }
+    };
+
+    const handleActivity = () => markRemoteActivity();
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleActivity);
+    window.addEventListener("pointerdown", handleActivity, { passive: true });
+    window.addEventListener("wheel", handleActivity, { passive: true });
+    const timer = window.setInterval(applyIdleMode, 5_000);
+    applyIdleMode();
+
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleActivity);
+      window.removeEventListener("pointerdown", handleActivity);
+      window.removeEventListener("wheel", handleActivity);
+    };
+  }, [connected, agentConnected, markRemoteActivity, startStream, stopStream]);
+
+  useEffect(() => {
     if (!lastFrameTs) return undefined;
     const timer = window.setInterval(() => {
       setFrameAgeTick((prev) => prev + 1);
@@ -677,6 +736,7 @@ export default function RemoteDesktop() {
 
   const sendMouseEvent = useCallback((event, action, extra = {}) => {
     if (!canControl) return;
+    markRemoteActivity();
     const pos = getRemoteCoordinates(event);
     if (!pos) return;
 
@@ -686,7 +746,7 @@ export default function RemoteDesktop() {
       ...pos,
       ...extra,
     });
-  }, [canControl, getRemoteCoordinates, send]);
+  }, [canControl, getRemoteCoordinates, markRemoteActivity, send]);
 
   const handleMouseDown = useCallback((event) => {
     if (!canControl) return;
@@ -729,6 +789,7 @@ export default function RemoteDesktop() {
 
   const handleMouseMove = useCallback((event) => {
     if (!canControl) return;
+    markRemoteActivity();
     const pos = getRemoteCoordinates(event);
     if (!pos) return;
 
@@ -743,7 +804,7 @@ export default function RemoteDesktop() {
       ...pos,
       dragging: mouseDownRef.current,
     });
-  }, [canControl, getRemoteCoordinates, send]);
+  }, [canControl, getRemoteCoordinates, markRemoteActivity, send]);
 
   const handleMouseLeave = useCallback((event) => {
     if (!canControl) return;
@@ -757,13 +818,14 @@ export default function RemoteDesktop() {
 
   const handleWheel = useCallback((event) => {
     if (!canControl) return;
+    markRemoteActivity();
     event.preventDefault();
     send({
       type: "mouse",
       action: "scroll",
       delta: event.deltaY < 0 ? 3 : -3,
     });
-  }, [canControl, send]);
+  }, [canControl, markRemoteActivity, send]);
 
   const sendShout = useCallback(() => {
     const message = shoutText.trim();
@@ -1135,6 +1197,7 @@ export default function RemoteDesktop() {
 
   const handleRemoteKeyDown = useCallback((event) => {
     if (!keyboardEnabled || !canControl) return;
+    markRemoteActivity();
 
     const targetTag = String(event.target?.tagName || "").toLowerCase();
     if (["input", "textarea", "select"].includes(targetTag)) return;
@@ -1149,7 +1212,7 @@ export default function RemoteDesktop() {
     if (!action) return;
 
     send(action);
-  }, [keyboardEnabled, canControl, keyboardMode, send]);
+  }, [keyboardEnabled, canControl, keyboardMode, markRemoteActivity, send]);
 
   const remoteScreenPanel = (
     <Stack spacing={1.2} sx={{ minWidth: 0 }}>

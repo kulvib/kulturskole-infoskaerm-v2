@@ -44,8 +44,8 @@ from .routers.livestream_media import HLS_DIR, safe_client_dir
 DOMAIN = "livestream"
 ACTIVE_GENERATION_STATES = {"starting", "running", "stopping"}
 FINAL_GENERATION_STATES = {"stopped", "failed", "superseded"}
-VIEWER_HEARTBEAT_SECONDS = max(5, int(os.getenv("LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS", "10")))
-VIEWER_LEASE_SECONDS = max(15, int(os.getenv("LIVESTREAM_V2_VIEWER_LEASE_SECONDS", "30")))
+VIEWER_HEARTBEAT_SECONDS = max(10, int(os.getenv("LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS", "25")))
+VIEWER_LEASE_SECONDS = max(45, int(os.getenv("LIVESTREAM_V2_VIEWER_LEASE_SECONDS", "75")))
 VIEWER_STOP_GRACE_SECONDS = max(5, int(os.getenv("LIVESTREAM_V2_VIEWER_STOP_GRACE_SECONDS", "30")))
 VIEWER_SWEEP_SECONDS = max(2, int(os.getenv("LIVESTREAM_V2_VIEWER_SWEEP_SECONDS", "5")))
 MEDIA_STALE_SECONDS = max(15, int(os.getenv("LIVESTREAM_V2_MEDIA_STALE_SECONDS", "45")))

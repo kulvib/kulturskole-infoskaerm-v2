@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -37,7 +38,9 @@ class RemoteDesktopAgent:
         self.transport = DomainTransport(self.credential)
         self.file_area = FileArea(FILE_ROOT, FILE_STAGING_ROOT)
         self.stream_tasks: dict[str, asyncio.Task[None]] = {}
-        self.stream_options: dict[str, dict[str, int]] = {}
+        self.stream_options: dict[str, dict[str, Any]] = {}
+        self.last_frame_digest: dict[str, str] = {}
+        self.last_frame_sent_at: dict[str, float] = {}
         self.control_ws: Any = None
         self.file_ws: Any = None
         self.control_send_lock = asyncio.Lock()
@@ -83,7 +86,7 @@ class RemoteDesktopAgent:
             raise ValueError("Remote Desktop-session-id er ugyldigt") from exc
         return session_id
 
-    async def _capture(self, session_id: str, options: dict[str, int] | None = None) -> None:
+    async def _capture(self, session_id: str, options: dict[str, Any] | None = None, *, force: bool = False) -> bool:
         selected = options or self.stream_options.get(session_id, {})
         native = bool(selected.get("native", False))
         width = min(7680, max(320, int(selected.get("width", 1280))))
@@ -100,16 +103,26 @@ class RemoteDesktopAgent:
                 "height": height,
                 "screen_width": screen_width,
                 "screen_height": screen_height,
-                "quality": 85,
+                "quality": min(95, max(35, int(selected.get("quality", 85)))),
             },
             timeout=15,
         )
+        frame_data = str(result["data"])
+        digest = hashlib.sha256(frame_data.encode("ascii", errors="ignore")).hexdigest()
+        now = time.monotonic()
+        unchanged = digest == self.last_frame_digest.get(session_id)
+        # Static desktops are the normal RD idle case. Keep a sparse keyframe
+        # every five seconds for freshness, but don't relay identical JPEG bytes.
+        if not force and unchanged and now - self.last_frame_sent_at.get(session_id, 0.0) < 5.0:
+            return False
+        self.last_frame_digest[session_id] = digest
+        self.last_frame_sent_at[session_id] = now
         await self._send_control(
             {
                 "type": "frame",
                 "session_id": session_id,
                 "native": bool(options.get("native", False)),
-                "data": result["data"],
+                "data": frame_data,
                 "encoding": result["encoding"],
                 "mime_type": result["mime_type"],
                 "captured_at": time.time(),
@@ -117,9 +130,11 @@ class RemoteDesktopAgent:
                 "height": int(result.get("height") or height),
                 "screen_width": int(result.get("screen_width") or result.get("width") or width),
                 "screen_height": int(result.get("screen_height") or result.get("height") or height),
-                "fps": FPS,
+                "fps": float(selected.get("fps", FPS)),
+                "deduplicated": True,
             }
         )
+        return True
 
     async def _stream_loop(self, session_id: str) -> None:
         try:
@@ -132,12 +147,13 @@ class RemoteDesktopAgent:
                 "height": int(options.get("height", 720)),
                 "screen_width": int(options.get("screen_width", options.get("width", 1280))),
                 "screen_height": int(options.get("screen_height", options.get("height", 720))),
-                "fps": FPS,
+                "fps": float(options.get("fps", FPS)),
             })
             while True:
                 started = time.monotonic()
                 await self._capture(session_id, options)
-                await asyncio.sleep(max(0.0, 1.0 / FPS - (time.monotonic() - started)))
+                fps = min(12.0, max(0.2, float(options.get("fps", FPS))))
+                await asyncio.sleep(max(0.0, 1.0 / fps - (time.monotonic() - started)))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -157,15 +173,29 @@ class RemoteDesktopAgent:
             await self._stop_capture_if_idle()
 
     async def _start_stream(self, session_id: str, message: dict[str, Any]) -> None:
-        self.stream_options[session_id] = {
+        updated = {
             "native": bool(message.get("native", False)),
             "width": int(message.get("width") or 1280),
             "height": int(message.get("height") or 720),
             "screen_width": int(message.get("screen_width") or message.get("width") or 1280),
             "screen_height": int(message.get("screen_height") or message.get("height") or 720),
+            "fps": min(12.0, max(0.2, float(message.get("fps") or FPS))),
+            "quality": min(95, max(35, int(message.get("quality") or 85))),
         }
+        existing_options = self.stream_options.get(session_id)
+        if existing_options is None:
+            self.stream_options[session_id] = updated
+        else:
+            existing_options.clear()
+            existing_options.update(updated)
         existing = self.stream_tasks.get(session_id)
         if existing and not existing.done():
+            await self._send_control({
+                "type": "stream_mode_updated",
+                "session_id": session_id,
+                "fps": updated["fps"],
+                "quality": updated["quality"],
+            })
             return
         self.stream_tasks[session_id] = asyncio.create_task(self._stream_loop(session_id))
 
@@ -192,6 +222,8 @@ class RemoteDesktopAgent:
 
     async def _stop_stream(self, session_id: str) -> None:
         self.stream_options.pop(session_id, None)
+        self.last_frame_digest.pop(session_id, None)
+        self.last_frame_sent_at.pop(session_id, None)
         task = self.stream_tasks.pop(session_id, None)
         if task:
             task.cancel()
@@ -220,7 +252,7 @@ class RemoteDesktopAgent:
         elif message_type == "stop_stream":
             await self._stop_stream(session_id)
         elif message_type == "request_frame":
-            await self._capture(session_id, message)
+            await self._capture(session_id, message, force=True)
         elif message_type in {"mouse", "key"}:
             request = {"action": message_type, **{key: value for key, value in message.items() if key not in {"type", "session_id"}}}
             try:

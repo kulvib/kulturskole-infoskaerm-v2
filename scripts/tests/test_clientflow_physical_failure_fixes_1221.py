@@ -49,10 +49,10 @@ def _method_local_tuple(source: str, class_name: str, method_name: str, name: st
                             return ast.literal_eval(child.value)
     raise AssertionError(f"{class_name}.{method_name} local {name} not found")
 
-def test_promoted_1329_1230_is_fresh_only_and_skips_rejected_1228():
-    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.29"
+def test_staged_1330_1231_keeps_promoted_1329_1230_fresh_only_and_skips_rejected_1228():
+    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.30"
     release_input = json.loads(_source(RELEASE_INPUT))
-    assert release_input["release_sequence"] == 1230
+    assert release_input["release_sequence"] == 1231
     assert release_input["minimum_ubuntu_lts"] == "26.04"
     assert release_input["architecture"] == "amd64"
     assert release_input["runtime_python"] == "3.13.14"
@@ -96,7 +96,7 @@ def test_fresh_install_materializes_graphical_login_before_reboot_and_activation
     customer_start = helper.index("def _customer_install")
     post_install = helper[customer_start:helper.index("def main()", customer_start)]
     assert post_install.index("_prepare_pre_activation_graphical_session()") < post_install.index("_install_activation_waiter()")
-    assert post_install.index("_install_activation_waiter()") < post_install.index('confirmed_reboot("kundeaktivering gennemført", seconds=5)')
+    assert post_install.index("_install_activation_waiter()") < post_install.index("_apply_customer_kiosk_lockdown()") < post_install.index('confirmed_reboot("kundeaktivering gennemført med kiosk lockdown", seconds=5)')
     assert "_queue_controlled_pre_activation_reboot()" not in post_install
     assert 'prepare_graphical_login_baseline' in session_prepare
     assert '_ensure_exact_chrome' not in session_prepare

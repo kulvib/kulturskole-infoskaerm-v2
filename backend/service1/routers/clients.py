@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Body, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Body, Request, Response, Header, Query
 from pydantic import BaseModel, Field as PydanticField
 from sqlmodel import select
 from sqlalchemy.orm.attributes import set_committed_value
@@ -12,6 +12,12 @@ from ..models import Client, ClientRead, ClientControlRoomListRead, ClientPresen
 from ..auth import get_current_user, get_current_admin_user, get_current_superadmin_user, get_current_user_or_client, require_client_self_or_user, principal_is_client, get_password_hash, validate_password_strength
 from ..models import utcnow
 from ..observability import log_safe_exception
+from ..realtime_wakeup import queue_wakeup_after_commit
+from ..ui_realtime import (
+    issue_ui_realtime_capability,
+    verify_ui_realtime_capability,
+    wait_for_ui_change,
+)
 from ..lifecycle import ClientPurgeBlocked, prepare_client_for_permanent_delete
 from ..clientflow_deployments import active_deployment
 from ..client_presence import ClientPresence, load_client_presence, load_client_presences_with_status_rows, load_client_with_presence_rows
@@ -1420,6 +1426,24 @@ def get_control_room_clients(session=Depends(get_session), user=Depends(get_curr
     return get_clients(session=session, user=user)
 
 
+@router.post("/clients/control-room-realtime/capability")
+def create_control_room_realtime_capability(user=Depends(get_current_user)):
+    return issue_ui_realtime_capability(user)
+
+
+@router.get("/clients/control-room-realtime/wait")
+def wait_control_room_realtime(
+    after: int = Query(default=0, ge=0),
+    timeout_seconds: int = Query(default=25, ge=1, le=30),
+    authorization: str | None = Header(default=None),
+):
+    value = str(authorization or "")
+    token = value[7:].strip() if value.lower().startswith("bearer ") else None
+    claims = verify_ui_realtime_capability(token)
+    generation = wait_for_ui_change(claims=claims, after=after, timeout=timeout_seconds)
+    return {"generation": generation, "changed": generation > after}
+
+
 @router.get("/clients/deleted", response_model=List[ClientRead])
 def get_deleted_clients(session=Depends(get_session), user=Depends(get_current_user)):
     if not getattr(user, "is_superadmin", False) and getattr(user, "role", None) != VIEWER_ROLE:
@@ -2783,6 +2807,7 @@ async def change_client_organization(
             **result,
         },
     )
+    queue_wakeup_after_commit(session, domain="display", client_id=int(client.id))
     session.commit()
     session.refresh(client)
     _prepare_full_client_read(session, client)

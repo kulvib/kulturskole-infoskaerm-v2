@@ -168,6 +168,46 @@ def issue_shared_domain_token_response(
     }
 
 
+
+
+def verify_shared_agent_wake_token(authorization: str | None, *, client_id: int, domain: str) -> dict[str, Any]:
+    """Cryptographically validate a wake-only agent token without a DB read.
+
+    Wake channels carry no command payload and cannot claim/renew/complete work.
+    Revocation therefore remains enforced on every durable queue operation while
+    this bounded token allows idle wake traffic to stay off Postgres.
+    """
+    _validate_domain(domain, commands=True)
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Bearer token mangler")
+    token = authorization[7:].strip()
+    try:
+        claims = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[DOMAIN_TOKEN_ALGORITHM],
+            audience=f"clientflow-domain:{domain}",
+            issuer=DOMAIN_TOKEN_ISSUER,
+            options={
+                "require": [
+                    "exp", "iat", "nbf", "jti", "sub", "client_id",
+                    "credential_id", "domain", "scope", "token_version",
+                ]
+            },
+        )
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail="Ugyldigt domæne-agent token") from exc
+    credential_id = str(claims.get("credential_id") or "")
+    if (
+        claims.get("principal") != "client_domain"
+        or claims.get("domain") != domain
+        or claims.get("scope") != f"clientflow:{domain}"
+        or int(claims.get("client_id") or 0) != int(client_id)
+        or claims.get("sub") != f"client:{client_id}:{credential_id}"
+    ):
+        raise HTTPException(status_code=403, detail="Token tilhører et andet domæne eller klient")
+    return claims
+
 def require_shared_agent_context(
     session: Session,
     authorization: str | None,

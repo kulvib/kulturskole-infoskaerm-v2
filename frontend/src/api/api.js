@@ -507,6 +507,36 @@ export async function getControlRoomClients() {
 }
 
 
+export async function createControlRoomRealtimeCapability() {
+  const res = await apiFetch(`${apiUrl}/api/clients/control-room-realtime/capability`, {
+    method: "POST",
+    headers: authHeaders({ Accept: "application/json" }),
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
+  if (!res.ok) throw new Error(await extractError(res, "Kunne ikke oprette realtime-forbindelse"));
+  return readJsonResponse(res);
+}
+
+export async function waitForControlRoomRealtime(capability, generation, timeoutSeconds = 25) {
+  const params = new URLSearchParams({
+    after: String(Math.max(0, Number(generation) || 0)),
+    timeout_seconds: String(Math.max(1, Math.min(30, Number(timeoutSeconds) || 25))),
+  });
+  const res = await apiFetch(`${apiUrl}/api/clients/control-room-realtime/wait?${params}`, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${String(capability || "")}`,
+    },
+    credentials: "omit",
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(await extractError(res, "Realtime-forbindelsen blev afbrudt"));
+  return readJsonResponse(res);
+}
+
+
 export async function getClient(id) {
   const res = await apiFetch(`${apiUrl}/api/clients/${id}/`, {
     headers: authHeaders(),

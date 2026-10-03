@@ -48,6 +48,8 @@ import {
 import { Link } from "react-router-dom";
 import {
   getControlRoomClients,
+  createControlRoomRealtimeCapability,
+  waitForControlRoomRealtime,
   approveClient,
   removeClient,
   restoreClient,
@@ -88,8 +90,8 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 // shared agents themselves report on a 15-second cadence. Keep the historical
 // 2-second cadence while something is actually moving, but do not continually
 // re-read a stable 100-client list five times per 10 seconds.
-const CLIENT_LIST_ACTIVE_POLL_MS = 2_000;
-const CLIENT_LIST_IDLE_POLL_MS = 5_000;
+const CLIENT_LIST_ACTIVE_POLL_MS = 10_000;
+const CLIENT_LIST_IDLE_POLL_MS = 60_000;
 const BUSY_CLIENT_LIST_CHROME_STEPS = new Set([
   "clear_cookies",
   "terminate_chrome",
@@ -728,8 +730,41 @@ export default function ClientInfoPage() {
     }
   }, []);
 
-  // Initial load + adaptive polling. Hidden pages perform no DB-backed poll.
-  // Stable lists use 5s; pending/action states retain the historical 2s cadence.
+  // Push-assisted invalidation: the long wait is authenticated by a short-lived
+  // signed capability and does not hold/query PostgreSQL. On any relevant
+  // backend state commit, fetch the existing authoritative list immediately.
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      let capability = null;
+      let generation = 0;
+      while (!cancelled) {
+        try {
+          if (!capability) {
+            const issued = await createControlRoomRealtimeCapability();
+            capability = issued?.capability || null;
+            generation = Number(issued?.generation || 0);
+            if (!capability) throw new Error("Realtime-capability mangler");
+          }
+          const wake = await waitForControlRoomRealtime(capability, generation, 25);
+          const nextGeneration = Number(wake?.generation || generation);
+          const changed = wake?.changed === true || nextGeneration > generation;
+          generation = Math.max(generation, nextGeneration);
+          if (changed && isPageVisible() && !isDraggingRef.current) {
+            await fetchClients(false, false);
+          }
+        } catch {
+          capability = null;
+          if (!cancelled) await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        }
+      }
+    };
+    void run();
+    return () => { cancelled = true; };
+  }, [fetchClients]);
+
+  // Initial load + adaptive reconciliation polling. Hidden pages perform no DB-backed poll.
+  // Stable lists reconcile every 60s; pending/action states every 10s. Realtime wake refreshes immediately.
   // Recursive timeout avoids overlapping work and lets every completed fetch
   // choose the next cadence from the newest canonical snapshot.
   useEffect(() => {

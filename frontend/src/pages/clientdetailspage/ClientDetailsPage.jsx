@@ -27,6 +27,8 @@ import { useAuth } from "../../auth/AuthProvider";
 
 import {
   getChromeStatus,
+  createControlRoomRealtimeCapability,
+  waitForControlRoomRealtime,
   getClientflowDeployments,
   clientAction,
   openRemoteDesktop,
@@ -88,8 +90,8 @@ import {
     shutdown → system_shutting_down, error
 */
 
-const CHROME_STATUS_ACTIVE_POLL_MS = 1000;
-const CHROME_STATUS_IDLE_POLL_MS = 5000;
+const CHROME_STATUS_ACTIVE_POLL_MS = 5000;
+const CHROME_STATUS_IDLE_POLL_MS = 60000;
 const CHROME_STATUS_HIDDEN_CHECK_MS = 1000;
 const ACTION_POLL_MS        = 1500;
 const CLIENTFLOW_DEPLOYMENT_POLL_MS = 2500;
@@ -976,7 +978,7 @@ export default function ClientDetailsPage({
   const [calendarDialogOpen, setCalendarDialogOpen] = useState(false);
 
   // ---------------------------------------------------------------------------
-  // Live chrome-status — opdateres hvert 1s uden full re-render
+  // Live chrome-status — event-wake med bounded reconciliation uden full re-render
   // ---------------------------------------------------------------------------
   const [liveChromeStatus, setLiveChromeStatus] = useState(
     client?.chrome_status ?? null
@@ -1179,13 +1181,49 @@ export default function ClientDetailsPage({
     return () => clearInterval(interval);
   }, [client?.id]);
 
+  // Push-assisted Control Room invalidation. The capability is issued through
+  // normal authenticated HTTP once, while the long wait itself is DB-free. A
+  // wake only interrupts the existing authoritative snapshot fetch; 60s/5s
+  // fallback polling remains for reconciliation after lost events/restarts.
+  useEffect(() => {
+    if (!client?.id) return undefined;
+    let cancelled = false;
+
+    const run = async () => {
+      let capability = null;
+      let generation = 0;
+      while (!cancelled) {
+        try {
+          if (!capability) {
+            const issued = await createControlRoomRealtimeCapability();
+            capability = issued?.capability || null;
+            generation = Number(issued?.generation || 0);
+            if (!capability) throw new Error("Realtime-capability mangler");
+          }
+          const wake = await waitForControlRoomRealtime(capability, generation, 25);
+          const nextGeneration = Number(wake?.generation || generation);
+          const changed = wake?.changed === true || nextGeneration > generation;
+          generation = Math.max(generation, nextGeneration);
+          if (changed && isPageVisible() && typeof hotPollWakeRef.current === "function") {
+            hotPollWakeRef.current();
+          }
+        } catch {
+          capability = null;
+          if (!cancelled) await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        }
+      }
+    };
+    void run();
+    return () => { cancelled = true; };
+  }, [client?.id]);
+
   // ---------------------------------------------------------------------------
   // Canonical presence rides on the existing /chrome-status hot poll. The
   // backend evaluates the same Status/Display/System authority server-side, so
   // a second 5-second HTTP/DB poll would only duplicate work.
   // ---------------------------------------------------------------------------
   // ---------------------------------------------------------------------------
-  // Chrome-status polling — adaptive: 1s while active, 5s while stable.
+  // Chrome-status reconciliation — 5s while active, 60s stable; realtime wake interrupts immediately.
   // ---------------------------------------------------------------------------
   const mountedRef = useRef(true);
 

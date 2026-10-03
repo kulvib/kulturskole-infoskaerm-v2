@@ -26,7 +26,7 @@ from .unix_rpc import RpcError, call
 STATE_DIR = Path(os.getenv("CLIENTFLOW_CALENDAR_STATE_DIR", "/var/lib/clientflow/calendar"))
 CACHE_PATH = STATE_DIR / "schedule.json"
 STATUS_PATH = STATE_DIR / "status.json"
-POLL_SECONDS = max(15.0, float(os.getenv("CLIENTFLOW_CALENDAR_POLL_SECONDS", "15")))
+POLL_SECONDS = max(60.0, float(os.getenv("CLIENTFLOW_CALENDAR_POLL_SECONDS", "300")))
 EVALUATE_SECONDS = max(5.0, float(os.getenv("CLIENTFLOW_CALENDAR_EVALUATE_SECONDS", "30")))
 BOOT_GRACE_SECONDS = max(0.0, float(os.getenv("CLIENTFLOW_CALENDAR_BOOT_GRACE_SECONDS", "90")))
 WAKE_REBOOT_DELAY_SECONDS = max(0.0, float(os.getenv("CLIENTFLOW_CALENDAR_WAKE_REBOOT_DELAY_SECONDS", "15")))
@@ -170,6 +170,30 @@ def _fetch_plan_conditional(
     atomic_write_json(CACHE_PATH, plan, mode=0o600)
     return plan, response_etag, True
 
+
+
+
+def _wait_for_calendar_wake(
+    transport: DomainTransport,
+    *,
+    generation: int,
+    timeout_seconds: float,
+) -> tuple[int, bool]:
+    """Wait on the DB-free Display wake channel for calendar/config invalidation.
+
+    The same wake generation is shared with durable Display commands. A false
+    positive only causes a conditional ETag Calendar fetch; correctness remains
+    anchored in the existing HTTP snapshot and periodic reconciliation.
+    """
+    timeout = max(1, min(30, int(round(timeout_seconds))))
+    client_id = transport.credential.client_id
+    payload = transport.json_request(
+        "GET",
+        f"/api/display-agent/clients/{client_id}/commands/wait?after={int(generation)}&timeout_seconds={timeout}",
+        timeout=float(timeout + 5),
+    )
+    next_generation = max(int(generation), int(payload.get("generation") or 0))
+    return next_generation, next_generation > int(generation)
 
 def _entry_for_today(plan: dict[str, Any], now: datetime) -> dict[str, str]:
     today = now.date().isoformat()
@@ -383,6 +407,7 @@ def main() -> int:
     fetch_attempt = 0
     service_started_mono = time.monotonic()
     startup_calendar_state_enforced = False
+    wake_generation = 0
 
     while True:
         now_mono = time.monotonic()
@@ -411,7 +436,14 @@ def main() -> int:
                     state="degraded", plan=None, desired=None, last_fetch_at=last_fetch_at,
                     last_transition_at=last_transition_at, error=error or "Ingen gyldig cached calendar",
                 )
-                time.sleep(EVALUATE_SECONDS)
+                try:
+                    wake_generation, woke = _wait_for_calendar_wake(
+                        transport, generation=wake_generation, timeout_seconds=EVALUATE_SECONDS
+                    )
+                    if woke:
+                        next_fetch = 0.0
+                except TransportError:
+                    time.sleep(EVALUATE_SECONDS)
                 continue
 
             elapsed = time.monotonic() - service_started_mono
@@ -420,7 +452,15 @@ def main() -> int:
                     state="boot_grace", plan=plan, desired=None, last_fetch_at=last_fetch_at,
                     last_transition_at=last_transition_at, error=error,
                 )
-                time.sleep(min(EVALUATE_SECONDS, max(1.0, BOOT_GRACE_SECONDS - elapsed)))
+                wait_seconds = min(EVALUATE_SECONDS, max(1.0, BOOT_GRACE_SECONDS - elapsed))
+                try:
+                    wake_generation, woke = _wait_for_calendar_wake(
+                        transport, generation=wake_generation, timeout_seconds=wait_seconds
+                    )
+                    if woke:
+                        next_fetch = 0.0
+                except TransportError:
+                    time.sleep(wait_seconds)
                 continue
 
             now_local = datetime.now().astimezone()
@@ -470,7 +510,14 @@ def main() -> int:
                 state="running", plan=plan, desired=desired, last_fetch_at=last_fetch_at,
                 last_transition_at=last_transition_at, error=error, manual_override=manual_override,
             )
-            time.sleep(EVALUATE_SECONDS)
+            try:
+                wake_generation, woke = _wait_for_calendar_wake(
+                    transport, generation=wake_generation, timeout_seconds=EVALUATE_SECONDS
+                )
+                if woke:
+                    next_fetch = 0.0
+            except TransportError:
+                time.sleep(EVALUATE_SECONDS)
         except (RpcError, OSError, RuntimeError, ValueError) as exc:
             error = f"calendar_transition_failed: {exc}"
             _write_status(

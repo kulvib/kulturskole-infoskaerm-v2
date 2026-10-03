@@ -92,12 +92,12 @@ def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() 
         }
     ]
 
-def test_1329_1230_is_promoted_fresh_only_while_update_authority_stays_closed() -> None:
-    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.29"
+def test_1330_1231_source_is_staged_while_1329_1230_update_authority_stays_closed() -> None:
+    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.30"
     release_input = json.loads(
         (ROOT / "client" / "release" / "release-input.json").read_text(encoding="utf-8")
     )
-    assert release_input["release_sequence"] == 1230
+    assert release_input["release_sequence"] == 1231
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(

@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
+from .realtime_wakeup import queue_wakeup_after_commit
 from .client_domain_models import ClientCommand, ClientDomainStatus, DisplayDesiredConfiguration
 from .models import Client
 
@@ -261,6 +262,7 @@ def queue_display_command(
         max_attempts=3,
     )
     session.add(row)
+    queue_wakeup_after_commit(session, domain="display", client_id=client_id)
     return row
 
 

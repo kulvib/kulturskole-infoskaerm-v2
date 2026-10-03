@@ -40,6 +40,7 @@ from ..livestream_v2 import (
     write_hls_file,
 )
 from .livestream_media import require_hls_access
+from ..livestream_media_capability import issue_livestream_media_capability, TTL_SECONDS as MEDIA_CAPABILITY_TTL_SECONDS
 
 router = APIRouter()
 
@@ -364,6 +365,9 @@ def browser_viewer_heartbeat(
             source=body.source,
         )
         session.commit()
+        media_capability, media_capability_expires_at = issue_livestream_media_capability(
+            client_id=cid, principal=user
+        )
         return {
             "ok": True,
             "viewer_id": viewer.viewer_id,
@@ -371,6 +375,9 @@ def browser_viewer_heartbeat(
             "heartbeat_seconds": VIEWER_HEARTBEAT_SECONDS,
             "lease_seconds": VIEWER_LEASE_SECONDS,
             "stop_grace_seconds": VIEWER_STOP_GRACE_SECONDS,
+            "media_capability": media_capability,
+            "media_capability_expires_at": media_capability_expires_at.isoformat(),
+            "media_capability_ttl_seconds": MEDIA_CAPABILITY_TTL_SECONDS,
             "generation": _generation_json(generation),
             "start_enqueued": command is not None,
         }

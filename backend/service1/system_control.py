@@ -19,6 +19,7 @@ from fastapi import HTTPException
 from sqlalchemy import case, func
 from sqlmodel import Session, select
 
+from .realtime_wakeup import queue_wakeup_after_commit
 from .client_domain_models import ClientCommand, ClientDomainStatus
 from .enrollment_models import ClientSystemEncryptionKey
 from .models import Client
@@ -131,6 +132,7 @@ def queue_system_command(
         max_attempts=min(max(int(max_attempts), 1), 10),
     )
     session.add(row)
+    queue_wakeup_after_commit(session, domain="system", client_id=client_id)
     return row
 
 
