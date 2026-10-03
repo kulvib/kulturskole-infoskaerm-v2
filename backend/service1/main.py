@@ -40,6 +40,7 @@ from .routers.remote_desktop_auth import router as remote_desktop_auth_router
 from .routers.remote_desktop_v2 import router as remote_desktop_v2_router
 from .routers.terminal import agent_router as terminal_agent_router, router as terminal_router
 from .routers.livestream_media import HLS_DIR
+from .livestream_media_capability import verify_livestream_media_capability
 
 from .auth import (
     router as auth_router,
@@ -524,6 +525,14 @@ class AuthenticatedHLSStaticFiles(StaticFiles):
         token = self._extract_bearer_token(request)
         if not token:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ikke logget ind")
+
+        # A short-lived media capability is sufficient for read-only HLS bytes
+        # and avoids a Postgres authorization query for every manifest/segment.
+        try:
+            verify_livestream_media_capability(token, client_id=client_id)
+            return
+        except HTTPException:
+            pass
         if _request_uses_cookie_auth(request) and not _request_origin_is_allowed(request):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Ugyldig Origin for HLS stream")
 

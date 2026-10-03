@@ -76,8 +76,8 @@ class LivestreamV2IsolationSourceTests(unittest.TestCase):
 
     def test_viewer_owned_lifecycle_defaults_match_physical_acceptance(self) -> None:
         source = read_backend("service1/livestream_v2.py")
-        self.assertIn('LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS", "10"', source)
-        self.assertIn('LIVESTREAM_V2_VIEWER_LEASE_SECONDS", "30"', source)
+        self.assertIn('LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS", "25"', source)
+        self.assertIn('LIVESTREAM_V2_VIEWER_LEASE_SECONDS", "75"', source)
         self.assertIn('LIVESTREAM_V2_VIEWER_STOP_GRACE_SECONDS", "30"', source)
         self.assertIn('LIVESTREAM_V2_VIEWER_SWEEP_SECONDS", "5"', source)
 
@@ -133,7 +133,7 @@ class LivestreamV2IsolationSourceTests(unittest.TestCase):
         source = (REPO / "frontend/src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx").read_text(
             encoding="utf-8"
         )
-        self.assertIn("const VIEWER_HEARTBEAT_MS = 10_000;", source)
+        self.assertIn("const VIEWER_HEARTBEAT_MS = 25_000;", source)
         self.assertIn("/api/livestream-v2/hls/", source)
         self.assertIn("/api/livestream-v2/clients/", source)
         self.assertNotIn('ensureStreamStarted("missing_segments")', source)
@@ -144,19 +144,24 @@ class LivestreamV2IsolationSourceTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        viewer_start = source.index("// Viewer-owned lifecycle: 10s heartbeat")
+        viewer_start = source.index("// Viewer-owned lifecycle:")
         health_start = source.index("// Poll /health", viewer_start)
         hls_start = source.index("// HLS.js lifecycle", health_start)
-        segment_start = source.index("// Backend polling — hvert 2s", hls_start)
-        watchdog_start = source.index("// Stale watchdog", segment_start)
+        watchdog_start = source.index("// Stale watchdog", hls_start)
         playback_start = source.index("// Playback watchdog", watchdog_start)
         lag_start = source.index("// Forsinkelsesberegning", playback_start)
+
+        # Steady-state backend segment polling was intentionally removed. HLS
+        # fragment events are now the segment-progress authority, so this gate
+        # must fail if the old 2-second polling hot path is reintroduced.
+        self.assertNotIn("// Backend polling — hvert 2s", source)
+        self.assertNotIn("/last-segment-info", source)
+        self.assertIn("Hls.Events.FRAG_CHANGED", source[hls_start:watchdog_start])
 
         for name, block in (
             ("viewer", source[viewer_start:health_start]),
             ("health", source[health_start:hls_start]),
-            ("hls", source[hls_start:segment_start]),
-            ("segment", source[segment_start:watchdog_start]),
+            ("hls", source[hls_start:watchdog_start]),
             ("stale_watchdog", source[watchdog_start:playback_start]),
             ("playback_watchdog", source[playback_start:lag_start]),
         ):
@@ -189,7 +194,7 @@ class LivestreamV2IsolationSourceTests(unittest.TestCase):
         source = (REPO / "frontend/src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx").read_text(
             encoding="utf-8"
         )
-        viewer_start = source.index("// Viewer-owned lifecycle: 10s heartbeat")
+        viewer_start = source.index("// Viewer-owned lifecycle:")
         health_start = source.index("// Poll /health", viewer_start)
         viewer_block = source[viewer_start:health_start]
 

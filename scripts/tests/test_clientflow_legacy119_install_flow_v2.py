@@ -80,7 +80,7 @@ def test_customer_flow_matches_legacy_customer_order_and_removes_second_manual_a
     source = CUSTOMER.read_text(encoding="utf-8")
     body = source[source.index("def _customer_install"):source.index("def main")]
     assert body.index('configure_network_interactive("kundeaktivering")') < body.index("if existing is not None:")
-    normal = body[body.index('    else:\n        phase("2/8 · Klientoplysninger")'):]
+    normal = body[body.index('    else:\n        phase("2/9 · Klientoplysninger")'):]
     order = [
         "prompt_locality()",
         "_interactive_bootstrap_binding()",
@@ -92,7 +92,8 @@ def test_customer_flow_matches_legacy_customer_order_and_removes_second_manual_a
         "remove_desktop_install_icons(KIOSK_USER)",
         "_prepare_pre_activation_graphical_session()",
         "_install_activation_waiter()",
-        'confirmed_reboot("kundeaktivering gennemført", seconds=5)',
+        "_apply_customer_kiosk_lockdown()",
+        'confirmed_reboot("kundeaktivering gennemført med kiosk lockdown", seconds=5)',
     ]
     positions = [normal.index(token) for token in order]
     assert positions == sorted(positions)

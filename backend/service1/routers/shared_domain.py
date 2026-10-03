@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from typing import Any
+import asyncio
 
-from fastapi import APIRouter, Header, Response
+
+from fastapi import APIRouter, Header, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session
@@ -21,6 +23,8 @@ from ..calendar_control import (
 )
 from ..system_control import apply_status_power_observation, apply_system_command_completion
 from ..models import Client
+from ..realtime_wakeup import current_generation, wait_for_change
+from ..ui_realtime import notify_ui_state_changed
 from ..shared_domain import (
     claim_shared_command,
     complete_shared_command,
@@ -29,6 +33,7 @@ from ..shared_domain import (
     require_shared_agent_context,
     require_shared_agent_token,
     upsert_shared_status,
+    verify_shared_agent_wake_token,
 )
 
 router = APIRouter(tags=["shared-domain-agent"])
@@ -164,12 +169,15 @@ def _status(domain: str, client_id: int, body: StatusBody, authorization: str | 
             body=body,
             authorization_context=authorization_context,
         )
+        organization_id = getattr(authorization_context.client, "organization_id", None)
         session.commit()
+        notify_ui_state_changed(organization_id=organization_id)
         return response
 
 
 def _claim(domain: str, client_id: int, body: ClaimBody, authorization: str | None):
     with Session(engine) as session:
+        status_organization_id = None
         if body.status_report is None:
             credential = require_shared_agent_token(
                 session, authorization, client_id=client_id, domain=domain
@@ -182,6 +190,7 @@ def _claim(domain: str, client_id: int, body: ClaimBody, authorization: str | No
                 domain=domain,
             )
             credential = authorization_context.credential
+            status_organization_id = getattr(authorization_context.client, "organization_id", None)
             _apply_status_in_session(
                 session,
                 domain=domain,
@@ -196,6 +205,8 @@ def _claim(domain: str, client_id: int, body: ClaimBody, authorization: str | No
             # to the historical standalone heartbeat instead of assuming success.
             payload["status_reported"] = True
         session.commit()
+        if body.status_report is not None:
+            notify_ui_state_changed(organization_id=status_organization_id)
         return payload
 
 
@@ -227,7 +238,10 @@ def _complete(domain: str, client_id: int, command_id: str, body: CompleteBody, 
             apply_system_command_completion(session, client_id=client_id, command_id=command_id)
         elif domain == "display":
             apply_display_command_completion(session, client_id=client_id, command_id=command_id)
+        client = session.get(Client, client_id)
+        organization_id = getattr(client, "organization_id", None) if client is not None else None
         session.commit()
+        notify_ui_state_changed(organization_id=organization_id)
         return payload
 
 
@@ -247,7 +261,10 @@ def _fail(domain: str, client_id: int, command_id: str, body: FailBody, authoriz
             apply_display_command_failure(
                 session, client_id=client_id, command_id=command_id, error_message=body.error_message
             )
+        client = session.get(Client, client_id)
+        organization_id = getattr(client, "organization_id", None) if client is not None else None
         session.commit()
+        notify_ui_state_changed(organization_id=organization_id)
         return payload
 
 
@@ -286,6 +303,75 @@ def display_calendar(
         if etag:
             headers["ETag"] = etag
         return JSONResponse(content=payload, headers=headers)
+
+
+
+
+def _wake_wait(domain: str, client_id: int, after: int, timeout_seconds: int, authorization: str | None):
+    verify_shared_agent_wake_token(authorization, client_id=client_id, domain=domain)
+    generation = wait_for_change(domain, client_id, after, timeout_seconds)
+    return {
+        "ok": True,
+        "generation": generation,
+        "changed": generation > int(after),
+    }
+
+
+async def _wake_ws(websocket: WebSocket, *, domain: str, client_id: int) -> None:
+    authorization = websocket.headers.get("authorization")
+    try:
+        verify_shared_agent_wake_token(authorization, client_id=client_id, domain=domain)
+    except Exception:
+        await websocket.close(code=4401, reason="Ugyldigt command wake-token")
+        return
+    await websocket.accept()
+    generation = current_generation(domain, client_id)
+    await websocket.send_json({"type": "wake_ready", "generation": generation})
+    try:
+        while True:
+            next_generation = await asyncio.to_thread(
+                wait_for_change, domain, client_id, generation, 45.0
+            )
+            if next_generation > generation:
+                generation = next_generation
+                await websocket.send_json({
+                    "type": "command_available",
+                    "generation": generation,
+                })
+            else:
+                await websocket.send_json({"type": "keepalive", "generation": generation})
+    except (WebSocketDisconnect, RuntimeError):
+        return
+
+
+@router.get("/display-agent/clients/{client_id}/commands/wait")
+def display_wait(
+    client_id: int,
+    after: int = Query(default=0, ge=0),
+    timeout_seconds: int = Query(default=25, ge=1, le=30),
+    authorization: str | None = Header(default=None),
+):
+    return _wake_wait("display", client_id, after, timeout_seconds, authorization)
+
+
+@router.get("/system-agent/clients/{client_id}/commands/wait")
+def system_wait(
+    client_id: int,
+    after: int = Query(default=0, ge=0),
+    timeout_seconds: int = Query(default=25, ge=1, le=30),
+    authorization: str | None = Header(default=None),
+):
+    return _wake_wait("system", client_id, after, timeout_seconds, authorization)
+
+
+@router.websocket("/display-agent/clients/{client_id}/commands/wake/ws")
+async def display_wake_ws(websocket: WebSocket, client_id: int):
+    await _wake_ws(websocket, domain="display", client_id=client_id)
+
+
+@router.websocket("/system-agent/clients/{client_id}/commands/wake/ws")
+async def system_wake_ws(websocket: WebSocket, client_id: int):
+    await _wake_ws(websocket, domain="system", client_id=client_id)
 
 
 @router.put("/status-agent/clients/{client_id}/status")

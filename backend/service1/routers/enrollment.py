@@ -1039,6 +1039,9 @@ def claim_enrollment_token(
         livestream_status="idle",
         livestream_last_segment=None,
         livestream_last_error=None,
+        # Fresh-install customer handoff is a kiosk product. Lockdown is
+        # therefore desired by default and must survive the final reboot.
+        desktop_lockdown_enabled=True,
         client_secret_hash=None,
         client_secret_created_at=None,
         client_secret_revoked_at=None,

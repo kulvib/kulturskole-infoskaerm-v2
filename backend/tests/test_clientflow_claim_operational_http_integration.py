@@ -608,6 +608,40 @@ def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed
     assert commissioning_complete.status_code == 200, commissioning_complete.text
     assert commissioning_complete.json()["completed"] is True
 
+    # Fresh enrollment also defaults kiosk lockdown to enabled. The first Display
+    # status therefore queues a second canonical commissioning command. Consume
+    # and verify it explicitly so the later probe roundtrip cannot accidentally
+    # hide or reorder required customer-handoff work.
+    lockdown_claim_response = http.post(
+        f"/api/display-agent/clients/{client_id}/commands/claim",
+        headers={"Authorization": f"Bearer {tokens['display']}"},
+        json={"lease_seconds": 60},
+    )
+    assert lockdown_claim_response.status_code == 200, lockdown_claim_response.text
+    lockdown_claim = lockdown_claim_response.json()["claimed"]
+    assert lockdown_claim is not None
+    assert lockdown_claim["command"]["command_type"] == "set_kiosk_lockdown"
+    assert lockdown_claim["command"]["payload"] == {"enabled": True}
+    lockdown_complete = http.post(
+        f"/api/display-agent/clients/{client_id}/commands/{lockdown_claim['command']['id']}/complete",
+        headers={"Authorization": f"Bearer {tokens['display']}"},
+        json={
+            "claim_token": lockdown_claim["claim_token"],
+            "result": {
+                "status": "applied",
+                "message": "claim integration lockdown applied",
+                "desired": True,
+            },
+        },
+    )
+    assert lockdown_complete.status_code == 200, lockdown_complete.text
+    assert lockdown_complete.json()["completed"] is True
+    with Session(engine) as session:
+        commissioned_client = session.get(Client, client_id)
+        assert commissioned_client is not None
+        assert commissioned_client.desktop_lockdown_enabled is True
+        assert commissioned_client.desktop_lockdown_status == "applied"
+
     # 7. Display/System command lease + completion roundtrip is bound to those same claim credentials.
     from service1.shared_domain import utcnow
     from datetime import timedelta

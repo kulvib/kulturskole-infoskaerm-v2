@@ -787,7 +787,7 @@ def _http_error_detail(exc: urllib.error.HTTPError) -> str:
 
 
 def _interactive_bootstrap_binding() -> tuple[str, dict[str, object]]:
-    phase("3/8 · CF-kode")
+    phase("3/9 · CF-kode")
     while True:
         try:
             code = read_cf_code().strip().upper()
@@ -1100,14 +1100,41 @@ def _factory_identity() -> tuple[str, str | None]:
     return name, operator
 
 
+def _apply_customer_kiosk_lockdown() -> None:
+    """Apply and verify kiosk lockdown before the customer final reboot."""
+    helper = Path("/opt/clientflow/active/runtime/bin/clientflow-kiosk-lockdown")
+    if not helper.is_file():
+        raise RuntimeError("Kiosk-lockdown helper mangler efter activation")
+    result = subprocess.run(
+        [str(helper), "apply"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=120,
+    )
+    output = str(result.stdout or "").strip()
+    if result.returncode != 0:
+        raise RuntimeError(f"Kiosk lockdown kunne ikke anvendes før final reboot: {output[-800:]}")
+    try:
+        payload = json.loads(output.splitlines()[-1])
+    except (json.JSONDecodeError, IndexError) as exc:
+        raise RuntimeError("Kiosk-lockdown helper returnerede ugyldig verifikation") from exc
+    if payload.get("status") != "applied" or payload.get("desired") is not True:
+        raise RuntimeError("Kiosk lockdown blev ikke verificeret som applied før final reboot")
+    enforcement = payload.get("enforcement")
+    if isinstance(enforcement, dict) and enforcement.get("ok") is not True:
+        raise RuntimeError("Kiosk lockdown enforcement-verifikation fejlede før final reboot")
+
+
 def _customer_install() -> int:
     banner("02 · Kundeaktivering · V2 · manuel desktopflow")
-    phase("1/8 · Kunde-netværk")
+    phase("1/9 · Kunde-netværk")
     configure_network_interactive("kundeaktivering")
 
     existing = _existing_install_state()
     if existing is not None:
-        phase("2/8 · Sikker genoptagelse")
+        phase("2/9 · Sikker genoptagelse")
         name = str(existing.get("client_name") or "").strip()
         locality_value = existing.get("locality")
         locality = str(locality_value).strip() if locality_value else None
@@ -1121,8 +1148,8 @@ def _customer_install() -> int:
         if status != "pending_manual_activation":
             binding = _resume_binding(existing)
             bundle = _cached_exact_bundle(binding)
-            phase("4/8 · Exact release og integrity · resume")
-            phase("5/8 · Backend claim og installation · resume")
+            phase("4/9 · Exact release og integrity · resume")
+            phase("5/9 · Backend claim og installation · resume")
             result = _run_canonical_installer(
                 bundle=bundle,
                 binding=binding,
@@ -1140,14 +1167,14 @@ def _customer_install() -> int:
             raise RuntimeError("Canonical fresh installer nåede ikke durable pending_manual_activation")
         _clear_cached_bundle()
     else:
-        phase("2/8 · Klientoplysninger")
+        phase("2/9 · Klientoplysninger")
         name, operator = _factory_identity()
         print(f"Klientnavn: {name}")
         locality = prompt_locality()
 
         while True:
             code, binding = _interactive_bootstrap_binding()
-            phase("4/8 · Exact release og integrity")
+            phase("4/9 · Exact release og integrity")
             with tempfile.TemporaryDirectory(prefix="clientflow-fresh-download.", dir="/run") as tmp:
                 directory = Path(tmp)
                 os.chmod(directory, 0o700)
@@ -1161,7 +1188,7 @@ def _customer_install() -> int:
                     raise
                 bundle = _cache_exact_bundle(downloaded, binding)
 
-            phase("5/8 · Backend claim og installation")
+            phase("5/9 · Backend claim og installation")
             print(
                 "cfadmin er allerede defineret i 01 Klient klargøring. Kundeaktiveringen spørger ikke efter "
                 "lokal administratoradgangskode."
@@ -1203,11 +1230,11 @@ def _customer_install() -> int:
         remove_desktop_install_icons(operator)
     ok("Midlertidig kundeaktiveringsret og 02-ikon er fjernet efter durable pending-state.")
 
-    phase("6/8 · Kiosk-session og lokal GUI før activation")
+    phase("6/9 · Kiosk-session og lokal GUI før activation")
     _prepare_pre_activation_graphical_session()
     _install_preactivation_gui_service()
 
-    phase("7/8 · Automatisk approval/activation")
+    phase("7/9 · Automatisk approval/activation")
     try:
         _install_activation_waiter()
     except Exception:
@@ -1215,9 +1242,13 @@ def _customer_install() -> int:
         raise
     ok("CF-koden er accepteret.")
 
-    phase("8/8 · Aktivering færdig")
-    ok("Aktivering færdig. Klienten kan genstartes efter bekræftelse.")
-    confirmed_reboot("kundeaktivering gennemført", seconds=5)
+    phase("8/9 · Kunde-lockdown før final reboot")
+    _apply_customer_kiosk_lockdown()
+    ok("Kiosk lockdown er aktiv og lokalt verificeret.")
+
+    phase("9/9 · Aktivering færdig")
+    ok("Aktivering færdig. Final reboot verificerer nu den aktive kiosk-lockdown ved boot.")
+    confirmed_reboot("kundeaktivering gennemført med kiosk lockdown", seconds=5)
     return 0
 
 def main() -> int:

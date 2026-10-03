@@ -99,7 +99,7 @@ test("backend restart recovery keeps health observation alive and recreates HLS 
   );
   const hlsBlock = source.slice(
     source.indexOf("// HLS.js lifecycle"),
-    source.indexOf("// Backend polling — hvert 2s"),
+    source.indexOf("// Stale watchdog"),
   );
   assert.doesNotMatch(healthBlock, /setServerReady\(true\);[\s\S]{0,200}return;/);
   assert.match(healthBlock, /setServerReady\(false\)/);
@@ -113,4 +113,29 @@ test("livestream surfaces viewer contact immediately and keeps the in-video over
   assert.match(source, /severity:\s*"success"[\s\S]*Kontakt til Livestream etableret/);
   assert.match(source, /rgba\(6,78,59,0\.72\)/);
   assert.doesNotMatch(source, /\? "Stream offline"[\s\S]*\? "Stream live"[\s\S]*"Afventer stream"/);
+});
+
+
+test("steady-state Livestream media uses short-lived capability and event-driven segment observation", () => {
+  assert.equal((source.match(/last-segment-info/g) || []).length, 0);
+  assert.match(source, /\/api\/hls-cap\/\$\{clientId\}\/health/);
+  assert.match(source, /payload\?\.media_capability/);
+  assert.match(source, /Hls\.Events\.FRAG_CHANGED/);
+  assert.match(source, /HEALTH_STABLE_POLL_MS = 10_000/);
+  assert.match(source, /VIEWER_HEARTBEAT_MS = 25_000/);
+  assert.match(source, /visibilitychange/);
+  assert.match(source, /!pageVisible \|\| !mediaCapability/);
+});
+
+test("hidden Livestream inactivity timer is lifecycle-independent and recoverable", () => {
+  assert.match(source, /const hiddenInactivityTimerRef = useRef\(null\)/);
+  const visibilityStart = source.indexOf("// Page Visibility is the media-work authority");
+  const visibilityEnd = source.indexOf("// Viewer-presence ejer Livestream-v2 lifecycle server-side", visibilityStart);
+  assert.ok(visibilityStart >= 0 && visibilityEnd > visibilityStart);
+  const visibilityBlock = source.slice(visibilityStart, visibilityEnd);
+  assert.match(visibilityBlock, /HIDDEN_INACTIVITY_STOP_MS/);
+  assert.match(visibilityBlock, /setInactivityStopped\(true\)/);
+  assert.match(visibilityBlock, /setInactivityStopped\(false\)/);
+  assert.match(visibilityBlock, /document\.addEventListener\("visibilitychange", applyVisibility\)/);
+  assert.match(visibilityBlock, /document\.removeEventListener\("visibilitychange", applyVisibility\)/);
 });

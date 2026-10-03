@@ -27,7 +27,8 @@ def test_53c_calendar_delivery_is_display_domain_self_only_and_complete() -> Non
     assert "require_complete=True" in control
     assert 'status_code=409' in control
     assert '"revision": _revision_for(seasons)' in control
-    assert 'return {"ok": True, "delivery": "client_poll"}' in calendar
+    assert 'queue_wakeup_after_commit(session, domain="display", client_id=client_id)' in calendar
+    assert 'return {"ok": True, "delivery": "push_assisted_conditional_fetch"}' in calendar
 
 
 def test_53c_calendar_agent_uses_display_credential_local_wall_clock_and_cache() -> None:
@@ -46,7 +47,13 @@ def test_53c_calendar_agent_uses_display_credential_local_wall_clock_and_cache()
 
 def test_53c_calendar_transitions_preserve_legacy_boot_baseline_wake_reboot_and_cooldown() -> None:
     agent = read("client/runtime/clientflow_runtime/calendar_agent.py")
-    assert 'CLIENTFLOW_CALENDAR_POLL_SECONDS", "15"' in agent
+    # Push wake handles the fast path; a five-minute conditional fetch remains
+    # the restart/lost-event reconciliation safety net without blind DB polling.
+    assert 'CLIENTFLOW_CALENDAR_POLL_SECONDS", "300"' in agent
+    assert "POLL_SECONDS = max(60.0" in agent
+    assert "def _wait_for_calendar_wake(" in agent
+    assert "/commands/wait?after=" in agent
+    assert "_fetch_plan_conditional(" in agent
     assert 'CLIENTFLOW_CALENDAR_EVALUATE_SECONDS", "30"' in agent
     assert 'CLIENTFLOW_CALENDAR_BOOT_GRACE_SECONDS", "90"' in agent
     assert 'CLIENTFLOW_CALENDAR_WAKE_REBOOT_DELAY_SECONDS", "15"' in agent

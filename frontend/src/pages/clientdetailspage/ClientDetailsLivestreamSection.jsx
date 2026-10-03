@@ -10,13 +10,13 @@ import { useTheme, alpha } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
 import { apiUrl, authHeaders, updateClient } from "../../api";
 
-const HEALTH_POLL_MS = 1000;
-const LAST_SEGMENT_POLL_MS = 1000;
+const HEALTH_STARTUP_POLL_MS = 1000;
+const HEALTH_STABLE_POLL_MS = 10_000;
 const AUTO_RECONNECT_DELAY_MS = 2000;
 const STALE_SEGMENT_RESTART_AFTER_SECONDS = 90;
 const STALE_SEGMENT_RESTART_COOLDOWN_MS = 90_000;
 const STALE_WATCHDOG_POLL_MS = 5_000;
-const VIEWER_HEARTBEAT_MS = 10_000;
+const VIEWER_HEARTBEAT_MS = 25_000;
 const FULLSCREEN_WATCHDOG_MS = 2_000;
 const HIDDEN_INACTIVITY_STOP_MS = 3 * 60 * 1000;
 const INACTIVITY_STOP_MESSAGE = "Siden har ikke været besøgt i 3 min., derfor er livestreamen stoppet.";
@@ -703,6 +703,7 @@ export default function ClientDetailsLivestreamSection({
   const viewerIdRef = useRef(`viewer-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const viewerLeaveSentRef = useRef(false);
   const hiddenInactivityTimerRef = useRef(null);
+  const mediaCapabilityRef = useRef("");
 
   const [serverReady, setServerReady]           = useState(false);
   const [manifestReady, setManifestReady]       = useState(false);
@@ -723,6 +724,8 @@ export default function ClientDetailsLivestreamSection({
   const [healthInfo, setHealthInfo]             = useState(null);
   const [viewerContactEstablished, setViewerContactEstablished] = useState(false);
   const [viewerContactActiveViewers, setViewerContactActiveViewers] = useState(null);
+  const [mediaCapability, setMediaCapability] = useState("");
+  const [pageVisible, setPageVisible] = useState(() => document.visibilityState !== "hidden");
   const [inactivityStopped, setInactivityStopped] = useState(false);
   const [inactivityStopMessage, setInactivityStopMessage] = useState("");
 
@@ -755,6 +758,8 @@ export default function ClientDetailsLivestreamSection({
   useEffect(() => {
     setViewerContactEstablished(false);
     setViewerContactActiveViewers(null);
+    mediaCapabilityRef.current = "";
+    setMediaCapability("");
   }, [clientId]);
 
   const theme    = useTheme();
@@ -954,6 +959,46 @@ export default function ClientDetailsLivestreamSection({
     setAutoStartError("");
   }, [clientId]);
 
+  // Page Visibility is the media-work authority. Hidden tabs stop HLS/health
+  // work immediately through pageVisible/viewer-leave, while this independent
+  // timer preserves the existing three-minute inactivity state. Keeping this
+  // listener independent of inactivityStopped is important: it must be able to
+  // observe the tab becoming visible again and reactivate the viewer lifecycle.
+  useEffect(() => {
+    const applyVisibility = () => {
+      const visible = document.visibilityState !== "hidden";
+      setPageVisible(visible);
+
+      if (visible) {
+        if (hiddenInactivityTimerRef.current) {
+          window.clearTimeout(hiddenInactivityTimerRef.current);
+          hiddenInactivityTimerRef.current = null;
+        }
+        setInactivityStopped(false);
+        setInactivityStopMessage("");
+        return;
+      }
+
+      if (!hiddenInactivityTimerRef.current) {
+        hiddenInactivityTimerRef.current = window.setTimeout(() => {
+          hiddenInactivityTimerRef.current = null;
+          setInactivityStopped(true);
+          setInactivityStopMessage(INACTIVITY_STOP_MESSAGE);
+        }, HIDDEN_INACTIVITY_STOP_MS);
+      }
+    };
+
+    applyVisibility();
+    document.addEventListener("visibilitychange", applyVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", applyVisibility);
+      if (hiddenInactivityTimerRef.current) {
+        window.clearTimeout(hiddenInactivityTimerRef.current);
+        hiddenInactivityTimerRef.current = null;
+      }
+    };
+  }, [clientId]);
+
   // Viewer-presence ejer Livestream-v2 lifecycle server-side. Browseren sender
   // kun presence/leave; backend bestemmer generation, grace og stop.
 
@@ -1020,7 +1065,7 @@ export default function ClientDetailsLivestreamSection({
   }, [clientId, clientOnline, ensureStreamStarted, onRestartStream, resetStreamState]);
 
   // -------------------------------------------------------------------------
-  // Viewer-owned lifecycle: 10s heartbeat, 30s lease, 30s backend grace.
+  // Viewer-owned lifecycle: 25s heartbeat, 75s lease, 30s backend grace.
   // Hidden/page-leave/unmount sends leave immediately; the backend is the
   // lifecycle authority and coalesces start/stop across multiple viewers.
   // -------------------------------------------------------------------------
@@ -1056,6 +1101,10 @@ export default function ClientDetailsLivestreamSection({
           throw new Error(detail || `Viewer-heartbeat fejlede (${resp.status})`);
         }
         const payload = await resp.json().catch(() => null);
+        if (payload?.media_capability) {
+          mediaCapabilityRef.current = String(payload.media_capability);
+          setMediaCapability(String(payload.media_capability));
+        }
         setViewerContactEstablished(true);
         if (Number.isFinite(Number(payload?.active_viewers))) {
           setViewerContactActiveViewers(Number(payload.active_viewers));
@@ -1088,7 +1137,9 @@ export default function ClientDetailsLivestreamSection({
     };
 
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
+      const visible = document.visibilityState !== "hidden";
+      setPageVisible(visible);
+      if (!visible) {
         sendLeaveOnce("client_details_livestream_hidden");
       } else {
         reactivateViewer();
@@ -1135,17 +1186,18 @@ export default function ClientDetailsLivestreamSection({
   // Poll /health
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (!clientId || inactivityStopped) return;
+    if (!clientId || inactivityStopped || !pageVisible || !mediaCapability) return;
     setServerReady(false);
     setStreamStale(false);
     let stop = false;
+    let observedReady = false;
 
     async function pollUntilReady() {
       while (!stop) {
         try {
-          const resp = await fetch(`${apiUrl}/api/hls/${clientId}/health`, {
-            credentials: "include",
-            headers: getAuthHeaders(),
+          const resp = await fetch(`${apiUrl}/api/hls-cap/${clientId}/health`, {
+            credentials: "omit",
+            headers: { Authorization: `Bearer ${mediaCapabilityRef.current}` },
             signal: AbortSignal.timeout(8000),
           });
           if (resp.ok) {
@@ -1153,6 +1205,7 @@ export default function ClientDetailsLivestreamSection({
             if (!stop) setHealthInfo(data || null);
             if (data.has_segments && !data.is_stale) {
               if (!stop) {
+                observedReady = true;
                 setServerReady(true);
                 setStreamStale(false);
                 setAutoStartStatus("");
@@ -1163,6 +1216,7 @@ export default function ClientDetailsLivestreamSection({
               // forsvinder efter at have været klar (fx backend restart), skal
               // HLS-effekten afmonteres og først oprettes igen, når friske
               // segmenter findes på den nye backend-proces/generation.
+              observedReady = false;
               setServerReady(false);
               setStreamStale(data.has_segments && data.is_stale);
             }
@@ -1173,23 +1227,24 @@ export default function ClientDetailsLivestreamSection({
           }
         } catch {
           if (!stop) {
+            observedReady = false;
             setServerReady(false);
             setHealthInfo((prev) => prev || { online: false, message: "Kunne ikke hente stream-status" });
           }
         }
-        if (!stop) await new Promise(res => setTimeout(res, HEALTH_POLL_MS));
+        if (!stop) await new Promise(res => setTimeout(res, observedReady ? HEALTH_STABLE_POLL_MS : HEALTH_STARTUP_POLL_MS));
       }
     }
 
     pollUntilReady();
     return () => { stop = true; };
-  }, [clientId, effectiveRefreshKey, inactivityStopped]);
+  }, [clientId, effectiveRefreshKey, inactivityStopped, pageVisible, mediaCapability]);
 
   // -------------------------------------------------------------------------
   // HLS.js lifecycle
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (!clientId || !serverReady || inactivityStopped) return undefined;
+    if (!clientId || !serverReady || inactivityStopped || !pageVisible || !mediaCapability) return undefined;
     setManifestReady(false);
     setError("");
     setCurrentSegNum(null);
@@ -1261,11 +1316,9 @@ export default function ClientDetailsLivestreamSection({
               },
             },
             xhrSetup: (xhr) => {
-              const headers = getAuthHeaders();
-              if (headers.Authorization) {
-                xhr.setRequestHeader("Authorization", headers.Authorization);
-              }
-              xhr.withCredentials = true;
+              const token = mediaCapabilityRef.current;
+              if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+              xhr.withCredentials = false;
             },
           });
 
@@ -1353,7 +1406,13 @@ export default function ClientDetailsLivestreamSection({
             lastHlsProgressAtRef.current = Date.now();
             if (data?.frag && typeof data.frag.sn === "number") {
               setCurrentSegNum(data.frag.sn);
+              setLastSegNum(data.frag.sn);
               if (data.frag.duration > 0) setFragDuration(data.frag.duration);
+              const observedAt = new Date();
+              setLastFetched(observedAt);
+              setLastSegmentTimestamp(observedAt.toISOString());
+              const measuredLatency = Number(hls.latency);
+              setLastSegmentLag(Number.isFinite(measuredLatency) ? measuredLatency : 0);
               setError("");
             }
             try {
@@ -1405,46 +1464,7 @@ export default function ClientDetailsLivestreamSection({
       resetVideo();
       setManifestReady(false);
     };
-  }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped]);
-
-  // -------------------------------------------------------------------------
-  // Backend polling — hvert 2s
-  // -------------------------------------------------------------------------
-  useEffect(() => {
-    if (!clientId || !manifestReady || inactivityStopped) return;
-    let stop = false;
-
-    async function pollLastSegment() {
-      while (!stop) {
-        try {
-          const resp = await fetchWithRetry(
-            `${apiUrl}/api/hls/${clientId}/last-segment-info?nocache=${Date.now()}`,
-            { credentials: "include" }
-          );
-          if (resp.ok) {
-            const data = await resp.json();
-            setLastFetched(new Date());
-            const num = extractSegNum(data.segment);
-            if (num !== null) setLastSegNum(num);
-            if (data.timestamp) {
-              setLastSegmentTimestamp(data.timestamp);
-              setLastSegmentLag((Date.now() - new Date(data.timestamp).getTime()) / 1000);
-            } else {
-              setLastSegmentTimestamp(null);
-              setLastSegmentLag(null);
-            }
-          }
-        } catch {
-          setLastSegmentTimestamp(null);
-          setLastSegmentLag(null);
-        }
-        await new Promise(res => setTimeout(res, LAST_SEGMENT_POLL_MS));
-      }
-    }
-
-    pollLastSegment();
-    return () => { stop = true; };
-  }, [clientId, manifestReady, effectiveRefreshKey, inactivityStopped]);
+  }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, mediaCapability]);
 
   // -------------------------------------------------------------------------
   // Stale watchdog — genstart HLS hvis segmenter stopper efter boot/reboot
@@ -1494,22 +1514,9 @@ export default function ClientDetailsLivestreamSection({
     const check = () => {
       if (stopped || !manifestReady) return;
 
-      const timestampMs = lastSegmentTimestamp
-        ? new Date(lastSegmentTimestamp).getTime()
-        : null;
-
-      const ageFromTimestamp = Number.isFinite(timestampMs)
-        ? (Date.now() - timestampMs) / 1000
-        : null;
-
-      const ageFromLag = Number.isFinite(lastSegmentLag)
-        ? Number(lastSegmentLag)
-        : null;
-
-      const age = Math.max(
-        ageFromTimestamp ?? 0,
-        ageFromLag ?? 0
-      );
+      const age = lastHlsProgressAtRef.current
+        ? (Date.now() - lastHlsProgressAtRef.current) / 1000
+        : 0;
 
       if (age >= STALE_SEGMENT_RESTART_AFTER_SECONDS) {
         restartStaleStream(age);
@@ -1526,8 +1533,6 @@ export default function ClientDetailsLivestreamSection({
   }, [
     clientId,
     manifestReady,
-    lastSegmentTimestamp,
-    lastSegmentLag,
     effectiveRefreshKey,
     inactivityStopped,
     onRestartStream,

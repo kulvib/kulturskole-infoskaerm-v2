@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
+import json
 import threading
 import time
 from typing import Any, Callable
+
+import websockets
 
 from .constants import SHARED_DOMAIN_COMMAND_POLL_SECONDS, SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS
 from .logging_utils import configure_logging
@@ -68,6 +72,126 @@ class LeaseKeeper:
                 return
 
 
+
+
+class CommandWakeChannel:
+    """Best-effort WSS wake channel with HTTPS long-poll fallback.
+
+    The channel never transports command payloads. A wake only causes the
+    existing durable claim endpoint to run, so correctness remains database-
+    authoritative even if every realtime signal is lost.
+    """
+
+    def __init__(self, transport: DomainTransport, logger) -> None:
+        self.transport = transport
+        self.logger = logger
+        self.event = threading.Event()
+        self.stop = threading.Event()
+        self.generation = 0
+        self.thread = threading.Thread(target=self._run, daemon=True, name=f"wake-{transport.credential.domain.value}")
+
+    @staticmethod
+    def supported(transport: object) -> bool:
+        """Return whether the transport implements the realtime wake contract.
+
+        QueueAgent is also used with compatibility/custom transports during
+        staged rollout and in executable contracts. Those transports must keep
+        the historical durable polling path instead of starting a background
+        wake thread that cannot establish WSS.
+        """
+        return (
+            callable(getattr(transport, "websocket_url", None))
+            and callable(getattr(transport, "websocket_headers", None))
+            and callable(getattr(transport, "json_request", None))
+        )
+
+    def start(self) -> bool:
+        if not self.supported(self.transport):
+            return False
+        self.thread.start()
+        return True
+
+    def close(self) -> None:
+        self.stop.set()
+        self.event.set()
+
+    def wait(self, timeout: float) -> bool:
+        signalled = self.event.wait(timeout)
+        if signalled:
+            self.event.clear()
+        return signalled
+
+    def _wake(self, generation: int) -> None:
+        self.generation = max(self.generation, int(generation))
+        self.event.set()
+
+    async def _websocket_once_async(self) -> None:
+        domain = self.transport.credential.domain.value.replace("_", "-")
+        client_id = self.transport.credential.client_id
+        path = f"/api/{domain}-agent/clients/{client_id}/commands/wake/ws"
+        url = self.transport.websocket_url(path)
+        ssl_context = getattr(self.transport, "_ssl_context", None) if url.startswith("wss:") else None
+        async with websockets.connect(
+            url,
+            extra_headers=self.transport.websocket_headers(),
+            ssl=ssl_context,
+            open_timeout=15,
+            close_timeout=5,
+            ping_interval=20,
+            ping_timeout=20,
+            max_size=64 * 1024,
+        ) as websocket:
+            while not self.stop.is_set():
+                try:
+                    raw = await asyncio.wait_for(websocket.recv(), timeout=55)
+                except asyncio.TimeoutError:
+                    continue
+                if not isinstance(raw, str):
+                    continue
+                payload = json.loads(raw)
+                if not isinstance(payload, dict):
+                    continue
+                generation = int(payload.get("generation") or self.generation)
+                self.generation = max(self.generation, generation)
+                if payload.get("type") == "command_available":
+                    self._wake(generation)
+
+    def _websocket_once(self) -> None:
+        asyncio.run(self._websocket_once_async())
+
+    def _long_poll_once(self) -> None:
+        domain = self.transport.credential.domain.value.replace("_", "-")
+        client_id = self.transport.credential.client_id
+        payload = self.transport.json_request(
+            "GET",
+            f"/api/{domain}-agent/clients/{client_id}/commands/wait?after={self.generation}&timeout_seconds=25",
+            timeout=35,
+        )
+        generation = int(payload.get("generation") or self.generation)
+        if payload.get("changed") is True or generation > self.generation:
+            self._wake(generation)
+        else:
+            self.generation = max(self.generation, generation)
+
+    def _run(self) -> None:
+        websocket_failures = 0
+        while not self.stop.is_set():
+            try:
+                self._websocket_once()
+                websocket_failures = 0
+                continue
+            except Exception as exc:
+                websocket_failures += 1
+                if websocket_failures == 1:
+                    self.logger.info("command_wake_websocket_fallback", extra={"event": str(exc)[:160]})
+            # HTTPS long-poll uses normal outbound TCP/443 and proxy handling,
+            # preserving operation on networks that block WebSocket upgrades.
+            try:
+                self._long_poll_once()
+            except Exception:
+                if self.stop.wait(backoff_seconds(min(websocket_failures, 5))):
+                    return
+
 class QueueAgent:
     def __init__(
         self,
@@ -90,6 +214,12 @@ class QueueAgent:
         self._last_claim_status_reported = False
         self.logger = configure_logging(f"clientflow.{transport.credential.domain.value}")
         self._last_status = 0.0
+        self._wake_channel = (
+            CommandWakeChannel(transport, self.logger)
+            if transport.credential.domain.value in {"display", "system"}
+            else None
+        )
+        self._wake_channel_active = False
 
     def _prefix(self) -> str:
         return self.transport.credential.domain.value.replace("_", "-")
@@ -169,6 +299,8 @@ class QueueAgent:
 
     def run_forever(self) -> None:
         attempt = 0
+        if self._wake_channel is not None:
+            self._wake_channel_active = self._wake_channel.start()
         while True:
             try:
                 piggybacked_status: dict[str, Any] | None = None
@@ -192,7 +324,23 @@ class QueueAgent:
                         self._report_status_if_due(force=True)
                 if context is None:
                     attempt = 0
-                    time.sleep(self.poll_seconds)
+                    if self._wake_channel_active and self._wake_channel is not None:
+                        # Keep the historical status/liveness cadence without
+                        # turning every heartbeat into a durable queue claim.
+                        # Wakes claim immediately; otherwise a DB reconciliation
+                        # claim runs at most once per minute.
+                        reconciliation_deadline = time.monotonic() + max(60.0, self.poll_seconds)
+                        while True:
+                            remaining = reconciliation_deadline - time.monotonic()
+                            if remaining <= 0:
+                                break
+                            if self._wake_channel.wait(
+                                min(SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS, remaining)
+                            ):
+                                break
+                            self._report_status_if_due()
+                    else:
+                        time.sleep(self.poll_seconds)
                     continue
                 self.logger.info(
                     "command_claimed",

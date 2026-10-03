@@ -18,6 +18,7 @@ def test_display_and_system_piggyback_due_status_on_existing_claim_request():
     assert 'payload.get("status_reported") is True' in COMMAND_AGENT
     assert "self._last_status = time.monotonic()" in COMMAND_AGENT
     assert "self._report_status_if_due(force=True)" in COMMAND_AGENT
+    assert "self._wake_channel_active = self._wake_channel.start()" in COMMAND_AGENT
 
 
 def test_piggyback_uses_exact_same_canonical_status_payload_builder():

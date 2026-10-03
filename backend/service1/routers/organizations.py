@@ -26,6 +26,7 @@ from ..models import (
     OrganizationNameUpdate,
 )
 from ..auth import get_current_user, get_current_admin_user, _revoke_all_user_refresh_tokens
+from ..realtime_wakeup import queue_wakeup_after_commit
 from ..season_service import (
     DAY_KEYS,
     SeasonValidationError,
@@ -769,6 +770,8 @@ def apply_organization_season_times(
             "day_times": new_day_times,
         },
     )
+    for client_id in updated_clients:
+        queue_wakeup_after_commit(session, domain="display", client_id=client_id)
     session.commit()
     return {
         "ok": True,
@@ -879,6 +882,8 @@ def replace_organization_season_calendars(
             "day_times": new_day_times,
         },
     )
+    for client_id in updated_clients:
+        queue_wakeup_after_commit(session, domain="display", client_id=client_id)
     session.commit()
     return {
         "ok": True,

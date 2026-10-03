@@ -11,6 +11,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
 import os
+import threading
 import uuid
 
 from sqlmodel import Session, select
@@ -29,6 +30,27 @@ ACTIVITY_RENEW_SECONDS = min(
     max(5, ACTIVITY_LEASE_SECONDS // 2),
 )
 ACTIVITY_RETENTION_SECONDS = max(600, int(os.getenv("CLIENT_ACTIVITY_RETENTION_SECONDS", "3600")))
+
+
+# Ephemeral browser presence belongs in process memory on the current one-Render-
+# instance / one-Uvicorn-worker topology. Postgres retains only open/close audit
+# rows; it is no longer used as a 15-second presence heartbeat store.
+_PRESENCE_LOCK = threading.Lock()
+_ACTIVE_PRESENCE: set[tuple[int, str, str]] = set()
+_LAST_ENDED: dict[int, datetime] = {}
+
+
+def _presence_add(client_id: int, domain: str, session_id: str) -> None:
+    with _PRESENCE_LOCK:
+        _ACTIVE_PRESENCE.add((int(client_id), _domain(domain), _session_id(session_id)))
+
+
+def _presence_remove(client_id: int, domain: str, session_id: str) -> None:
+    now = _now()
+    with _PRESENCE_LOCK:
+        _ACTIVE_PRESENCE.discard((int(client_id), _domain(domain), _session_id(session_id)))
+        _LAST_ENDED[int(client_id)] = now
+
 
 
 def _now() -> datetime:
@@ -140,6 +162,7 @@ def end_activity_lease(
 ) -> ClientActivityLease | None:
     domain = _domain(domain)
     session_id = _session_id(session_id)
+    _presence_remove(client_id, domain, session_id)
     row = session.exec(
         select(ClientActivityLease).where(
             ClientActivityLease.client_id == client_id,
@@ -157,16 +180,9 @@ def end_activity_lease(
 
 
 def active_livestream_activity_count(session: Session, client_id: int) -> int:
-    expire_stale_activity_leases(session, client_id)
-    return len(
-        session.exec(
-            select(ClientActivityLease.id).where(
-                ClientActivityLease.client_id == client_id,
-                ClientActivityLease.domain.in_(tuple(ACTIVITY_DOMAINS)),
-                ClientActivityLease.ended_at.is_(None),
-            )
-        ).all()
-    )
+    del session
+    with _PRESENCE_LOCK:
+        return sum(1 for cid, _domain_name, _sid in _ACTIVE_PRESENCE if cid == int(client_id))
 
 
 def active_livestream_activity_client_ids(
@@ -174,28 +190,19 @@ def active_livestream_activity_client_ids(
     *,
     now: datetime | None = None,
 ) -> set[int]:
-    """Return clients with a live Terminal/RD browser lease and expire stale rows."""
-    now = now or _now()
-    cutoff = now - timedelta(seconds=ACTIVITY_LEASE_SECONDS)
-    rows = session.exec(
-        select(ClientActivityLease).where(
-            ClientActivityLease.domain.in_(tuple(ACTIVITY_DOMAINS)),
-            ClientActivityLease.ended_at.is_(None),
-        )
-    ).all()
-    active: set[int] = set()
-    for row in rows:
-        if row.last_seen_at < cutoff:
-            row.ended_at = row.last_seen_at + timedelta(seconds=ACTIVITY_LEASE_SECONDS)
-            row.end_reason = "lease_expired"
-            session.add(row)
-            continue
-        active.add(int(row.client_id))
-    return active
+    del session, now
+    with _PRESENCE_LOCK:
+        return {cid for cid, _domain_name, _sid in _ACTIVE_PRESENCE}
 
 
 def last_livestream_activity_ended_at(session: Session, client_id: int) -> datetime | None:
-    expire_stale_activity_leases(session, client_id)
+    with _PRESENCE_LOCK:
+        recent = _LAST_ENDED.get(int(client_id))
+    if recent is not None:
+        return recent
+    # Process memory is intentionally ephemeral. After a backend restart, use
+    # the durable close audit once so inactivity grace remains restart-safe
+    # without reintroducing periodic presence reads/writes.
     return session.exec(
         select(ClientActivityLease.ended_at)
         .where(
@@ -215,8 +222,15 @@ async def maintain_activity_lease(
     domain: str,
     session_id: str,
 ) -> None:
-    """Renew one browser-session lease until the owning WebSocket closes."""
-    while True:
+    """Publish browser presence without periodic Postgres writes.
+
+    One durable open row is kept for compatibility/audit. The active lifecycle
+    signal itself is process-local and follows the owning WebSocket lifetime.
+    """
+    domain = _domain(domain)
+    session_id = _session_id(session_id)
+    _presence_add(client_id, domain, session_id)
+    try:
         try:
             with Session(engine) as session:
                 touch_activity_lease(
@@ -226,16 +240,12 @@ async def maintain_activity_lease(
                     session_id=session_id,
                 )
                 session.commit()
-        except asyncio.CancelledError:
-            raise
         except Exception:
-            # Presence is auxiliary shared infrastructure: a temporary lease DB
-            # failure must not tear down Terminal or Remote Desktop themselves.
             logger.warning(
-                "client_activity_lease_renew_failed client_id=%s domain=%s session_id=%s",
-                client_id,
-                domain,
-                session_id,
-                exc_info=True,
+                "client_activity_lease_open_failed client_id=%s domain=%s session_id=%s",
+                client_id, domain, session_id, exc_info=True,
             )
-        await asyncio.sleep(ACTIVITY_RENEW_SECONDS)
+        await asyncio.Event().wait()
+    finally:
+        _presence_remove(client_id, domain, session_id)
+

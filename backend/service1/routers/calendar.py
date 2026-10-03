@@ -18,6 +18,7 @@ from ..auth import (
 from ..db import get_session
 from ..models import CalendarMarking, Client, Organization, OrganizationSeasonTimes
 from ..observability import log_safe_exception
+from ..realtime_wakeup import queue_wakeup_after_commit
 from ..season_service import (
     SeasonValidationError,
     current_and_next_seasons,
@@ -143,8 +144,10 @@ def save_marked_days(
                         markings=markings,
                     )
                 )
+        for client_id in unique_client_ids:
+            queue_wakeup_after_commit(session, domain="display", client_id=client_id)
         session.commit()
-        return {"ok": True, "delivery": "client_poll"}
+        return {"ok": True, "delivery": "push_assisted_conditional_fetch"}
     except SQLAlchemyError as exc:
         session.rollback()
         log_safe_exception(
