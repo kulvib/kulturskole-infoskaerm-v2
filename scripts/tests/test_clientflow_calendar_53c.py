@@ -170,7 +170,7 @@ def test_calendar_manual_override_expires_at_next_actual_schedule_boundary() -> 
     )
 
 
-def test_calendar_legacy_lifecycle_constants_and_persistent_state(tmp_path, monkeypatch) -> None:
+def test_calendar_realtime_reconciliation_constants_and_persistent_state(tmp_path, monkeypatch) -> None:
     import sys
 
     runtime_root = str(ROOT / "client/runtime")
@@ -178,7 +178,10 @@ def test_calendar_legacy_lifecycle_constants_and_persistent_state(tmp_path, monk
         sys.path.insert(0, runtime_root)
     from clientflow_runtime import calendar_agent
 
-    assert calendar_agent.POLL_SECONDS == 15.0
+    # Push wake is the fast path; a five-minute conditional fetch is the bounded
+    # reconciliation fallback so lost wake events self-heal without 15s DB polling.
+    assert calendar_agent.POLL_SECONDS == 300.0
+    assert hasattr(calendar_agent, "_wait_for_calendar_wake")
     assert calendar_agent.EVALUATE_SECONDS == 30.0
     assert calendar_agent.BOOT_GRACE_SECONDS == 90.0
     assert calendar_agent.WAKE_REBOOT_DELAY_SECONDS == 15.0

@@ -144,19 +144,24 @@ class LivestreamV2IsolationSourceTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        viewer_start = source.index("// Viewer-owned lifecycle: 10s heartbeat")
+        viewer_start = source.index("// Viewer-owned lifecycle:")
         health_start = source.index("// Poll /health", viewer_start)
         hls_start = source.index("// HLS.js lifecycle", health_start)
-        segment_start = source.index("// Backend polling — hvert 2s", hls_start)
-        watchdog_start = source.index("// Stale watchdog", segment_start)
+        watchdog_start = source.index("// Stale watchdog", hls_start)
         playback_start = source.index("// Playback watchdog", watchdog_start)
         lag_start = source.index("// Forsinkelsesberegning", playback_start)
+
+        # Steady-state backend segment polling was intentionally removed. HLS
+        # fragment events are now the segment-progress authority, so this gate
+        # must fail if the old 2-second polling hot path is reintroduced.
+        self.assertNotIn("// Backend polling — hvert 2s", source)
+        self.assertNotIn("/last-segment-info", source)
+        self.assertIn("Hls.Events.FRAG_CHANGED", source[hls_start:watchdog_start])
 
         for name, block in (
             ("viewer", source[viewer_start:health_start]),
             ("health", source[health_start:hls_start]),
-            ("hls", source[hls_start:segment_start]),
-            ("segment", source[segment_start:watchdog_start]),
+            ("hls", source[hls_start:watchdog_start]),
             ("stale_watchdog", source[watchdog_start:playback_start]),
             ("playback_watchdog", source[playback_start:lag_start]),
         ):
@@ -189,7 +194,7 @@ class LivestreamV2IsolationSourceTests(unittest.TestCase):
         source = (REPO / "frontend/src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx").read_text(
             encoding="utf-8"
         )
-        viewer_start = source.index("// Viewer-owned lifecycle: 10s heartbeat")
+        viewer_start = source.index("// Viewer-owned lifecycle:")
         health_start = source.index("// Poll /health", viewer_start)
         viewer_block = source[viewer_start:health_start]
 

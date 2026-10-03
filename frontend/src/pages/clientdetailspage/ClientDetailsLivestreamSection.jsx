@@ -1065,7 +1065,7 @@ export default function ClientDetailsLivestreamSection({
   }, [clientId, clientOnline, ensureStreamStarted, onRestartStream, resetStreamState]);
 
   // -------------------------------------------------------------------------
-  // Viewer-owned lifecycle: 10s heartbeat, 30s lease, 30s backend grace.
+  // Viewer-owned lifecycle: 25s heartbeat, 75s lease, 30s backend grace.
   // Hidden/page-leave/unmount sends leave immediately; the backend is the
   // lifecycle authority and coalesces start/stop across multiple viewers.
   // -------------------------------------------------------------------------
