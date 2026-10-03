@@ -57,7 +57,7 @@ def test_clean_uncommanded_browser_exit_becomes_manual_close(monkeypatch, tmp_pa
 def test_manual_close_projects_separately_from_programmatic_stop():
     source = (ROOT / "backend/service1/display_control.py").read_text(encoding="utf-8")
     assert 'if runtime_step == "chrome_closed_manual":' in source
-    assert 'chrome_status = "Browser lukket manuelt"' in source
+    assert 'return "Kiosk browser lukket manuelt", "gray", step, False' in source
 
 
 def test_chrome_early_protection_uses_cdp_before_real_navigation():

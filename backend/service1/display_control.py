@@ -522,7 +522,8 @@ def _browser_runtime_projection(runtime: dict[str, Any]) -> tuple[str, str, str 
     already-loaded Display status row without adding polling queries.
     """
     state = str(runtime.get("state") or "unknown").strip().lower()
-    step = str(runtime.get("step") or "").strip().lower() or None
+    runtime_step = str(runtime.get("step") or "").strip().lower()
+    step = runtime_step or None
     reason = str(runtime.get("countdown_reason") or "").strip().lower()
     source = str(runtime.get("event_source") or "runtime").strip().lower()
     try:
@@ -582,7 +583,7 @@ def _browser_runtime_projection(runtime: dict[str, Any]) -> tuple[str, str, str 
         return "Skærm slukket — klienten er stadig online", "blue", step, False
     if step == "display_wake_complete":
         return "Skærm vækket — klient online", "green", step, state == "running"
-    if step == "chrome_closed_manual":
+    if runtime_step == "chrome_closed_manual":
         return "Kiosk browser lukket manuelt", "gray", step, False
     if step == "chrome_closed_programmatically":
         text = {
