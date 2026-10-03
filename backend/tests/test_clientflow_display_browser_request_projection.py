@@ -101,3 +101,53 @@ def test_chrome_status_route_surfaces_browser_request_state(monkeypatch):
     assert payload["chrome_running"] is False
     assert payload["browser_requested"] is True
     assert payload["chrome_step"] == "chrome_failed"
+
+
+def test_display_projection_preserves_precise_runtime_browser_messages() -> None:
+    desired = SimpleNamespace(kiosk_url="https://example.test/", revision=8, browser_refresh_interval_sec=900)
+    status = SimpleNamespace(
+        status_payload={
+            "runtime": {
+                "state": "countdown",
+                "step": "countdown",
+                "countdown_reason": "configuration_change",
+                "countdown_remaining": 7,
+                "browser_requested": True,
+                "updated_at": 1_780_000_100.0,
+            }
+        },
+        reported_at=datetime(2026, 8, 25, 18, 0, 0),
+        agent_version="1.3.29",
+    )
+
+    projection = display_control._display_read_projection_from_rows(desired, status, None)
+
+    assert projection["chrome_status"] == "Kiosk browser starter ved URL-skift om 7 sekunder…"
+    assert projection["chrome_color"] == "orange"
+    assert projection["chrome_step"] == "countdown"
+    assert projection["chrome_running"] is False
+
+
+def test_display_power_transition_overrides_stale_generic_browser_text() -> None:
+    desired = SimpleNamespace(kiosk_url="https://example.test/", revision=9, browser_refresh_interval_sec=900)
+    status = SimpleNamespace(
+        status_payload={
+            "runtime": {
+                "state": "running",
+                "browser_pid": 4242,
+                "event_source": "system_start",
+                "browser_requested": True,
+                "updated_at": 1_780_000_100.0,
+            },
+            "display_power": {"state": "on", "updated_at": 1_780_000_105.0},
+        },
+        reported_at=datetime(2026, 8, 25, 18, 0, 0),
+        agent_version="1.3.29",
+    )
+
+    projection = display_control._display_read_projection_from_rows(desired, status, None)
+
+    assert projection["chrome_status"] == "Skærm vækket — klient online"
+    assert projection["chrome_color"] == "green"
+    assert projection["chrome_step"] == "display_wake_complete"
+    assert projection["chrome_running"] is True

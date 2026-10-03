@@ -73,13 +73,15 @@ test("livestream UI uses the dedicated v2 control plane", () => {
   assert.doesNotMatch(api, /\/api\/livestream\/(?:status|start|stop)\//);
 });
 
-test("frontend never owns server HLS reset during display changes", () => {
+test("display changes request a fresh Livestream-v2 generation without direct HLS reset", () => {
   assert.doesNotMatch(source, /resetHlsFiles/);
   assert.doesNotMatch(source, /\/api\/hls\/[^`]+\/reset/);
   const displayRestartStart = source.indexOf("const restartStreamAfterDisplayChange");
   const displayRestartEnd = source.indexOf("\n  useEffect(() => {", displayRestartStart);
   const displayRestart = source.slice(displayRestartStart, displayRestartEnd);
-  assert.match(displayRestart, /ensureStreamStarted/);
+  assert.match(displayRestart, /livestream_restart/);
+  assert.match(displayRestart, /streamHasBeenActive/);
+  assert.doesNotMatch(displayRestart, /ensureStreamStarted/);
   assert.doesNotMatch(displayRestart, /\/reset/);
 });
 

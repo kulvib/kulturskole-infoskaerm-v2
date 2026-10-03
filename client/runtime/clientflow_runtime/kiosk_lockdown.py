@@ -35,8 +35,13 @@ EXTRA_DESKTOP_IDS = (
     "org.gnome.FileRoller.desktop", "file-roller.desktop", "org.gnome.Calculator.desktop", "libreoffice-startcenter.desktop",
     "org.gnome.baobab.desktop", "org.gnome.seahorse.Application.desktop",
 )
+# Nautilus is intentionally NOT blocked here. Desktop Icons NG depends on its
+# org.freedesktop.FileManager1 service during GNOME login, even when the normal
+# Nautilus launcher is hidden from the kiosk account. Blocking the executable
+# races DING at boot and produces a false "Nautilus File Manager not found"
+# warning.
 TARGET_BINARIES = (
-    "/usr/bin/gnome-control-center", "/usr/bin/nautilus", "/usr/bin/gnome-terminal", "/usr/bin/kgx", "/usr/bin/console",
+    "/usr/bin/gnome-control-center", "/usr/bin/gnome-terminal", "/usr/bin/kgx", "/usr/bin/console",
     "/usr/bin/xterm", "/usr/bin/uxterm", "/usr/bin/firefox", "/snap/bin/firefox", "/usr/bin/gnome-software",
     "/usr/bin/update-manager", "/usr/bin/software-updater", "/usr/bin/update-notifier", "/usr/bin/software-properties-gtk",
     "/usr/bin/ubuntu-app-center", "/snap/bin/ubuntu-app-center", "/snap/bin/snap-store", "/usr/bin/snap-store",
@@ -45,6 +50,10 @@ TARGET_BINARIES = (
     "/usr/bin/system-config-printer", "/usr/bin/gnome-text-editor", "/usr/bin/gedit", "/usr/bin/file-roller", "/usr/bin/baobab",
     "/usr/bin/seahorse", "/usr/bin/dconf-editor",
 )
+# Rollback/verification also knows about the previous-contract Nautilus deny ACL so a
+# previously interrupted apply cannot leave that obsolete restriction behind.
+ACL_CLEANUP_BINARIES = (*TARGET_BINARIES, "/usr/bin/nautilus")
+
 DENIED_PREFIXES = (
     "org.freedesktop.packagekit.", "org.debian.apt.", "org.freedesktop.systemd1.", "org.freedesktop.NetworkManager.",
     "org.freedesktop.udisks2.", "org.freedesktop.accounts.", "org.freedesktop.UPower.", "org.bluez.",
@@ -185,7 +194,7 @@ def _polkit_text(kiosk_user: str) -> str:
 
 
 def _acl_entries(kiosk_uid: int) -> tuple[set[str], list[str]]:
-    existing = [raw for raw in TARGET_BINARIES if Path(raw).exists()]
+    existing = [raw for raw in ACL_CLEANUP_BINARIES if Path(raw).exists()]
     if not existing:
         return set(), []
     getfacl = Path("/usr/bin/getfacl")
@@ -246,12 +255,16 @@ def _verify(kiosk_user: str, record, home: Path, *, enabled: bool) -> dict[str, 
         if residual_launchers:
             drift.append(f"launchers-residual:{','.join(residual_launchers[:5])}")
 
-    acl_found, acl_expected = _acl_entries(record.pw_uid)
+    acl_found, _acl_scanned = _acl_entries(record.pw_uid)
     if enabled:
-        missing_acl = sorted(set(acl_expected) - acl_found)
-        checks["acl"] = not missing_acl
+        acl_expected = {raw for raw in TARGET_BINARIES if Path(raw).exists()}
+        missing_acl = sorted(acl_expected - acl_found)
+        unexpected_acl = sorted(acl_found - acl_expected)
+        checks["acl"] = not missing_acl and not unexpected_acl
         if missing_acl:
             drift.append(f"acl:{','.join(missing_acl[:5])}")
+        if unexpected_acl:
+            drift.append(f"acl-unexpected:{','.join(unexpected_acl[:5])}")
     else:
         checks["acl"] = not acl_found
         if acl_found:
@@ -396,7 +409,8 @@ def _restore_launchers(home: Path, record) -> None:
 def _apply_acl(kiosk_user: str, enabled: bool) -> None:
     if not Path("/usr/bin/setfacl").is_file():
         raise KioskLockdownError("acl/setfacl mangler")
-    for raw in TARGET_BINARIES:
+    targets = TARGET_BINARIES if enabled else ACL_CLEANUP_BINARIES
+    for raw in targets:
         if not Path(raw).exists():
             continue
         if enabled:
@@ -413,6 +427,25 @@ def _apply_polkit(kiosk_user: str, enabled: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_polkit_text(kiosk_user), encoding="utf-8")
     os.chmod(path, 0o644)
+
+
+def _require_gsettings_baseline_ready(kiosk_user: str, record) -> None:
+    """Fail before restrictive mutations until the kiosk GNOME session is ready.
+
+    The always-on kiosk baseline owns these values. During early boot the user
+    D-Bus/GSettings session can briefly be unavailable; applying ACL/Polkit
+    before that readiness point creates a partial lockdown that DING observes.
+    The display command plane is retryable, so reject harmlessly and let the
+    next attempt converge once the session baseline is visible.
+    """
+    drift: list[str] = []
+    for schema, key, expected in ENFORCED_GSETTINGS:
+        if _gsettings_value(kiosk_user, record, schema, key) != expected:
+            drift.append(f"gsettings:{schema}/{key}")
+    if drift:
+        raise KioskLockdownError(
+            "GNOME kiosk-session baseline er ikke klar endnu: " + "; ".join(drift[:6])
+        )
 
 
 def _apply_gsettings(kiosk_user: str, record, enabled: bool) -> None:
@@ -437,20 +470,75 @@ def _set_quick_guard_running(enabled: bool) -> None:
     _run([str(SYSTEMCTL), verb, QUICK_GUARD_UNIT], timeout=30, required=enabled)
 
 
+def _cleanup_partial_apply(kiosk_user: str, record, home: Path) -> tuple[dict[str, Any], list[str]]:
+    """Best-effort rollback of every optional-lockdown mutation.
+
+    This helper deliberately does not change the desired-state bit. A failed
+    apply remains desired=True/error so backend reconciliation retries it, but
+    the physical kiosk is never left in a half-applied state between retries.
+    """
+    errors: list[str] = []
+    cleanup_steps = (
+        ("quick-guard", lambda: _set_quick_guard_running(False)),
+        ("launchers", lambda: _restore_launchers(home, record)),
+        ("acl", lambda: _apply_acl(kiosk_user, False)),
+        ("polkit", lambda: _apply_polkit(kiosk_user, False)),
+        ("gsettings", lambda: _apply_gsettings(kiosk_user, record, False)),
+    )
+    for name, operation in cleanup_steps:
+        try:
+            operation()
+        except Exception as exc:  # cleanup must continue through every owned surface
+            errors.append(f"{name}:{exc}")
+    try:
+        verification = _verify(kiosk_user, record, home, enabled=False)
+    except Exception as exc:
+        errors.append(f"verify:{exc}")
+        verification = {"ok": False, "checks": {}, "drift": ["cleanup-verification-failed"]}
+    return verification, errors
+
+
 def apply() -> dict[str, Any]:
     kiosk_user, record, home = _account()
+
+    # The GNOME user session is transiently incomplete during login. Never
+    # touch launchers/ACL/Polkit until the always-on baseline is observable.
+    _require_gsettings_baseline_ready(kiosk_user, record)
     _write_state(True, "applying", "Kiosk lockdown anvendes", kiosk_user)
-    _hide_launchers(home, record)
-    _apply_acl(kiosk_user, True)
-    _apply_polkit(kiosk_user, True)
-    _apply_gsettings(kiosk_user, record, True)
-    # The optional quick-settings guard is part of the applied contract.
-    # Do not publish terminal applied state until systemd accepted the guard.
-    _set_quick_guard_running(True)
-    verification = _verify(kiosk_user, record, home, enabled=True)
-    if not verification["ok"]:
-        _write_state(True, "error", "Kiosk lockdown kunne ikke verificeres efter apply", kiosk_user, enforcement=verification)
-        raise KioskLockdownError("Kiosk lockdown apply gav uverificeret enforcement: " + "; ".join(verification["drift"][:6]))
+
+    try:
+        # Apply user-session settings before filesystem restrictions. They are
+        # non-destructive and give us one more early readiness boundary.
+        _apply_gsettings(kiosk_user, record, True)
+        _hide_launchers(home, record)
+        _apply_acl(kiosk_user, True)
+        _apply_polkit(kiosk_user, True)
+        # The optional quick-settings guard is part of the applied contract.
+        # Do not publish terminal applied state until systemd accepted the guard.
+        _set_quick_guard_running(True)
+        verification = _verify(kiosk_user, record, home, enabled=True)
+        if not verification["ok"]:
+            raise KioskLockdownError(
+                "Kiosk lockdown apply gav uverificeret enforcement: "
+                + "; ".join(verification["drift"][:6])
+            )
+    except Exception as exc:
+        cleanup, cleanup_errors = _cleanup_partial_apply(kiosk_user, record, home)
+        cleanup_ok = bool(cleanup.get("ok")) and not cleanup_errors
+        message = (
+            "Kiosk lockdown apply fejlede; delvise ændringer er rullet sikkert tilbage"
+            if cleanup_ok
+            else "Kiosk lockdown apply fejlede; rollback kræver ny reconciliation"
+        )
+        _write_state(True, "error", message, kiosk_user, enforcement=cleanup)
+        if cleanup_errors:
+            raise KioskLockdownError(
+                f"{exc}; rollback-fejl: " + "; ".join(cleanup_errors[:6])
+            ) from exc
+        if isinstance(exc, KioskLockdownError):
+            raise
+        raise KioskLockdownError(str(exc)) from exc
+
     return _write_state(
         True, "applied", "Kiosk lockdown aktiv og verificeret på kiosk-brugeren", kiosk_user,
         enforcement=verification,

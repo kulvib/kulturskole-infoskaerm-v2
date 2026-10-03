@@ -90,16 +90,29 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 // re-read a stable 100-client list five times per 10 seconds.
 const CLIENT_LIST_ACTIVE_POLL_MS = 2_000;
 const CLIENT_LIST_IDLE_POLL_MS = 5_000;
+const BUSY_CLIENT_LIST_CHROME_STEPS = new Set([
+  "clear_cookies",
+  "terminate_chrome",
+  "kill_chrome",
+  "starting_chrome",
+  "countdown",
+  "display_sleep_countdown",
+  "system_reboot_countdown",
+  "system_rebooting",
+  "system_shutting_down",
+]);
 
 function clientListNeedsFastPolling(items = []) {
   return items.some((client) => {
     const status = String(client?.status || "").trim().toLowerCase();
     const state = String(client?.state || "").trim().toLowerCase();
     const pendingAction = String(client?.pending_chrome_action || "none").trim().toLowerCase();
+    const chromeStep = String(client?.chrome_step || "").trim().toLowerCase();
 
     return (
       status !== "approved" ||
       (pendingAction && pendingAction !== "none") ||
+      BUSY_CLIENT_LIST_CHROME_STEPS.has(chromeStep) ||
       client?.pending_reboot === true ||
       client?.pending_shutdown === true ||
       client?.pending_os_update === true ||
@@ -423,6 +436,9 @@ function isClientListEqual(a = [], b = []) {
       ca.approval_ready_boot_id !== cb.approval_ready_boot_id ||
       ca.state !== cb.state ||
       ca.pending_chrome_action !== cb.pending_chrome_action ||
+      ca.chrome_status !== cb.chrome_status ||
+      ca.chrome_color !== cb.chrome_color ||
+      ca.chrome_running !== cb.chrome_running ||
       ca.chrome_step !== cb.chrome_step ||
       ca.last_chrome_step !== cb.last_chrome_step ||
       ca.display_power_status !== cb.display_power_status ||
@@ -510,20 +526,33 @@ const ClientStatusCell = memo(function ClientStatusCell({ isOnline, client }) {
   const stateText = String(runtimeState.label || "normal")
     .trim()
     .toLowerCase();
-  const tone = !isOnline
+  const browserStatus = String(client?.chrome_status || "Browserstatus ukendt").trim();
+  const browserColor = String(client?.chrome_color || "").trim().toLowerCase();
+  const tone = !isOnline || browserColor === "red"
     ? "error"
-    : runtimeState.color === "warning"
+    : browserColor === "orange" || runtimeState.color === "warning"
       ? "warning"
-      : runtimeState.color === "info"
+      : browserColor === "blue" || runtimeState.color === "info"
         ? "info"
         : "success";
+  const label = `${onlineText} / ${stateText} / ${browserStatus}`;
 
   return (
-    <Chip
-      size="small"
-      label={`${onlineText} / ${stateText}`}
-      sx={compactDarkChipSx(tone, { minWidth: 104 })}
-    />
+    <Tooltip title={browserStatus} placement="top" arrow>
+      <Chip
+        size="small"
+        label={label}
+        sx={compactDarkChipSx(tone, {
+          minWidth: 104,
+          maxWidth: 360,
+          "& .MuiChip-label": {
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          },
+        })}
+      />
+    </Tooltip>
   );
 });
 

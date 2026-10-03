@@ -18,6 +18,9 @@ def test_control_room_summary_is_narrow_and_reuses_canonical_list_projection() -
     block = models.split("class ClientControlRoomListRead(ClientBase):", 1)[1].split("class ClientRead(ClientBase):", 1)[0]
     assert "presence: ClientPresenceRead" in block
     assert "pending_chrome_action" in block
+    assert "chrome_status: Optional[str]" in block
+    assert "chrome_color: Optional[str]" in block
+    assert "chrome_running: Optional[bool]" in block
     assert "pending_reboot" in block
     assert "pending_shutdown" in block
     assert "pending_os_update" in block

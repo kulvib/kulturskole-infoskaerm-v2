@@ -30,6 +30,11 @@ test("Control Room list uses the narrow summary transport and adaptive cadence",
   assert.match(page, /label: "Klar til godkendelse"/);
   assert.match(page, /label: "Afventer reboot"/);
   assert.match(page, /pendingAction && pendingAction !== "none"/);
+  assert.match(page, /BUSY_CLIENT_LIST_CHROME_STEPS\.has\(chromeStep\)/);
+  assert.match(page, /ca\.chrome_status !== cb\.chrome_status/);
+  assert.match(page, /ca\.chrome_color !== cb\.chrome_color/);
+  assert.match(page, /browserStatus = String\(client\?\.chrome_status/);
+  assert.match(page, /label = `\$\{onlineText\} \/ \$\{stateText\} \/ \$\{browserStatus\}`/);
   assert.match(page, /client\?\.pending_reboot === true/);
   assert.match(page, /client\?\.pending_shutdown === true/);
   assert.match(page, /client\?\.pending_os_update === true/);
