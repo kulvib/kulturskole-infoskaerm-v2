@@ -44,6 +44,9 @@ def test_apply_refuses_to_publish_applied_when_verification_fails(tmp_path, monk
     user, record, home = _account(tmp_path)
     monkeypatch.setattr(kiosk_lockdown, "STATE_PATH", tmp_path / "state.json")
     monkeypatch.setattr(kiosk_lockdown, "_account", lambda: (user, record, home))
+    # This test isolates post-apply verification failure; GNOME boot-readiness is
+    # covered separately by the transactional boot regression tests.
+    monkeypatch.setattr(kiosk_lockdown, "_require_gsettings_baseline_ready", lambda *_args: None)
     monkeypatch.setattr(kiosk_lockdown, "_hide_launchers", lambda *_args: None)
     monkeypatch.setattr(kiosk_lockdown, "_apply_acl", lambda *_args: None)
     monkeypatch.setattr(kiosk_lockdown, "_apply_polkit", lambda *_args: None)

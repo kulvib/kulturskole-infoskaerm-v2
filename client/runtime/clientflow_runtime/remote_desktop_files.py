@@ -7,6 +7,7 @@ import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import re
+import secrets
 import shutil
 import stat
 from typing import Any, Iterator
@@ -240,22 +241,71 @@ class FileArea:
         if state is None:
             raise ValueError("Uploaden er ikke tilbudt")
         temporary: Path = state["temporary"]
+        target_local_temporary: Path | None = None
+        published = False
+        target: Path | None = None
         try:
-            digest = hashlib.sha256()
-            size = 0
-            descriptor = os.open(temporary, os.O_RDONLY | os.O_NOFOLLOW)
-            with os.fdopen(descriptor, "rb", closefd=True) as handle:
-                while chunk := handle.read(MAX_CHUNK_BYTES):
-                    size += len(chunk)
-                    digest.update(chunk)
-            if size != state["size"] or digest.hexdigest() != state["sha256"]:
-                raise ValueError("Uploadens størrelse eller SHA-256 matcher ikke")
             target = self._resolve(state["target_relative"], must_exist=False)
             if target.exists() or target.is_symlink():
                 raise ValueError("Uploadmålet findes allerede")
-            os.link(temporary, target, follow_symlinks=False)
-            os.chmod(target, 0o600)
+
+            # /var/lib/clientflow and /home may be different mount points. A
+            # hard-link from the private staging area to kiosk home therefore
+            # fails with EXDEV on valid deployments. Copy+verify into a random
+            # O_EXCL file in the destination directory first; the final hard
+            # link is then same-filesystem, atomic and refuses overwrite races.
+            for _attempt in range(4):
+                candidate = target.parent / f".clientflow-upload-{secrets.token_hex(16)}.part"
+                try:
+                    destination_fd = os.open(
+                        candidate,
+                        os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                        0o600,
+                    )
+                    target_local_temporary = candidate
+                    break
+                except FileExistsError:
+                    continue
+            else:
+                raise ValueError("Kunne ikke oprette sikker destinations-staging til upload")
+
+            digest = hashlib.sha256()
+            size = 0
+            source_fd: int | None = None
+            try:
+                source_fd = os.open(temporary, os.O_RDONLY | os.O_NOFOLLOW)
+                while True:
+                    chunk = os.read(source_fd, MAX_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    digest.update(chunk)
+                    view = memoryview(chunk)
+                    while view:
+                        written = os.write(destination_fd, view)
+                        if written <= 0:
+                            raise OSError("Upload kunne ikke kopieres til destinationsfilsystemet")
+                        view = view[written:]
+                os.fsync(destination_fd)
+            finally:
+                if source_fd is not None:
+                    os.close(source_fd)
+                os.close(destination_fd)
+
+            if size != state["size"] or digest.hexdigest() != state["sha256"]:
+                raise ValueError("Uploadens størrelse eller SHA-256 matcher ikke")
+
+            try:
+                os.link(target_local_temporary, target, follow_symlinks=False)
+            except FileExistsError as exc:
+                raise ValueError("Uploadmålet findes allerede") from exc
+            published = True
             _fsync_directory(target.parent)
+
+            target_local_temporary.unlink()
+            target_local_temporary = None
+            _fsync_directory(target.parent)
+
             temporary.unlink()
             _fsync_directory(temporary.parent)
             return {
@@ -265,7 +315,17 @@ class FileArea:
                 "size_bytes": size,
                 "sha256": state["sha256"],
             }
+        except Exception:
+            if published and target is not None:
+                target.unlink(missing_ok=True)
+                try:
+                    _fsync_directory(target.parent)
+                except OSError:
+                    pass
+            raise
         finally:
+            if target_local_temporary is not None:
+                target_local_temporary.unlink(missing_ok=True)
             temporary.unlink(missing_ok=True)
 
     def operation(self, message_type: str, message: dict[str, Any]) -> dict[str, Any]:

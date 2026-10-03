@@ -1033,6 +1033,14 @@ def test_kiosk_lockdown_frontend_api_backend_reconcile_agent_broker_and_observed
         lambda: ("clientflow-kiosk", record, home),
     )
     monkeypatch.setattr(kiosk_lockdown, "STATE_PATH", tmp_path / "kiosk-lockdown-state.json")
+    # This roundtrip test uses a synthetic kiosk account without a real GNOME/DBus
+    # session. Boot-readiness is covered separately; keep this test focused on the
+    # frontend/API/reconcile/agent/broker/observed-state contract.
+    monkeypatch.setattr(
+        kiosk_lockdown,
+        "_require_gsettings_baseline_ready",
+        lambda _user, _record: None,
+    )
     local_effects: list[tuple[str, bool | None]] = []
     fake_enforcement = {
         "launchers": False,

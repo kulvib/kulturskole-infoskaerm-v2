@@ -870,6 +870,12 @@ export default function ClientDetailsLivestreamSection({
 
   const restartStreamAfterDisplayChange = useCallback(async () => {
     if (!clientId || clientOnline === false) return;
+    const streamHasBeenActive =
+      serverReady ||
+      manifestReady ||
+      lastSegNum !== null ||
+      Boolean(lastSegmentTimestamp);
+    if (!streamHasBeenActive) return;
 
     const now = Date.now();
     if (displayChangeRestartInFlightRef.current || now - lastDisplayChangeRestartAtRef.current < 5000) {
@@ -888,12 +894,26 @@ export default function ClientDetailsLivestreamSection({
     setRefreshing(true);
 
     try {
-      // Ubuntu-controlleren/supervisoren ejer producer-generation og HLS-reset
-      // efter displayændring. Browseren nulstiller playerstate og sender kun et
-      // idempotent ensure-start som fallback; viewer-presence ejer normal lifecycle.
-      await ensureStreamStarted("display_resolution_changed", { force: true });
-    } catch {
-      // ensureStreamStarted håndterer selv synlig fejltekst.
+      // Display-resolution er en fysisk capture-boundary. Anmod derfor om en
+      // rigtig ny Livestream-v2 generation i stedet for idempotent start, som
+      // ellers coalescer mod den eksisterende producer og kan holde gammel
+      // geometri indtil næste periodiske probe. Viewer-presence ejer fortsat
+      // den normale start/stop-lifecycle.
+      await sendLivestreamCommand(clientId, "livestream_restart", {
+        source: "display_resolution_changed",
+      });
+      streamStartedByThisViewRef.current = true;
+      if (typeof onCommandSent === "function") {
+        try {
+          onCommandSent({ action: "livestream_restart", reason: "display_resolution_changed" });
+        } catch {
+          // Kommandoen er allerede sendt.
+        }
+      }
+      setAutoStartStatus("Livestream genstartet efter skærmændring — venter på segmenter …");
+    } catch (err) {
+      setAutoStartStatus("");
+      setAutoStartError(err?.message || "Kunne ikke genstarte livestream efter skærmændring.");
     }
 
     setLocalRefreshKey((k) => k + 1);
@@ -909,9 +929,13 @@ export default function ClientDetailsLivestreamSection({
   }, [
     clientId,
     clientOnline,
-    ensureStreamStarted,
+    lastSegNum,
+    lastSegmentTimestamp,
+    manifestReady,
+    onCommandSent,
     onRestartStream,
     resetStreamState,
+    serverReady,
   ]);
 
   useEffect(() => {
@@ -2074,18 +2098,9 @@ export default function ClientDetailsLivestreamSection({
     lastDisplayRuntimeSignatureRef.current = displayRuntimeSignature;
 
     // Når klienten selv rapporterer en ny faktisk skærmopløsning efter xrandr,
-    // skal livestream-visningen slippe gamle HLS-segmenter/manifest.
-    // Vi gør det kun hvis streamen allerede har været aktiv, så en ren
-    // auto-detektering ikke starter livestream unødigt.
-    const streamHasBeenActive =
-      serverReady ||
-      manifestReady ||
-      lastSegNum !== null ||
-      Boolean(lastSegmentTimestamp);
-
-    if (streamHasBeenActive) {
-      restartStreamAfterDisplayChange();
-    }
+    // skal en allerede aktiv stream skifte generation med det samme. Callbacken
+    // starter aldrig en ellers inaktiv stream.
+    restartStreamAfterDisplayChange();
 
     return undefined;
   }, [

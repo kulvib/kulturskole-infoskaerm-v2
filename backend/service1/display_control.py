@@ -515,6 +515,94 @@ def _epoch_datetime(value: Any) -> datetime | None:
         return None
 
 
+def _browser_runtime_projection(runtime: dict[str, Any]) -> tuple[str, str, str | None, bool | None]:
+    """Project the canonical Display runtime into the same operator text as local GUI.
+
+    This is intentionally pure and DB-free so detail and list reads can reuse the
+    already-loaded Display status row without adding polling queries.
+    """
+    state = str(runtime.get("state") or "unknown").strip().lower()
+    runtime_step = str(runtime.get("step") or "").strip().lower()
+    step = runtime_step or None
+    reason = str(runtime.get("countdown_reason") or "").strip().lower()
+    source = str(runtime.get("event_source") or "runtime").strip().lower()
+    try:
+        seconds = max(0, int(runtime.get("countdown_remaining") or 0))
+    except (TypeError, ValueError):
+        seconds = 0
+    plural = "" if seconds == 1 else "er"
+
+    if state == "countdown":
+        projected_step = step or "countdown"
+        if projected_step == "display_sleep_countdown" or reason == "display_power_off":
+            return f"Skærm slukkes om {seconds} sekund{plural}…", "orange", projected_step, False
+        if reason == "configuration_change":
+            text = f"Kiosk browser starter ved URL-skift om {seconds} sekund{plural}…"
+        elif reason == "reset_browser":
+            text = f"Kiosk browser nulstilles — starter om {seconds} sekund{plural}…"
+        elif reason.startswith("calendar"):
+            text = f"Kiosk browser starter fra kalender om {seconds} sekund{plural}…"
+        else:
+            text = f"Kiosk browser starter om {seconds} sekund{plural}…"
+        return text, "orange", projected_step, False
+
+    if state == "starting":
+        text = {
+            "backend": "Starter kiosk browser fra backend…",
+            "gui": "Starter kiosk browser fra GUI…",
+            "calendar": "Starter kiosk browser fra kalender…",
+            "system_start": "Starter kiosk browser ved systemstart…",
+            "url_change": "Starter kiosk browser ved URL-skift…",
+        }.get(source, "Starter kiosk browser…")
+        return text, "orange", step or "starting_chrome", False
+    if state == "stopping":
+        return "Lukker kiosk browser…", "orange", step or "terminate_chrome", False
+    if state == "running" and runtime.get("browser_pid"):
+        text = {
+            "backend": "Kiosk browser startet fra backend",
+            "gui": "Kiosk browser startet fra GUI på klient",
+            "calendar": "Kiosk browser startet fra kalender",
+            "system_start": "Kiosk browser startet ved systemstart",
+            "url_change": "Kiosk browser startet ved URL-skift",
+            "reset_browser": "Kiosk browser startet efter nulstilling",
+        }.get(source, "Kiosk browser kører")
+        return text, "green", step or "start_chrome", True
+    if state == "resetting":
+        return "Nulstiller browserprofil og cookies…", "orange", step or "clear_cookies", False
+    if state == "waiting_session":
+        return "Kiosk browser venter på grafisk session…", "orange", step or "browser_waiting_session", False
+    if state == "failed":
+        detail = str(runtime.get("error") or "").strip()
+        return (f"Fejl: {detail}" if detail else "Fejl i kiosk browser"), "red", step or "chrome_failed", False
+
+    if step == "system_rebooting":
+        return "Klient genstarter…", "red", step, False
+    if step == "system_shutting_down":
+        return "Klient lukker ned…", "red", step, False
+    if step == "display_sleep_complete":
+        return "Skærm slukket — klienten er stadig online", "blue", step, False
+    if step == "display_wake_complete":
+        return "Skærm vækket — klient online", "green", step, state == "running"
+    if runtime_step == "chrome_closed_manual":
+        return "Kiosk browser lukket manuelt", "gray", step, False
+    if step == "chrome_closed_programmatically":
+        text = {
+            "backend": "Kiosk browser lukket fra backend",
+            "gui": "Kiosk browser lukket fra GUI på klient",
+            "calendar": "Kiosk browser lukket fra kalender",
+            "url_change": "Kiosk browser lukket ved URL-skift",
+            "pending_reboot": "Kiosk browser lukket — klient genstarter",
+            "pending_shutdown": "Kiosk browser lukket — klient lukker ned",
+            "display_sleep": "Kiosk browser lukket — klient i dvale",
+            "reset_browser": "Kiosk browser nulstilles — lukker browser…",
+        }.get(source, "Kiosk browser stoppet")
+        color = "orange" if source in {"pending_reboot", "pending_shutdown", "display_sleep", "reset_browser"} else "gray"
+        return text, color, step, False
+    if state == "stopped":
+        return "Kiosk browser stoppet", "gray", step or "chrome_closed_programmatically", False
+    return "Ingen status.", "gray", step, None
+
+
 def _display_read_projection_from_rows(
     desired: DisplayDesiredConfiguration | None,
     status: ClientDomainStatus | None,
@@ -522,65 +610,9 @@ def _display_read_projection_from_rows(
 ) -> dict[str, Any]:
     status_payload = status.status_payload if status and isinstance(status.status_payload, dict) else {}
     runtime = _runtime_payload(status_payload)
-    state = str(runtime.get("state") or "unknown").strip().lower()
     browser_requested = runtime.get("browser_requested") if isinstance(runtime.get("browser_requested"), bool) else None
     runtime_updated = _epoch_datetime(runtime.get("updated_at"))
-    if state == "running":
-        chrome_status = "Kiosk browser kører"
-        chrome_color = "green"
-        chrome_step = "start_chrome"
-        chrome_running: bool | None = True
-    elif state == "stopped":
-        chrome_status = "Browser stoppet"
-        chrome_color = "gray"
-        chrome_step = "chrome_closed_programmatically"
-        chrome_running = False
-    elif state == "waiting_session":
-        chrome_status = "Browser venter på aktiv kiosk-session"
-        chrome_color = "orange"
-        chrome_step = "browser_waiting_session"
-        chrome_running = False
-    elif state == "failed":
-        detail = str(runtime.get("error") or "browser_runtime_failed")[:240]
-        chrome_status = f"Browserfejl: {detail}"
-        chrome_color = "red"
-        chrome_step = "chrome_failed"
-        chrome_running = False
-    else:
-        chrome_status = "Browserstatus ukendt"
-        chrome_color = "orange"
-        chrome_step = None
-        chrome_running = None
-
-    runtime_step = str(runtime.get("step") or "").strip().lower()
-    if runtime_step == "chrome_closed_manual":
-        chrome_status = "Browser lukket manuelt"
-        chrome_color = "gray"
-        chrome_step = "chrome_closed_manual"
-        chrome_running = False
-    elif runtime_step in {"clear_cookies", "countdown", "display_sleep_countdown"}:
-        chrome_step = runtime_step
-        chrome_color = "orange"
-        chrome_running = False if runtime_step == "clear_cookies" else chrome_running
-        try:
-            countdown_remaining = int(runtime.get("countdown_remaining"))
-        except (TypeError, ValueError):
-            countdown_remaining = None
-        if runtime_step == "clear_cookies":
-            chrome_status = "Rydder browserprofil, cookies og cache"
-        elif runtime_step == "display_sleep_countdown":
-            chrome_status = (
-                f"Skærmen slukkes om {countdown_remaining} sekunder"
-                if countdown_remaining is not None
-                else "Skærmen slukkes efter countdown"
-            )
-        else:
-            chrome_status = (
-                f"Kiosk-browser starter om {countdown_remaining} sekunder"
-                if countdown_remaining is not None
-                else "Kiosk-browser starter efter countdown"
-            )
-
+    chrome_status, chrome_color, chrome_step, chrome_running = _browser_runtime_projection(runtime)
     step_updated = runtime_updated
     power = status_payload.get("display_power") if isinstance(status_payload, dict) else None
     power = power if isinstance(power, dict) else {}
@@ -588,6 +620,10 @@ def _display_read_projection_from_rows(
     power_updated = _epoch_datetime(power.get("updated_at"))
     if power_state in {"on", "off"} and power_updated is not None and (runtime_updated is None or power_updated >= runtime_updated):
         chrome_step = "display_wake_complete" if power_state == "on" else "display_sleep_complete"
+        chrome_status = "Skærm vækket — klient online" if power_state == "on" else "Skærm slukket — klienten er stadig online"
+        chrome_color = "green" if power_state == "on" else "blue"
+        if power_state == "off":
+            chrome_running = False
         step_updated = power_updated
 
     calendar_raw = status_payload.get("calendar") if isinstance(status_payload, dict) else None

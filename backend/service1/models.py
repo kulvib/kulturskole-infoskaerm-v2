@@ -419,6 +419,9 @@ class ClientControlRoomListRead(ClientBase):
     created_at: Optional[datetime] = None
     approval_ready_at: Optional[datetime] = None
     approval_ready_boot_id: Optional[str] = None
+    chrome_status: Optional[str] = None
+    chrome_color: Optional[str] = None
+    chrome_running: Optional[bool] = None
     chrome_step: Optional[str] = None
     display_power: Optional[str] = None
     pending_chrome_action: Optional[ChromeAction] = ChromeAction.NONE
