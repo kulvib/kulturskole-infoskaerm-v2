@@ -702,6 +702,7 @@ export default function ClientDetailsLivestreamSection({
   const lastVideoTimeRef = useRef(0);
   const viewerIdRef = useRef(`viewer-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const viewerLeaveSentRef = useRef(false);
+  const hiddenInactivityTimerRef = useRef(null);
   const mediaCapabilityRef = useRef("");
 
   const [serverReady, setServerReady]           = useState(false);
@@ -956,6 +957,46 @@ export default function ClientDetailsLivestreamSection({
     setInactivityStopMessage("");
     setAutoStartStatus("");
     setAutoStartError("");
+  }, [clientId]);
+
+  // Page Visibility is the media-work authority. Hidden tabs stop HLS/health
+  // work immediately through pageVisible/viewer-leave, while this independent
+  // timer preserves the existing three-minute inactivity state. Keeping this
+  // listener independent of inactivityStopped is important: it must be able to
+  // observe the tab becoming visible again and reactivate the viewer lifecycle.
+  useEffect(() => {
+    const applyVisibility = () => {
+      const visible = document.visibilityState !== "hidden";
+      setPageVisible(visible);
+
+      if (visible) {
+        if (hiddenInactivityTimerRef.current) {
+          window.clearTimeout(hiddenInactivityTimerRef.current);
+          hiddenInactivityTimerRef.current = null;
+        }
+        setInactivityStopped(false);
+        setInactivityStopMessage("");
+        return;
+      }
+
+      if (!hiddenInactivityTimerRef.current) {
+        hiddenInactivityTimerRef.current = window.setTimeout(() => {
+          hiddenInactivityTimerRef.current = null;
+          setInactivityStopped(true);
+          setInactivityStopMessage(INACTIVITY_STOP_MESSAGE);
+        }, HIDDEN_INACTIVITY_STOP_MS);
+      }
+    };
+
+    applyVisibility();
+    document.addEventListener("visibilitychange", applyVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", applyVisibility);
+      if (hiddenInactivityTimerRef.current) {
+        window.clearTimeout(hiddenInactivityTimerRef.current);
+        hiddenInactivityTimerRef.current = null;
+      }
+    };
   }, [clientId]);
 
   // Viewer-presence ejer Livestream-v2 lifecycle server-side. Browseren sender

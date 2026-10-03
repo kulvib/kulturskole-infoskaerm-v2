@@ -126,3 +126,16 @@ test("steady-state Livestream media uses short-lived capability and event-driven
   assert.match(source, /visibilitychange/);
   assert.match(source, /!pageVisible \|\| !mediaCapability/);
 });
+
+test("hidden Livestream inactivity timer is lifecycle-independent and recoverable", () => {
+  assert.match(source, /const hiddenInactivityTimerRef = useRef\(null\)/);
+  const visibilityStart = source.indexOf("// Page Visibility is the media-work authority");
+  const visibilityEnd = source.indexOf("// Viewer-presence ejer Livestream-v2 lifecycle server-side", visibilityStart);
+  assert.ok(visibilityStart >= 0 && visibilityEnd > visibilityStart);
+  const visibilityBlock = source.slice(visibilityStart, visibilityEnd);
+  assert.match(visibilityBlock, /HIDDEN_INACTIVITY_STOP_MS/);
+  assert.match(visibilityBlock, /setInactivityStopped\(true\)/);
+  assert.match(visibilityBlock, /setInactivityStopped\(false\)/);
+  assert.match(visibilityBlock, /document\.addEventListener\("visibilitychange", applyVisibility\)/);
+  assert.match(visibilityBlock, /document\.removeEventListener\("visibilitychange", applyVisibility\)/);
+});
