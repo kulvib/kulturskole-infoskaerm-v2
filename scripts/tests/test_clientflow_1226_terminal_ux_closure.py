@@ -41,8 +41,19 @@ def test_1226_customer_terminal_copy_matches_reviewed_document() -> None:
     assert 'input("Lokation/rum (valgfri, Enter = tom): ")' in common
     assert "Koden vises som: CF-____-____-____" not in customer
     assert 'ok("CF-koden er accepteret.")' in customer
-    assert 'phase("8/8 · Aktivering færdig")' in customer
-    assert 'ok("Aktivering færdig. Klienten kan genstartes efter bekræftelse.")' in customer
+    lockdown_phase = 'phase("8/9 · Kunde-lockdown før final reboot")'
+    lockdown_apply = "_apply_customer_kiosk_lockdown()"
+    complete_phase = 'phase("9/9 · Aktivering færdig")'
+    final_reboot = 'confirmed_reboot("kundeaktivering gennemført med kiosk lockdown", seconds=5)'
+    assert lockdown_phase in customer
+    assert complete_phase in customer
+    assert 'ok("Kiosk lockdown er aktiv og lokalt verificeret.")' in customer
+    assert 'ok("Aktivering færdig. Final reboot verificerer nu den aktive kiosk-lockdown ved boot.")' in customer
+    phase_index = customer.index(lockdown_phase)
+    apply_index = customer.index(lockdown_apply, phase_index)
+    complete_index = customer.index(complete_phase, apply_index)
+    reboot_index = customer.index(final_reboot, complete_index)
+    assert phase_index < apply_index < complete_index < reboot_index
     assert "kræves ikke et ekstra klik" not in customer
 
 

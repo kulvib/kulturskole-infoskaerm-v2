@@ -9,7 +9,6 @@ import time
 from typing import Any, Callable
 
 import websockets
-from websockets.exceptions import ConnectionClosed
 
 from .constants import SHARED_DOMAIN_COMMAND_POLL_SECONDS, SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS
 from .logging_utils import configure_logging
@@ -91,8 +90,26 @@ class CommandWakeChannel:
         self.generation = 0
         self.thread = threading.Thread(target=self._run, daemon=True, name=f"wake-{transport.credential.domain.value}")
 
-    def start(self) -> None:
+    @staticmethod
+    def supported(transport: object) -> bool:
+        """Return whether the transport implements the realtime wake contract.
+
+        QueueAgent is also used with compatibility/custom transports during
+        staged rollout and in executable contracts. Those transports must keep
+        the historical durable polling path instead of starting a background
+        wake thread that cannot establish WSS.
+        """
+        return (
+            callable(getattr(transport, "websocket_url", None))
+            and callable(getattr(transport, "websocket_headers", None))
+            and callable(getattr(transport, "json_request", None))
+        )
+
+    def start(self) -> bool:
+        if not self.supported(self.transport):
+            return False
         self.thread.start()
+        return True
 
     def close(self) -> None:
         self.stop.set()
@@ -113,7 +130,7 @@ class CommandWakeChannel:
         client_id = self.transport.credential.client_id
         path = f"/api/{domain}-agent/clients/{client_id}/commands/wake/ws"
         url = self.transport.websocket_url(path)
-        ssl_context = self.transport._ssl_context if url.startswith("wss:") else None
+        ssl_context = getattr(self.transport, "_ssl_context", None) if url.startswith("wss:") else None
         async with websockets.connect(
             url,
             extra_headers=self.transport.websocket_headers(),
@@ -163,7 +180,7 @@ class CommandWakeChannel:
                 self._websocket_once()
                 websocket_failures = 0
                 continue
-            except (ConnectionClosed, OSError, RuntimeError, TimeoutError, json.JSONDecodeError, TypeError) as exc:
+            except Exception as exc:
                 websocket_failures += 1
                 if websocket_failures == 1:
                     self.logger.info("command_wake_websocket_fallback", extra={"event": str(exc)[:160]})
@@ -202,6 +219,7 @@ class QueueAgent:
             if transport.credential.domain.value in {"display", "system"}
             else None
         )
+        self._wake_channel_active = False
 
     def _prefix(self) -> str:
         return self.transport.credential.domain.value.replace("_", "-")
@@ -282,7 +300,7 @@ class QueueAgent:
     def run_forever(self) -> None:
         attempt = 0
         if self._wake_channel is not None:
-            self._wake_channel.start()
+            self._wake_channel_active = self._wake_channel.start()
         while True:
             try:
                 piggybacked_status: dict[str, Any] | None = None
@@ -306,7 +324,7 @@ class QueueAgent:
                         self._report_status_if_due(force=True)
                 if context is None:
                     attempt = 0
-                    if self._wake_channel is not None:
+                    if self._wake_channel_active and self._wake_channel is not None:
                         # Keep the historical status/liveness cadence without
                         # turning every heartbeat into a durable queue claim.
                         # Wakes claim immediately; otherwise a DB reconciliation

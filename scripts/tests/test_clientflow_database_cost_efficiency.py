@@ -124,23 +124,34 @@ def test_shared_command_poll_matches_legacy_five_second_backend_cadence_without_
 def test_frontend_always_on_database_polls_are_visibility_aware():
     list_page = _read("frontend/src/pages/ClientInfoPage.jsx")
     details_page = _read("frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx")
+    api = _read("frontend/src/api/api.js")
     actions = _read("frontend/src/pages/clientdetailspage/ClientDetailsActionsSection.jsx")
     info = _read("frontend/src/pages/clientdetailspage/ClientDetailsInfoSection.jsx")
 
-    assert "if (!cancelled && isPageVisible()) {" in list_page
+    # Realtime invalidation is the responsiveness path. The slower timers below
+    # are only integrity reconciliation, so Neon reads fall without making UI
+    # state changes wait for the fallback cadence.
+    assert "createControlRoomRealtimeCapability" in list_page
+    assert "waitForControlRoomRealtime" in list_page
+    assert "if (changed && isPageVisible() && !isDraggingRef.current)" in list_page
     assert "await fetchClients(false, false);" in list_page
-    assert "CLIENT_LIST_ACTIVE_POLL_MS = 2_000" in list_page
-    assert "CLIENT_LIST_IDLE_POLL_MS = 5_000" in list_page
+    assert "CLIENT_LIST_ACTIVE_POLL_MS = 10_000" in list_page
+    assert "CLIENT_LIST_IDLE_POLL_MS = 60_000" in list_page
+    assert "/api/clients/control-room-realtime/capability" in api
+    assert "/api/clients/control-room-realtime/wait?" in api
+
+    assert "createControlRoomRealtimeCapability" in details_page
+    assert "waitForControlRoomRealtime" in details_page
     assert "if (!isPageVisible()) {" in details_page
     assert "await waitForNextPoll(CHROME_STATUS_HIDDEN_CHECK_MS);" in details_page
-    assert "CHROME_STATUS_ACTIVE_POLL_MS = 1000" in details_page
-    assert "CHROME_STATUS_IDLE_POLL_MS = 5000" in details_page
+    assert "CHROME_STATUS_ACTIVE_POLL_MS = 5000" in details_page
+    assert "CHROME_STATUS_IDLE_POLL_MS = 60000" in details_page
     assert "getActiveClientflowDeployment" not in actions
     assert "refreshDeployment" not in actions
     assert "if (isPageVisible()) refreshClientflowDeployment();" in details_page
     assert "!clientflowDeploymentActive" in details_page
     # Configuration/Diagnostics must not add their own full-client intervals.
-    # Their state rides on the already visibility-aware /chrome-status poll.
+    # Their state rides on the already visibility-aware /chrome-status reconciliation.
     assert "const DETAIL_HOT_FIELDS = [" in details_page
     assert "setLiveDetailHotFields" in details_page
     assert "setInterval(refreshConfig" not in info

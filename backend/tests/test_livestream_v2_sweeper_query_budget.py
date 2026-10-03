@@ -15,7 +15,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
 
 from service1 import livestream_v2
-from service1.client_activity_models import ClientActivityLease
+from service1.client_activity import _presence_add, _presence_remove
 from service1.livestream_v2_models import LivestreamV2Generation, LivestreamV2Viewer
 from service1.models import Client
 
@@ -74,23 +74,21 @@ class LivestreamV2SweeperQueryBudgetTests(unittest.TestCase):
                 reconcile.assert_not_called()
 
     def test_running_generation_with_live_activity_skips_per_client_reconcile(self) -> None:
-        with Session(self.engine) as session:
-            self.seed_client(session)
-            self.seed_running_generation(session)
-            session.add(
-                ClientActivityLease(
-                    id="activity-91",
-                    client_id=self.CLIENT_ID,
-                    domain="terminal",
-                    session_id="session-91",
-                    last_seen_at=livestream_v2._now(),
-                )
-            )
-            session.commit()
+        # Live Terminal/RD presence is intentionally ephemeral and must not
+        # require a periodic Postgres heartbeat. The durable lease row is audit
+        # only and must not be treated as current presence after a restart.
+        _presence_add(self.CLIENT_ID, "terminal", "session-91")
+        try:
+            with Session(self.engine) as session:
+                self.seed_client(session)
+                self.seed_running_generation(session)
+                session.commit()
 
-            with patch.object(livestream_v2, "reconcile_viewer_lifecycle") as reconcile:
-                self.assertEqual(livestream_v2.reconcile_all_viewer_lifecycles(session), [])
-                reconcile.assert_not_called()
+                with patch.object(livestream_v2, "reconcile_viewer_lifecycle") as reconcile:
+                    self.assertEqual(livestream_v2.reconcile_all_viewer_lifecycles(session), [])
+                    reconcile.assert_not_called()
+        finally:
+            _presence_remove(self.CLIENT_ID, "terminal", "session-91")
 
     def test_stale_viewer_is_expired_before_steady_state_fast_path(self) -> None:
         stale_seen = livestream_v2._now() - timedelta(

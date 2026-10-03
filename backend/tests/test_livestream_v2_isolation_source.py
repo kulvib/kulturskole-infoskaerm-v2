@@ -76,8 +76,8 @@ class LivestreamV2IsolationSourceTests(unittest.TestCase):
 
     def test_viewer_owned_lifecycle_defaults_match_physical_acceptance(self) -> None:
         source = read_backend("service1/livestream_v2.py")
-        self.assertIn('LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS", "10"', source)
-        self.assertIn('LIVESTREAM_V2_VIEWER_LEASE_SECONDS", "30"', source)
+        self.assertIn('LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS", "25"', source)
+        self.assertIn('LIVESTREAM_V2_VIEWER_LEASE_SECONDS", "75"', source)
         self.assertIn('LIVESTREAM_V2_VIEWER_STOP_GRACE_SECONDS", "30"', source)
         self.assertIn('LIVESTREAM_V2_VIEWER_SWEEP_SECONDS", "5"', source)
 
@@ -133,7 +133,7 @@ class LivestreamV2IsolationSourceTests(unittest.TestCase):
         source = (REPO / "frontend/src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx").read_text(
             encoding="utf-8"
         )
-        self.assertIn("const VIEWER_HEARTBEAT_MS = 10_000;", source)
+        self.assertIn("const VIEWER_HEARTBEAT_MS = 25_000;", source)
         self.assertIn("/api/livestream-v2/hls/", source)
         self.assertIn("/api/livestream-v2/clients/", source)
         self.assertNotIn('ensureStreamStarted("missing_segments")', source)

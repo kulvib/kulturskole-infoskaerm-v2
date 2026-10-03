@@ -108,8 +108,10 @@ class Step33BContractTests(unittest.TestCase):
         self.assertIn("HIDDEN_INACTIVITY_STOP_MS = 3 * 60 * 1000", frontend_source)
         self.assertIn("Siden har ikke været besøgt i 3 min.", frontend_source)
         self.assertIn("HLS_INITIAL_MANIFEST_SEGMENTS = 2", frontend_source)
-        self.assertIn('LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS", "10"', backend_source)
-        self.assertIn('LIVESTREAM_V2_VIEWER_LEASE_SECONDS", "30"', backend_source)
+        # Heartbeat traffic is deliberately reduced while retaining a lease
+        # window of three heartbeat periods and the same 30-second stop grace.
+        self.assertIn('LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS", "25"', backend_source)
+        self.assertIn('LIVESTREAM_V2_VIEWER_LEASE_SECONDS", "75"', backend_source)
         self.assertIn('LIVESTREAM_V2_VIEWER_STOP_GRACE_SECONDS", "30"', backend_source)
 
     def test_websocket_and_hls_errors_are_neutral(self) -> None:
