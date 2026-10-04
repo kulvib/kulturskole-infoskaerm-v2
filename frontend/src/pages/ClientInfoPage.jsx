@@ -37,6 +37,8 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import LocationOnIcon from "@mui/icons-material/LocationOn";
 import DevicesIcon from "@mui/icons-material/Devices";
 import PendingActionsIcon from "@mui/icons-material/PendingActions";
+import ErrorIcon from "@mui/icons-material/Error";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { compactDarkChipSx } from "../utils/chipStyles";
 import { isPageVisible } from "../utils/pageVisibility";
@@ -555,6 +557,83 @@ const ClientStatusCell = memo(function ClientStatusCell({ isOnline, client }) {
         })}
       />
     </Tooltip>
+  );
+});
+
+const ClientHealthCell = memo(function ClientHealthCell({ client, role }) {
+  const [open, setOpen] = useState(false);
+  const issues = Array.isArray(client?.health_issues) ? client.health_issues : [];
+  const hasIssues = issues.length > 0;
+  const canResolveIssue = (issue) =>
+    issue?.required_role !== "superadmin" || role === "superadmin";
+
+  return (
+    <>
+      <Tooltip
+        title={hasIssues ? `${issues.length} registreret ${issues.length === 1 ? "fejl" : "fejl"}` : "Ingen registrerede fejl"}
+      >
+        <Button
+          size="small"
+          variant="text"
+          color={hasIssues ? "error" : "success"}
+          startIcon={hasIssues ? <ErrorIcon /> : <CheckCircleIcon />}
+          onClick={() => hasIssues && setOpen(true)}
+          sx={{
+            minWidth: 0,
+            px: 0.75,
+            justifyContent: "flex-start",
+            textTransform: "none",
+            fontWeight: 800,
+          }}
+        >
+          {hasIssues ? issues.length : "Ingen"}
+        </Button>
+      </Tooltip>
+
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Fejl på {client?.name || `klient ${client?.id || ""}`}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ mt: 0.5 }}>
+            {issues.map((issue) => {
+              const canResolve = canResolveIssue(issue);
+              return (
+                <Paper
+                  key={issue.code}
+                  variant="outlined"
+                  sx={{
+                    p: 1.5,
+                    borderRadius: 2,
+                    bgcolor: "rgba(15,23,42,0.52)",
+                    borderColor: issue.severity === "error" ? "rgba(239,68,68,0.36)" : "rgba(245,158,11,0.34)",
+                  }}
+                >
+                  <Stack spacing={0.7}>
+                    <Typography sx={{ fontWeight: 900 }}>{issue.title}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {issue.message}
+                    </Typography>
+                    <Typography variant="body2">
+                      <strong>Forslag:</strong> {issue.suggested_resolution}
+                    </Typography>
+                    {!canResolve && (
+                      <Alert severity="info" sx={{ mt: 0.5 }}>
+                        Denne fejl kræver superadministratorrettigheder. Kontakt en superadministrator.
+                      </Alert>
+                    )}
+                  </Stack>
+                </Paper>
+              );
+            })}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpen(false)}>Luk</Button>
+          <Button component={Link} to={`/clients/${client?.id}`} variant="contained">
+            Åbn Control Room
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </>
   );
 });
 
@@ -1148,12 +1227,17 @@ export default function ClientInfoPage() {
             </Typography>
           </Stack>
         </TableCell>
-        <TableCell align="center">
+        <TableCell align="left">
           <ClientStatusCell
             isOnline={getClientOnline(client)}
             client={client}
           />
         </TableCell>
+        {isAdmin && (
+          <TableCell align="left">
+            <ClientHealthCell client={client} role={role} />
+          </TableCell>
+        )}
         <TableCell align="center">
           <Button
             component={Link}
@@ -1199,6 +1283,8 @@ export default function ClientInfoPage() {
     [
       canViewClientId,
       canManageClients,
+      isAdmin,
+      role,
       getOrganizationName,
       openRemoveDialog,
       removingClientId,
@@ -1224,11 +1310,11 @@ export default function ClientInfoPage() {
 
   const colSpanApproved = canManageClients
     ? isMobile
-      ? 6
-      : 8
+      ? 7
+      : 9
     : isMobile
-      ? 3
-      : 5;
+      ? (isAdmin ? 4 : 3)
+      : (isAdmin ? 6 : 5);
 
   return (
     <Box
@@ -1593,6 +1679,7 @@ export default function ClientInfoPage() {
                           ...(canViewClientId ? ["ID"] : []),
                           "Klientnavn",
                           "Status",
+                          ...(isAdmin ? ["Fejl"] : []),
                           "Control Room",
                           ...(canManageClients ? ["Fjern", "Sort"] : []),
                         ].map((header, idx) => (
@@ -1603,9 +1690,14 @@ export default function ClientInfoPage() {
                           {canViewClientId && <TableCell>Klient ID</TableCell>}
                           <TableCell>Klientnavn</TableCell>
                           <TableCell>Lokalitet</TableCell>
-                          <TableCell sx={{ textAlign: "center" }}>
+                          <TableCell sx={{ textAlign: "left" }}>
                             Status
                           </TableCell>
+                          {isAdmin && (
+                            <TableCell sx={{ textAlign: "left" }}>
+                              Fejl
+                            </TableCell>
+                          )}
                           <TableCell sx={{ textAlign: "center" }}>
                             Organisation
                           </TableCell>
@@ -1675,12 +1767,17 @@ export default function ClientInfoPage() {
                                     </span>
                                   )}
                                 </TableCell>
-                                <TableCell align="center">
+                                <TableCell align="left">
                                   <ClientStatusCell
                                     isOnline={getClientOnline(client)}
                                     client={client}
                                   />
                                 </TableCell>
+                                {isAdmin && (
+                                  <TableCell align="left">
+                                    <ClientHealthCell client={client} role={role} />
+                                  </TableCell>
+                                )}
                                 <TableCell align="center">
                                   {getOrganizationName(
                                     getClientOrganizationId(client),
