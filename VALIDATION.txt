@@ -1,3 +1,37 @@
+ClientFlow 1.3.30 / sequence 1231 source-freeze validation
+Date: 2026-10-04
+
+PASS: fresh uploaded main archive is the only source used for this freeze.
+PASS: source/build identity is 1.3.30 / sequence 1231.
+PASS: embedded runtime Python remains 3.13.14.
+PASS: backend/CI Python remains 3.13.16.
+PASS: HLS.js remains explicitly pinned to 1.6.16.
+PASS: promoted catalog remains immutable at 1.3.29 / sequence 1230.
+PASS: promoted 1.3.29 remains fresh-install-only with update_allowed=false.
+PASS: no authentic in-place update capability is claimed.
+PASS: WSS fast paths retain HTTPS/TCP-443 fallback for core control/realtime paths.
+PASS: Livestream retains 25s heartbeat / 75s lease / 30s producer stop grace.
+PASS: Livestream and Remote Desktop retain 30-second browser-tab warm grace.
+PASS: multi-viewer Livestream semantics retain one shared client producer/generation.
+PASS: operator health issues remain deterministic, canonical-projection based and role-limited.
+PASS: kiosk lockdown remains transactional and Nautilus/DING safe.
+PASS: post-final-reboot acceptance remains fail closed.
+PASS: all five display/browser timing contracts remain exactly 10 seconds.
+PASS: WebRTC default transport, realtime Redis/Valkey authority, Neon Functions and PostgreSQL LISTEN/NOTIFY remain deliberately deferred.
+PASS: source-freeze package changes release evidence/gates only and does not modify runtime, UI, database, dependency, transport or catalog-selector behaviour.
+
+PENDING: merge this source-freeze package to canonical main.
+PENDING: canonical GitHub CI on the exact resulting freeze commit.
+PENDING: record the exact 40-character source-freeze main SHA from Git; do not derive it from the archive.
+PENDING: produce source-SHA-qualified sequence-1231 runtime inputs from that exact green SHA.
+PENDING: reproducibly build byte-identical 1.3.30/1231 candidate bytes.
+PENDING: physically validate those exact bytes, including final reboot/lockdown and normal municipal-network behaviour.
+PENDING: physical acceptance, immutable publication and independent store re-read.
+PENDING: only then perform separate catalog promotion.
+PENDING: authentic in-place update remains a later physical gate and must not be claimed as proven here.
+
+---
+
 ClientFlow 1.3.29 / sequence 1230 fresh-install-only catalog-promotion validation
 Date: 2026-10-02
 
