@@ -147,6 +147,24 @@ class BrokerProxy:
                 await self.task
 
 
+class _HttpRelaySocket:
+    """WebSocket-like sender backed by ordinary authenticated HTTPS requests."""
+    def __init__(self, transport: DomainTransport, client_id: int, relay_id: str) -> None:
+        self.transport = transport
+        self.client_id = client_id
+        self.relay_id = relay_id
+
+    async def send(self, raw: str) -> None:
+        payload = json.loads(raw)
+        await asyncio.to_thread(
+            self.transport.json_request,
+            "POST",
+            f"/api/terminal-agent/clients/{self.client_id}/http/{self.relay_id}/send",
+            json_body={"payload": payload},
+            timeout=20,
+        )
+
+
 class TerminalAgent:
     def __init__(self) -> None:
         self.logger = configure_logging("clientflow.terminal")
@@ -349,6 +367,61 @@ class TerminalAgent:
             except Exception:
                 self.logger.exception("terminal_session_cleanup_failed")
 
+    async def _process_network_message(self, raw: str) -> None:
+        if not isinstance(raw, str) or len(raw) > 4 * 1024 * 1024:
+            raise RuntimeError("Terminal-transport modtog ugyldig meddelelse")
+        message = json.loads(raw)
+        if not isinstance(message, dict):
+            raise RuntimeError("Terminal-transport kræver JSON-objekter")
+        try:
+            await self._handle_message(message)
+        except Exception as exc:
+            session_id = str(message.get("session_id") or "")
+            self.logger.exception("terminal_message_failed", extra={"session_id": session_id})
+            if message.get("type") == "session_start" and session_id:
+                try:
+                    await self.report_event(
+                        session_id, "broker_rejected", details={"error": type(exc).__name__}
+                    )
+                except Exception:
+                    self.logger.exception("terminal_start_failure_report_failed", extra={"session_id": session_id})
+            await self.send({"type": "error", "session_id": session_id, "error": str(exc)[:500]})
+
+    async def _http_relay_once(self) -> None:
+        client_id = self.credential.client_id
+        opened = await asyncio.to_thread(
+            self.transport.json_request,
+            "POST",
+            f"/api/terminal-agent/clients/{client_id}/http/open",
+            json_body={},
+            timeout=20,
+        )
+        relay_id = str(opened.get("relay_id") or "")
+        if not relay_id:
+            raise RuntimeError("Terminal HTTPS relay returnerede intet relay-id")
+        self.websocket = _HttpRelaySocket(self.transport, client_id, relay_id)
+        await asyncio.to_thread(
+            report_status, self.transport, observed_state="online",
+            payload={"standard_terminal": True, "standard_broker_socket": os.path.exists(STANDARD_SOCKET), "root_broker_socket": os.path.exists(ROOT_SOCKET), "transport": "https_long_poll"},
+        )
+        try:
+            while True:
+                response = await asyncio.to_thread(
+                    self.transport.json_request,
+                    "GET",
+                    f"/api/terminal-agent/clients/{client_id}/http/{relay_id}/poll?timeout_seconds=25",
+                    timeout=35,
+                )
+                for raw in response.get("messages") or []:
+                    message = json.loads(raw) if isinstance(raw, str) else raw
+                    if isinstance(message, dict) and message.get("type") == "relay_closed":
+                        raise RuntimeError(str(message.get("reason") or "Terminal HTTPS relay lukket"))
+                    await self._process_network_message(raw if isinstance(raw, str) else json.dumps(raw))
+                if response.get("closed") is True:
+                    raise RuntimeError("Terminal HTTPS relay er lukket")
+        finally:
+            self.websocket = None
+
     async def run_forever(self) -> None:
         attempt = 0
         while True:
@@ -375,33 +448,18 @@ class TerminalAgent:
                     )
                     attempt = 0
                     async for raw in websocket:
-                        if not isinstance(raw, str) or len(raw) > 4 * 1024 * 1024:
-                            raise RuntimeError("Terminal-WebSocket modtog ugyldig meddelelse")
-                        message = json.loads(raw)
-                        if not isinstance(message, dict):
-                            raise RuntimeError("Terminal-WebSocket kræver JSON-objekter")
-                        try:
-                            await self._handle_message(message)
-                        except Exception as exc:
-                            session_id = str(message.get("session_id") or "")
-                            self.logger.exception("terminal_message_failed", extra={"session_id": session_id})
-                            if message.get("type") == "session_start" and session_id:
-                                try:
-                                    await self.report_event(
-                                        session_id,
-                                        "broker_rejected",
-                                        details={"error": type(exc).__name__},
-                                    )
-                                except Exception:
-                                    self.logger.exception(
-                                        "terminal_start_failure_report_failed",
-                                        extra={"session_id": session_id},
-                                    )
-                            await self.send({"type": "error", "session_id": session_id, "error": str(exc)[:500]})
+                        await self._process_network_message(raw)
             except KeyboardInterrupt:
                 return
             except (ConnectionClosed, OSError, RuntimeError, json.JSONDecodeError):
-                self.logger.exception("terminal_connection_failed")
+                self.logger.warning("terminal_websocket_unavailable_using_https_fallback", exc_info=True)
+                self.websocket = None
+                try:
+                    await self._http_relay_once()
+                    attempt = 0
+                    continue
+                except Exception:
+                    self.logger.exception("terminal_https_relay_failed")
             finally:
                 self.websocket = None
                 await self._close_all()

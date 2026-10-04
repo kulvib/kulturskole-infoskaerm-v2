@@ -53,6 +53,7 @@ from ..client_activity import end_activity_lease, maintain_activity_lease
 from ..db import engine, get_session
 from ..models import User
 from ..observability import log_safe_exception
+from ..http_ws_relay import close_relay, create_relay, get_relay, require_relay_scope
 from ..rate_limit import enforce_request_rate_limit
 from ..terminal_websocket_auth import (
     TerminalBrowserWsTicketStoreFull,
@@ -123,6 +124,16 @@ class TerminalBrowserTicketResponse(BaseModel):
     ticket: str
     subprotocol: str
     expires_at: datetime
+
+
+class TerminalHttpRelayOpenBody(BaseModel):
+    ticket: str = Field(min_length=32, max_length=256)
+    subprotocol: str = Field(min_length=1, max_length=80)
+    mode: TerminalBrowserMode
+
+
+class TerminalHttpRelaySendBody(BaseModel):
+    payload: dict[str, Any]
 
 
 def _parse_allowed_ws_origins() -> list[str]:
@@ -704,6 +715,115 @@ def create_terminal_browser_ws_ticket(
         subprotocol=issued.subprotocol,
         expires_at=issued.expires_at,
     )
+
+
+@router.post("/browser/{client_id}/http/open")
+async def terminal_browser_http_open(
+    client_id: int,
+    body: TerminalHttpRelayOpenBody,
+    request: Request,
+    user: User = Depends(get_current_superadmin_user),
+):
+    """Open the HTTPS/443 fallback while reusing the exact WebSocket handler."""
+    mode = _normalize_mode(body.mode.value)
+    if not _client_exists_and_accessible(client_id, user):
+        raise HTTPException(status_code=404, detail="Terminal-klient ikke fundet")
+    headers = {
+        "sec-websocket-protocol": f"{body.subprotocol},{body.ticket}",
+        "origin": request.headers.get("origin") or "",
+        "user-agent": request.headers.get("user-agent") or "",
+    }
+    relay = await create_relay(
+        lambda ws: terminal_browser_ws(ws, client_id, mode),
+        headers=headers,
+        client_host=(request.client.host if request.client else None),
+        scope={"kind": "terminal_browser", "client_id": client_id, "mode": mode},
+    )
+    return {"relay_id": relay.relay_id, "transport": "https_long_poll"}
+
+
+@router.post("/browser/{client_id}/http/{relay_id}/send")
+async def terminal_browser_http_send(
+    client_id: int, relay_id: str, body: TerminalHttpRelaySendBody,
+    user: User = Depends(get_current_superadmin_user),
+):
+    if not _client_exists_and_accessible(client_id, user):
+        raise HTTPException(status_code=404, detail="Terminal-klient ikke fundet")
+    relay = await get_relay(relay_id)
+    require_relay_scope(relay, kind="terminal_browser", client_id=client_id)
+    raw = json.dumps(body.payload, ensure_ascii=False, separators=(",", ":"))
+    if len(raw) > MAX_STAGED_SCRIPT_B64_CHARS + 10_000:
+        raise HTTPException(status_code=413, detail="Terminal-relay meddelelse er for stor")
+    await relay.push_from_http(raw)
+    return {"ok": True}
+
+
+@router.get("/browser/{client_id}/http/{relay_id}/poll")
+async def terminal_browser_http_poll(
+    client_id: int, relay_id: str, timeout_seconds: int = Query(default=25, ge=1, le=30),
+    user: User = Depends(get_current_superadmin_user),
+):
+    if not _client_exists_and_accessible(client_id, user):
+        raise HTTPException(status_code=404, detail="Terminal-klient ikke fundet")
+    relay = await get_relay(relay_id)
+    require_relay_scope(relay, kind="terminal_browser", client_id=client_id)
+    return {"messages": await relay.poll_to_http(timeout_seconds), "closed": relay.closed}
+
+
+@router.delete("/browser/{client_id}/http/{relay_id}")
+async def terminal_browser_http_close(
+    client_id: int, relay_id: str, user: User = Depends(get_current_superadmin_user),
+):
+    relay = await get_relay(relay_id)
+    require_relay_scope(relay, kind="terminal_browser", client_id=client_id)
+    await close_relay(relay_id, reason="terminal_browser_http_closed")
+    return {"ok": True}
+
+
+@agent_router.post("/clients/{client_id}/http/open")
+async def terminal_agent_http_open(
+    client_id: int, request: Request, authorization: Optional[str] = Header(default=None),
+):
+    token = _terminal_agent_token_from_header(authorization)
+    with Session(engine) as session:
+        credential = verify_terminal_agent_token(session, token, client_id=client_id)
+    relay = await create_relay(
+        lambda ws: terminal_domain_agent_ws(ws, client_id),
+        headers={"authorization": f"Bearer {token}"},
+        client_host=(request.client.host if request.client else None),
+        scope={"kind": "terminal_agent", "client_id": client_id, "credential_id": credential.id},
+    )
+    return {"relay_id": relay.relay_id, "transport": "https_long_poll"}
+
+
+@agent_router.post("/clients/{client_id}/http/{relay_id}/send")
+async def terminal_agent_http_send(
+    client_id: int, relay_id: str, body: TerminalHttpRelaySendBody,
+    authorization: Optional[str] = Header(default=None),
+):
+    token = _terminal_agent_token_from_header(authorization)
+    with Session(engine) as session:
+        credential = verify_terminal_agent_token(session, token, client_id=client_id)
+    relay = await get_relay(relay_id)
+    require_relay_scope(relay, kind="terminal_agent", client_id=client_id, credential_id=credential.id)
+    raw = json.dumps(body.payload, ensure_ascii=False, separators=(",", ":"))
+    if len(raw) > MAX_AGENT_MESSAGE_CHARS:
+        raise HTTPException(status_code=413, detail="Terminal-agent relay meddelelse er for stor")
+    await relay.push_from_http(raw)
+    return {"ok": True}
+
+
+@agent_router.get("/clients/{client_id}/http/{relay_id}/poll")
+async def terminal_agent_http_poll(
+    client_id: int, relay_id: str, timeout_seconds: int = Query(default=25, ge=1, le=30),
+    authorization: Optional[str] = Header(default=None),
+):
+    token = _terminal_agent_token_from_header(authorization)
+    with Session(engine) as session:
+        credential = verify_terminal_agent_token(session, token, client_id=client_id)
+    relay = await get_relay(relay_id)
+    require_relay_scope(relay, kind="terminal_agent", client_id=client_id, credential_id=credential.id)
+    return {"messages": await relay.poll_to_http(timeout_seconds), "closed": relay.closed}
 
 
 @router.websocket("/browser/{client_id}/ws")

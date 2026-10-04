@@ -32,6 +32,7 @@ from ..auth import validate_browser_auth_session_binding, verify_ws_token
 from ..client_activity import end_activity_lease, maintain_activity_lease
 from ..db import engine
 from ..models import Client, User
+from ..http_ws_relay import close_relay, create_relay, get_relay, require_relay_scope
 from ..remote_desktop_v2 import (
     authorize_remote_desktop_session,
     bearer_token,
@@ -85,7 +86,7 @@ class AgentChannel:
     client_id: int
     credential_id: str
     token_version: int
-    websocket: WebSocket
+    websocket: Any
     connected_at: float = field(default_factory=time.time)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -94,7 +95,7 @@ class AgentChannel:
 class BrowserSession:
     session_id: str
     client_id: int
-    websocket: WebSocket
+    websocket: Any
     user_id: int
     username: str
     user_token_version: int
@@ -169,6 +170,15 @@ class AgentStatusBody(BaseModel):
 class AgentEventBody(BaseModel):
     event_type: str = Field(min_length=1, max_length=80)
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+class RemoteDesktopHttpBrowserOpenBody(BaseModel):
+    ticket: str = Field(min_length=32, max_length=256)
+    subprotocol: str = Field(min_length=1, max_length=80)
+
+
+class RemoteDesktopHttpRelaySendBody(BaseModel):
+    payload: dict[str, Any]
 
 
 def _ws_origin_allowed(websocket: WebSocket) -> bool:
@@ -814,6 +824,12 @@ async def _handle_file_agent_message(client_id: int, message: dict[str, Any]) ->
     session_id = str(message.get("session_id") or "")
     transfer_id = str(message.get("transfer_id") or "")
 
+    if session_id and message_type in {
+        "file_download_offer", "file_download_chunk", "file_download_complete",
+        "file_upload_result", "file_operation_result", "file_list_result",
+    }:
+        await _send_browser(session_id, client_id, {"type": "file_activity", "operation": message_type})
+
     if transfer_id and (session_id, transfer_id) in UPLOAD_ACKS and message_type in {"file_upload_result", "file_error"}:
         await UPLOAD_ACKS[(session_id, transfer_id)].put(message)
         return
@@ -910,6 +926,60 @@ async def _handle_file_agent_message(client_id: int, message: dict[str, Any]) ->
             })
             return
         await _handle_operation_result(client_id, session_id, message)
+
+
+@router.post("/remote-desktop-agent/clients/{client_id}/{channel}/http/open")
+async def remote_desktop_agent_http_open(
+    client_id: int, channel: str, request: Request,
+):
+    if channel not in {"control", "files"}:
+        raise HTTPException(status_code=404, detail="Ukendt Remote Desktop relay-kanal")
+    token = bearer_token(request.headers.get("authorization"))
+    with Session(engine) as session:
+        credential = verify_remote_desktop_agent_token(session, token, client_id=client_id)
+    handler = remote_desktop_agent_control_ws if channel == "control" else remote_desktop_agent_files_ws
+    relay = await create_relay(
+        lambda ws: handler(ws, client_id),
+        headers={"authorization": f"Bearer {token}"},
+        client_host=(request.client.host if request.client else None),
+        scope={"kind": "rd_agent", "client_id": client_id, "channel": channel, "credential_id": credential.id},
+    )
+    return {"relay_id": relay.relay_id, "transport": "https_long_poll", "channel": channel}
+
+
+@router.post("/remote-desktop-agent/clients/{client_id}/{channel}/http/{relay_id}/send")
+async def remote_desktop_agent_http_send(
+    client_id: int, channel: str, relay_id: str, body: RemoteDesktopHttpRelaySendBody, request: Request,
+):
+    if channel not in {"control", "files"}:
+        raise HTTPException(status_code=404, detail="Ukendt Remote Desktop relay-kanal")
+    token = bearer_token(request.headers.get("authorization"))
+    with Session(engine) as session:
+        credential = verify_remote_desktop_agent_token(session, token, client_id=client_id)
+    relay = await get_relay(relay_id)
+    require_relay_scope(relay, kind="rd_agent", client_id=client_id, channel=channel, credential_id=credential.id)
+    raw = json.dumps(body.payload, ensure_ascii=False, separators=(",", ":"))
+    maximum = MAX_AGENT_CONTROL_CHARS if channel == "control" else MAX_AGENT_FILE_CHARS
+    if len(raw) > maximum:
+        raise HTTPException(status_code=413, detail="Remote Desktop relay-meddelelse er for stor")
+    await relay.push_from_http(raw)
+    return {"ok": True}
+
+
+@router.get("/remote-desktop-agent/clients/{client_id}/{channel}/http/{relay_id}/poll")
+async def remote_desktop_agent_http_poll(
+    client_id: int, channel: str, relay_id: str, request: Request,
+    timeout_seconds: int = 25,
+):
+    if channel not in {"control", "files"}:
+        raise HTTPException(status_code=404, detail="Ukendt Remote Desktop relay-kanal")
+    timeout_seconds = min(30, max(1, int(timeout_seconds)))
+    token = bearer_token(request.headers.get("authorization"))
+    with Session(engine) as session:
+        credential = verify_remote_desktop_agent_token(session, token, client_id=client_id)
+    relay = await get_relay(relay_id)
+    require_relay_scope(relay, kind="rd_agent", client_id=client_id, channel=channel, credential_id=credential.id)
+    return {"messages": await relay.poll_to_http(timeout_seconds), "closed": relay.closed}
 
 
 @router.websocket("/remote-desktop-agent/clients/{client_id}/control/ws")
@@ -1122,6 +1192,61 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
             "type": "shout", "session_id": session_id, "text": text, "duration": duration,
         })
         return
+
+
+@router.post("/remote-desktop/browser/{client_id}/http/open")
+async def remote_desktop_browser_http_open(
+    client_id: int, body: RemoteDesktopHttpBrowserOpenBody, request: Request,
+):
+    principal = _get_http_user(request)
+    user = _require_superadmin(principal)
+    if not _platform_client_accessible(client_id, user):
+        raise HTTPException(status_code=404, detail="Klient ikke fundet eller ingen adgang")
+    relay = await create_relay(
+        lambda ws: remote_desktop_browser_ws(ws, client_id),
+        headers={
+            "sec-websocket-protocol": f"{body.subprotocol},{body.ticket}",
+            "origin": request.headers.get("origin") or "",
+            "user-agent": request.headers.get("user-agent") or "",
+        },
+        client_host=(request.client.host if request.client else None),
+        scope={"kind": "rd_browser", "client_id": client_id, "user_id": int(user.id)},
+    )
+    return {"relay_id": relay.relay_id, "transport": "https_long_poll"}
+
+
+@router.post("/remote-desktop/browser/{client_id}/http/{relay_id}/send")
+async def remote_desktop_browser_http_send(
+    client_id: int, relay_id: str, body: RemoteDesktopHttpRelaySendBody, request: Request,
+):
+    user = _require_superadmin(_get_http_user(request))
+    relay = await get_relay(relay_id)
+    require_relay_scope(relay, kind="rd_browser", client_id=client_id, user_id=int(user.id))
+    raw = json.dumps(body.payload, ensure_ascii=False, separators=(",", ":"))
+    if len(raw) > MAX_BROWSER_MESSAGE_CHARS:
+        raise HTTPException(status_code=413, detail="Remote Desktop browser-relay meddelelse er for stor")
+    await relay.push_from_http(raw)
+    return {"ok": True}
+
+
+@router.get("/remote-desktop/browser/{client_id}/http/{relay_id}/poll")
+async def remote_desktop_browser_http_poll(
+    client_id: int, relay_id: str, request: Request, timeout_seconds: int = 25,
+):
+    user = _require_superadmin(_get_http_user(request))
+    relay = await get_relay(relay_id)
+    require_relay_scope(relay, kind="rd_browser", client_id=client_id, user_id=int(user.id))
+    timeout_seconds = min(30, max(1, int(timeout_seconds)))
+    return {"messages": await relay.poll_to_http(timeout_seconds), "closed": relay.closed}
+
+
+@router.delete("/remote-desktop/browser/{client_id}/http/{relay_id}")
+async def remote_desktop_browser_http_close(client_id: int, relay_id: str, request: Request):
+    user = _require_superadmin(_get_http_user(request))
+    relay = await get_relay(relay_id)
+    require_relay_scope(relay, kind="rd_browser", client_id=client_id, user_id=int(user.id))
+    await close_relay(relay_id, reason="remote_desktop_browser_http_closed")
+    return {"ok": True}
 
 
 @router.websocket("/remote-desktop/browser/{client_id}/ws")

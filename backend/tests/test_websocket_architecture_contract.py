@@ -17,9 +17,17 @@ class WebSocketArchitectureContractTests(unittest.TestCase):
                 self.assertIn("decode_json_message", source)
 
 
-    def test_livestream_v2_is_http_control_plane_not_websocket_broker(self) -> None:
+    def test_livestream_v2_keeps_http_control_plane_and_payload_free_wake_socket(self) -> None:
         source = (ROOT / "backend/service1/routers/livestream_v2.py").read_text(encoding="utf-8")
-        self.assertNotIn("@router.websocket(", source)
+        # Livestream commands remain durable HTTP claim/renew/complete/fail. The
+        # only WebSocket is a payload-free wake hint with HTTPS long-poll fallback.
+        self.assertIn('@router.websocket("/livestream-agent/clients/{client_id}/commands/wake/ws")', source)
+        self.assertIn('@router.get("/livestream-agent/clients/{client_id}/commands/wait")', source)
+        self.assertIn('@router.post("/livestream-agent/clients/{client_id}/commands/claim")', source)
+        self.assertIn('@router.post("/livestream-agent/clients/{client_id}/commands/{command_id}/complete")', source)
+        wake_block = source[source.index("async def livestream_command_wake_ws"):source.index('@router.post("/livestream-agent/clients/{client_id}/commands/claim")')]
+        self.assertIn('"command_available"', wake_block)
+        self.assertNotIn('"claimed"', wake_block)
         self.assertNotIn("decode_json_message", source)
 
     def test_terminal_has_explicit_agent_and_browser_routes(self) -> None:

@@ -75,3 +75,85 @@ Fresh enrollment defaults to kiosk lockdown enabled. The customer flow applies a
 ## Scaling boundary
 
 The realtime generation/presence stores are deliberately process-local because production is currently one Render instance / one Uvicorn worker. Horizontal scaling requires replacing these abstractions with shared ephemeral infrastructure (for example Valkey/Redis) before adding workers/instances; Neon is not used as the realtime message broker.
+
+## Architecture closure after full chat requirements audit
+
+The post-CI audit found additional long-term requirements that were not yet
+fully implemented. This source iteration closes those gaps before source freeze.
+
+### Municipal firewall guarantee
+
+Required interactive features no longer depend on WebSocket upgrade support.
+Terminal and Remote Desktop keep WSS as the fast path, but automatically fall
+back to bounded process-local HTTPS long-poll relays over ordinary outbound TCP
+443. The fallback reuses the exact existing WebSocket handlers, tickets,
+credentials, authorization, revocation checks, audit and protocol validation;
+it is a transport adapter, not a second authority. No inbound client port,
+port-forwarding, UDP, STUN/TURN or firewall exception is required.
+
+### Measured source-level Neon request/write budget changes
+
+The pre-change source budget was measured from the fresh source before this
+closure. The steady-state changes are:
+
+- Livestream durable command claims: 5-second idle claim cadence (12/min/client)
+  becomes realtime wake with a 60-second ordinary durable reconciliation
+  (at most 1 idle claim/min/client while wake is healthy).
+- Status/Display/System liveness: 15-second observation remains for UI freshness,
+  but unchanged state uses locally verified process-memory presence. Durable
+  status is written immediately on meaningful state change and at least once
+  every 60 seconds for recovery. Naturally volatile uptime/time/load/free-space
+  fields cannot manufacture a 15-second durable write.
+- Livestream viewer heartbeats: active viewer lease renewal is process-local in
+  steady state. Durable viewer rows are written at create/re-open/leave/expiry
+  or source transition, rather than rewriting last_seen every 25 seconds.
+  Existing authorization/generation reads remain security/lifecycle work and are
+  not falsely claimed as eliminated.
+- Native HLS receives the same short-lived read-only media capability in an
+  HttpOnly/Secure/SameSite cookie scoped to the client HLS path. Current Hls.js
+  continues to use the Authorization header. Therefore current browser media
+  reads avoid per-segment database authorization without putting a secret in a
+  URL; the legacy access-token path remains compatibility fallback only.
+
+The process-local stores are valid only for the current single Render instance /
+single Uvicorn worker topology. Horizontal scaling still requires a shared
+ephemeral implementation (for example Valkey/Redis) before adding workers.
+
+### Remote Desktop media boundary and measurement
+
+JPEG remains the guaranteed firewall-compatible production media transport.
+Capture now sits behind `RemoteDesktopMediaTransport`, with a
+`JpegRpcMediaTransport` implementation. Local, non-Neon telemetry records
+captured/relayed/unchanged frames, relayed bytes, capture latency and
+input-to-next-relayed-frame latency. This provides the baseline required before
+any future WebRTC/video-codec experiment can be accepted. WebRTC remains an
+optional future optimization and may never become a required municipal-network
+dependency.
+
+File activity also keeps Remote Desktop in active mode, so long file operations
+do not incorrectly drift into idle/deep-idle capture behavior.
+
+### Retry discipline
+
+Runtime network backoff remains bounded exponential backoff but now adds jitter
+to avoid a fleet-wide thundering herd after backend or municipal-network
+recovery.
+
+### Deliberate updater boundary
+
+The updater timer is intentionally unchanged in this closure. Release 1.3.29 /
+1230 remains fresh-install-only with `update_allowed=false`, and authentic
+in-place update has not been physically proven. Changing update discovery before
+that bridge is accepted would expand the release risk without benefiting the
+current fresh-install acceptance. Updater idle-cost is therefore a documented
+future optimization gate when in-place update is allowed again; this source does
+not claim that gate has passed.
+
+### Acceptance still required
+
+None of these source changes upgrades 1.3.29 physical acceptance. Release
+1.3.30/1231 must still be built from an exact frozen source SHA and physically
+prove the candidate bytes, including WSS-blocked HTTPS fallback, post-reboot
+lockdown with Nautilus/DING, UI responsiveness, Livestream/Remote Desktop
+behavior and measured production Neon impact, before approval or catalog
+promotion.

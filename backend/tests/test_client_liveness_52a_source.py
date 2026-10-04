@@ -38,7 +38,16 @@ def test_presence_lease_is_three_code_owned_canonical_shared_domain_periods():
     assert 'CLIENTFLOW_ONLINE_TIMEOUT_SECONDS' not in render
     assert "SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS = 15" in runtime_constants
     assert "time.sleep(SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS)" in status_agent
-    assert "now - self._last_status < SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS" in command_agent
+    # Runtime liveness is still evaluated every 15 seconds, but unchanged state
+    # uses a DB-free signed presence ping. Durable state checkpoints remain
+    # bounded to 60 seconds and changed operational state persists immediately.
+    assert "DURABLE_STATUS_CHECKPOINT_SECONDS" in status_agent
+    assert "_status_change_fingerprint" in status_agent
+    assert 'f"/api/status-agent/clients/{credential.client_id}/presence"' in status_agent
+    assert "_durable_status_checkpoint_seconds = 60.0" in command_agent
+    assert "_full_status_due" in command_agent
+    assert "_send_presence_if_due" in command_agent
+    assert 'f"/api/{self._prefix()}-agent/clients/{client_id}/presence"' in command_agent
     assert "CLIENTFLOW_STATUS_INTERVAL_SECONDS" not in status_agent
 
 

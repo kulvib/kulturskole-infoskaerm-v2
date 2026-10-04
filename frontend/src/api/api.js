@@ -299,6 +299,77 @@ export function getRemoteDesktopBrowserWsUrl(clientId) {
   return getBrowserWsUrl(`/api/remote-desktop/browser/${encodeURIComponent(clientId)}/ws`);
 }
 
+
+export async function openTerminalBrowserHttpRelay(clientId, mode = "user") {
+  const ticket = await createTerminalBrowserWsTicket(clientId, mode);
+  const res = await apiFetch(buildApiUrl(`/terminal/browser/${encodeURIComponent(clientId)}/http/open`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ticket: ticket.ticket, subprotocol: ticket.subprotocol, mode }),
+  });
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Kunne ikke åbne Terminal HTTPS-fallback");
+  return readJsonResponse(res, "Uventet svar fra Terminal HTTPS-fallback");
+}
+
+export async function sendTerminalBrowserHttpRelay(clientId, relayId, payload) {
+  const res = await apiFetch(buildApiUrl(`/terminal/browser/${encodeURIComponent(clientId)}/http/${encodeURIComponent(relayId)}/send`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ payload }),
+  });
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Terminal HTTPS-fallback kunne ikke sende");
+  return readJsonResponse(res, "Uventet svar fra Terminal HTTPS-fallback");
+}
+
+export async function pollTerminalBrowserHttpRelay(clientId, relayId, timeoutSeconds = 25) {
+  const params = new URLSearchParams({ timeout_seconds: String(timeoutSeconds) });
+  const res = await apiFetch(buildApiUrl(`/terminal/browser/${encodeURIComponent(clientId)}/http/${encodeURIComponent(relayId)}/poll?${params}`), {
+    method: "GET",
+  });
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Terminal HTTPS-fallback kunne ikke modtage");
+  return readJsonResponse(res, "Uventet svar fra Terminal HTTPS-fallback");
+}
+
+export async function closeTerminalBrowserHttpRelay(clientId, relayId) {
+  const res = await apiFetch(buildApiUrl(`/terminal/browser/${encodeURIComponent(clientId)}/http/${encodeURIComponent(relayId)}`), {
+    method: "DELETE",
+  });
+  if (!res.ok && res.status !== 404) throw await buildApiErrorFromResponse(res, "Terminal HTTPS-fallback kunne ikke lukkes");
+}
+
+export async function openRemoteDesktopBrowserHttpRelay(clientId) {
+  const ticket = await createBrowserWsTicket(clientId, "remote_desktop");
+  const res = await apiFetch(buildApiUrl(`/remote-desktop/browser/${encodeURIComponent(clientId)}/http/open`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ticket: ticket.ticket, subprotocol: ticket.subprotocol }),
+  });
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Kunne ikke åbne Remote Desktop HTTPS-fallback");
+  return readJsonResponse(res, "Uventet svar fra Remote Desktop HTTPS-fallback");
+}
+
+export async function sendRemoteDesktopBrowserHttpRelay(clientId, relayId, payload) {
+  const res = await apiFetch(buildApiUrl(`/remote-desktop/browser/${encodeURIComponent(clientId)}/http/${encodeURIComponent(relayId)}/send`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ payload }),
+  });
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Remote Desktop HTTPS-fallback kunne ikke sende");
+  return readJsonResponse(res, "Uventet svar fra Remote Desktop HTTPS-fallback");
+}
+
+export async function pollRemoteDesktopBrowserHttpRelay(clientId, relayId, timeoutSeconds = 25) {
+  const params = new URLSearchParams({ timeout_seconds: String(timeoutSeconds) });
+  const res = await apiFetch(buildApiUrl(`/remote-desktop/browser/${encodeURIComponent(clientId)}/http/${encodeURIComponent(relayId)}/poll?${params}`), { method: "GET" });
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Remote Desktop HTTPS-fallback kunne ikke modtage");
+  return readJsonResponse(res, "Uventet svar fra Remote Desktop HTTPS-fallback");
+}
+
+export async function closeRemoteDesktopBrowserHttpRelay(clientId, relayId) {
+  const res = await apiFetch(buildApiUrl(`/remote-desktop/browser/${encodeURIComponent(clientId)}/http/${encodeURIComponent(relayId)}`), { method: "DELETE" });
+  if (!res.ok && res.status !== 404) throw await buildApiErrorFromResponse(res, "Remote Desktop HTTPS-fallback kunne ikke lukkes");
+}
+
 function normalizeChromeStatusPayload(data = {}) {
   const normalized = { ...(data || {}) };
 

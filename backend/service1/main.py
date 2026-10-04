@@ -511,6 +511,9 @@ class AuthenticatedHLSStaticFiles(StaticFiles):
         authorization = request.headers.get("authorization") or ""
         if authorization.lower().startswith("bearer "):
             return authorization[7:]
+        media_capability = request.cookies.get("clientflow_hls_media_capability")
+        if media_capability:
+            return media_capability
         return request.cookies.get("access_token")
 
     def _check_hls_access(self, request: Request, path: str) -> None:

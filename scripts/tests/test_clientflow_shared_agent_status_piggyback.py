@@ -16,7 +16,9 @@ def test_display_and_system_piggyback_due_status_on_existing_claim_request():
     assert 'body["status_report"] = status_report' in COMMAND_AGENT
     assert "if piggybacked_status is not None:" in COMMAND_AGENT
     assert 'payload.get("status_reported") is True' in COMMAND_AGENT
-    assert "self._last_status = time.monotonic()" in COMMAND_AGENT
+    assert "self._last_status = now_status" in COMMAND_AGENT
+    assert "self._last_presence = now_status" in COMMAND_AGENT
+    assert "self._last_status_digest = piggybacked_digest" in COMMAND_AGENT
     assert "self._report_status_if_due(force=True)" in COMMAND_AGENT
     assert "self._wake_channel_active = self._wake_channel.start()" in COMMAND_AGENT
 
@@ -24,7 +26,9 @@ def test_display_and_system_piggyback_due_status_on_existing_claim_request():
 def test_piggyback_uses_exact_same_canonical_status_payload_builder():
     assert "def build_status_body(" in STATUS
     assert "json_body=build_status_body(observed_state=observed_state, payload=payload)" in STATUS
-    assert "piggybacked_status = build_status_body(" in COMMAND_AGENT
+    assert "body = build_status_body(observed_state=state, payload=self.status_payload())" in COMMAND_AGENT
+    assert 'candidate, candidate_digest = self._status_snapshot(state="online")' in COMMAND_AGENT
+    assert "piggybacked_status = candidate" in COMMAND_AGENT
 
 
 def test_backend_claim_keeps_legacy_body_compatible_and_status_optional():
@@ -121,3 +125,26 @@ def test_queue_agent_falls_back_to_standalone_status_when_backend_does_not_ack_p
     assert [request[0] for request in transport.requests] == ["POST", "PUT"]
     assert transport.requests[0][1] == "/api/system-agent/clients/18/commands/claim"
     assert transport.requests[1][1] == "/api/system-agent/clients/18/status"
+
+
+def test_status_digest_ignores_timestamp_churn_but_detects_operational_change():
+    from types import SimpleNamespace
+    from clientflow_runtime import command_agent as module
+
+    class FakeTransport:
+        credential = SimpleNamespace(client_id=19, domain=SimpleNamespace(value="display"))
+
+    payload = {
+        "runtime": {"state": "running", "updated_at": 100.0},
+        "calendar": {"schedule_state": "on", "last_fetch_at": 100.0},
+    }
+    agent = module.QueueAgent(FakeTransport(), lambda _context: {}, status_payload=lambda: payload)
+    _body_a, digest_a = agent._status_snapshot()
+    payload["runtime"]["updated_at"] = 200.0
+    payload["calendar"]["last_fetch_at"] = 200.0
+    _body_b, digest_b = agent._status_snapshot()
+    assert digest_b == digest_a
+
+    payload["runtime"]["state"] = "error"
+    _body_c, digest_c = agent._status_snapshot()
+    assert digest_c != digest_a
