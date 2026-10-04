@@ -15,7 +15,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCT = "PlanIQ Display"
 KIND = "display"
-PYTHON_VERSION = "3.13.15"
+PYTHON_VERSION = "3.13.16"
 NODE_VERSION = "24.21.0"
 NPM_VERSION = "11.19.0"
 PIP_VERSION = "26.1.2"
@@ -105,7 +105,9 @@ def main() -> int:
         "requirements-ci.txt", "requirements-ci.lock.txt", "frontend/.node-version", "frontend/package.json",
         "frontend/package-lock.json", "frontend/dependency-audit-allowlist.json",
         "frontend/scripts/auditDependencies.mjs", "frontend/tests/dependencyRuntime.test.mjs",
-        "DEPENDENCY_MAINTENANCE.md", ".github/workflows/ci.yml", "render.yaml",
+        "DEPENDENCY_MAINTENANCE.md", ".github/workflows/ci.yml",
+        ".github/workflows/deployment-smoke.yml", ".github/workflows/dependency-maintenance-candidate.yml",
+        "render.yaml",
     ]
     missing = [item for item in required if not (ROOT / item).is_file()]
     if missing:
@@ -122,6 +124,8 @@ def main() -> int:
     require_subset(production, production_lock, "Production lock")
     require_subset(production, ci_lock, "CI lock")
     require_subset(ci, ci_lock, "CI lock")
+    if production.get("cryptography") != "50.0.2":
+        raise ValueError("Backend cryptography skal være fastlåst til 50.0.2")
 
     package = json.loads((ROOT / "frontend/package.json").read_text(encoding="utf-8"))
     lock = json.loads((ROOT / "frontend/package-lock.json").read_text(encoding="utf-8"))
@@ -195,12 +199,20 @@ def main() -> int:
     frontend_env = {item.get("key"): item.get("value") for item in frontend.get("envVars", [])}
     if backend_env.get("PYTHON_VERSION") != PYTHON_VERSION:
         raise ValueError("Render PYTHON_VERSION afviger")
+    expected_livestream_viewer = {
+        "LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS": "25",
+        "LIVESTREAM_V2_VIEWER_LEASE_SECONDS": "75",
+    }
+    for key, expected in expected_livestream_viewer.items():
+        if backend_env.get(key) != expected:
+            raise ValueError(f"Render {key} skal være {expected}")
     if frontend_env.get("NODE_VERSION") != NODE_VERSION:
         raise ValueError("Render NODE_VERSION afviger")
 
     workflow = (ROOT / ".github/workflows/ci.yml").read_text()
     for token in (
         f'python-version: "{PYTHON_VERSION}"', f'node-version: "{NODE_VERSION}"',
+        f"test \"$(python -c 'import platform; print(platform.python_version())')\" = \"{PYTHON_VERSION}\"",
         f'test "$(npm --version)" = "{NPM_VERSION}"', "--require-hashes -r requirements-ci.lock.txt",
         "python -m pip_audit --disable-pip --no-deps --progress-spinner off -r backend/requirements.lock.txt",
         "python scripts/validate_dependency_contract.py",
@@ -213,6 +225,14 @@ def main() -> int:
     ):
         if token not in workflow:
             raise ValueError(f"CI dependency-kontrakt mangler: {token}")
+
+
+    deployment_smoke = (ROOT / ".github/workflows/deployment-smoke.yml").read_text()
+    if f'python-version: "{PYTHON_VERSION}"' not in deployment_smoke:
+        raise ValueError("Deployment smoke Python-version afviger")
+    maintenance = (ROOT / ".github/workflows/dependency-maintenance-candidate.yml").read_text()
+    if f'CLIENTFLOW_PYTHON_VERSION: "{PYTHON_VERSION}"' not in maintenance or f'python-version: "{PYTHON_VERSION}"' not in maintenance:
+        raise ValueError("Dependency-maintenance Python-version afviger")
 
     print(f"Dependency-kontrakt bestået: {PRODUCT}, Python {PYTHON_VERSION}, Node {NODE_VERSION}, npm {NPM_VERSION}, pip {PIP_VERSION}")
     return 0

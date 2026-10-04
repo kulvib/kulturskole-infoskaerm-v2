@@ -1,13 +1,15 @@
 [Unit]
 Description=ClientFlow post-final-reboot customer handoff acceptance
-After=graphical.target clientflow-display-runtime.service clientflow-kiosk-lockdown-broker.socket
-Wants=graphical.target clientflow-display-runtime.service clientflow-kiosk-lockdown-broker.socket
+After=network-online.target graphical.target clientflow-display-runtime.service clientflow-browser-guard.service clientflow-status-agent.service clientflow-kiosk-lockdown-broker.socket
+Wants=network-online.target graphical.target clientflow-display-runtime.service clientflow-browser-guard.service clientflow-status-agent.service clientflow-kiosk-lockdown-broker.socket
 ConditionPathExists=/var/lib/clientflow/release/customer-handoff.json
+ConditionPathExists=/etc/clientflow/credentials/status.json
 StartLimitIntervalSec=300
 StartLimitBurst=18
 
 [Service]
 Type=oneshot
+Environment=CLIENTFLOW_CREDENTIAL_FILE=/etc/clientflow/credentials/status.json
 ExecStart=/opt/clientflow/active/runtime/bin/clientflow-post-final-reboot-acceptance
 Restart=on-failure
 RestartSec=10s

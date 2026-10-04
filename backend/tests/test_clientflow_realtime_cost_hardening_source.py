@@ -250,7 +250,18 @@ def test_customer_handoff_is_accepted_only_after_final_reboot_runtime_gate():
     assert '"--property=Type"' in session_policy
     assert 'properties.get("Type", "").lower() == "wayland"' in session_policy
     assert 'lockdown.get("status") != "applied"' in gate
-    assert "NAUTILUS.is_file()" in gate
+    assert "_verify_nautilus_ding_session()" in gate
+    assert "kiosk_url = _verify_display_runtime(current_boot)" in gate
+    assert "EXPECTED_BOOT_COUNTDOWN_SECONDS = 10" in gate
+    assert "_verify_critical_services()" in gate
+    assert "_verify_browser_guard(kiosk_url)" in gate
+    assert "_verify_backend_approved()" in gate
+    assert "DomainCredential.load(Domain.STATUS)" in gate
+    assert "DomainTransport(credential).access_token(force_refresh=True)" in gate
+    assert "org.freedesktop.DBus.StartServiceByName" in gate
+    assert "visibleConsent" in gate
     assert "clientflow-post-final-reboot-acceptance" in pyproject
     assert "clientflow-post-final-reboot-acceptance.service" in target
+    assert "After=network-online.target" in unit
+    assert "CLIENTFLOW_CREDENTIAL_FILE=/etc/clientflow/credentials/status.json" in unit
     assert "Restart=on-failure" in unit

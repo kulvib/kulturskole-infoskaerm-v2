@@ -29,7 +29,7 @@ services:
         value: "production"
 
       - key: PYTHON_VERSION
-        value: "3.13.15"
+        value: "3.13.16"
 
       - key: SECRET_KEY
         sync: false
@@ -168,7 +168,7 @@ services:
       - key: SMTP_FROM
         sync: false
 
-      # Frozen Livestream/HLS runtime configuration: values preserved, code untouched.
+      # Reviewed Livestream/HLS runtime configuration. Viewer 25/75 must stay synchronized with backend/frontend runtime contracts.
       - key: HLS_BASE_DIR
         value: "/opt/render/project/src/backend/service1/hls"
       - key: HLS_MANIFEST_KEEP_N
@@ -180,9 +180,9 @@ services:
       - key: HLS_VIEWER_HEARTBEAT_TIMEOUT_SECONDS
         value: "180"
       - key: LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS
-        value: "10"
+        value: "25"
       - key: LIVESTREAM_V2_VIEWER_LEASE_SECONDS
-        value: "30"
+        value: "75"
       - key: LIVESTREAM_V2_VIEWER_STOP_GRACE_SECONDS
         value: "30"
       - key: LIVESTREAM_V2_VIEWER_SWEEP_SECONDS

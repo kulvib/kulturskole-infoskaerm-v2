@@ -421,7 +421,12 @@ def test_boot_marker_is_persisted_only_after_successful_browser_start(monkeypatc
 
     assert result["started"] is True
     assert runtime._boot_start_required() is False
-    assert (state / "browser-boot.json").is_file()
+    marker_path = state / "browser-boot.json"
+    assert marker_path.is_file()
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert marker["boot_id"] == "boot-a"
+    assert marker["countdown_reason"] == "system_start"
+    assert marker["countdown_seconds"] == 10
     assert [name for name, _value in seen].count("countdown") == 1
 
 

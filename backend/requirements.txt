@@ -4,7 +4,7 @@ fastapi==0.141.1
 sqlmodel==0.0.39
 passlib[bcrypt]==1.7.4
 PyJWT==2.15.1
-cryptography==50.0.0
+cryptography==50.0.2
 bcrypt==4.0.1
 pydantic==2.13.4
 uvicorn[standard]==0.54.0
