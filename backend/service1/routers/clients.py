@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from ..db import get_session
 from ..audit import add_audit_log
-from ..client_health_policy import build_client_health_issues
+from ..client_health_policy import build_client_health_issues_for_principal
 from ..models import (
     Client, ClientRead, ClientControlRoomListRead, ClientHealthIssueRead,
     ClientPresenceRead, ClientCreate, ClientUpdate, CalendarMarking, ChromeAction, Organization,
@@ -1097,11 +1097,14 @@ def _prepare_client_read(client: Client, presence: ClientPresence) -> Client:
     return client
 
 
-def _apply_client_health_projection(client: Client) -> None:
+def _apply_client_health_projection(client: Client, *, principal) -> None:
     _set_runtime_read_attr(
         client,
         "health_issues",
-        [ClientHealthIssueRead(**issue) for issue in build_client_health_issues(client)],
+        [
+            ClientHealthIssueRead(**issue)
+            for issue in build_client_health_issues_for_principal(client, principal)
+        ],
     )
 
 
@@ -1290,7 +1293,6 @@ def _prepare_single_client_read_from_loaded_presence(
         presence,
         projection_commands=system_commands,
     )
-    _apply_client_health_projection(client)
     return client
 
 
@@ -1352,7 +1354,6 @@ def _prepare_clients_read(session, clients: List[Client]) -> List[Client]:
             presence,
             projection_commands=system_commands.get(client_id),
         )
-        _apply_client_health_projection(client)
     return clients
 
 
@@ -1399,6 +1400,8 @@ def get_clients_for_my_organization(session=Depends(get_session), user=Depends(g
         select(Client).where(Client.status == "approved", Client.organization_id == user.organization_id, Client.deleted_at == None)
     ).all()
     _prepare_clients_read(session, clients)
+    for client in clients:
+        _apply_client_health_projection(client, principal=user)
     clients.sort(key=lambda c: (c.sort_order is None, c.sort_order if c.sort_order is not None else 9999, c.id))
     return clients
 
@@ -1422,6 +1425,8 @@ def get_clients(session=Depends(get_session), user=Depends(get_current_user)):
 
     clients = session.exec(query).all()
     _prepare_clients_read(session, clients)
+    for client in clients:
+        _apply_client_health_projection(client, principal=user)
     clients.sort(key=lambda c: (c.sort_order is None, c.sort_order if c.sort_order is not None else 9999, c.id))
     return clients
 
