@@ -159,7 +159,13 @@ class DisplayRuntime:
             return
         atomic_write_shared_json(
             BOOT_MARKER_PATH,
-            {"schema_version": 1, "boot_id": boot_id, "updated_at": time.time()},
+            {
+                "schema_version": 1,
+                "boot_id": boot_id,
+                "countdown_reason": "system_start",
+                "countdown_seconds": BOOT_START_COUNTDOWN_SECONDS,
+                "updated_at": time.time(),
+            },
             mode=0o640,
             group_gid=self.shared_group_gid,
         )

@@ -183,7 +183,7 @@ login, HLS/livestream, ClientFlow, WebSocket, terminal og Remote Desktop.
 
 ## Runtime- og dependency-kontrakt (Step 36B)
 
-Backend/CI bruger Python `3.13.15`, frontend-build bruger Node.js `24.21.0` LTS og npm `11.19.0`, og pip er `26.1.2`. Den indlejrede ClientFlow-runtime for security-replacement compatibility-bridge release 1.3.28/1229 forbliver bevidst på Python `3.13.14`, og både backend og runtime bruger patched PyJWT `2.15.1`. Sequence 1228 er security-rejected og må ikke catalog-promoveres. Python-dependencies installeres fra hash-låste lockfiler med `--require-hashes`; frontend installeres med `npm ci`. CI kører `pip check`, `pip-audit`, npm-audit, dependency-runtime-tests og `scripts/validate_dependency_contract.py`.
+Backend/CI bruger Python `3.13.16`, frontend-build bruger Node.js `24.21.0` LTS og npm `11.19.0`, og pip er `26.1.2`. Den indlejrede ClientFlow-runtime for 1.3.30/1231 forbliver bevidst på Python `3.13.14`, indtil en autentisk fysisk in-place runtime bridge er bevist; både backend og runtime bruger patched PyJWT `2.15.1`. Backend `cryptography` er fastlåst til `50.0.2`. Python-dependencies installeres fra hash-låste lockfiler med `--require-hashes`; frontend installeres med `npm ci`. CI kører `pip check`, `pip-audit`, npm-audit, dependency-runtime-tests og `scripts/validate_dependency_contract.py`.
 
 Vedligeholdelsesproceduren står i [DEPENDENCY_MAINTENANCE.md](DEPENDENCY_MAINTENANCE.md).
 
