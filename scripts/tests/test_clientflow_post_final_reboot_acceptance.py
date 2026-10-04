@@ -32,6 +32,7 @@ def test_post_final_reboot_gate_rejects_same_boot(monkeypatch, tmp_path: Path) -
     _pending(state_path, "boot-a")
     monkeypatch.setattr(gate, "STATE_PATH", state_path)
     monkeypatch.setattr(gate, "BOOT_ID_PATH", boot_path)
+    monkeypatch.setattr(gate, "STATE_OWNER_UID", state_path.stat().st_uid)
     monkeypatch.setattr(gate.os, "geteuid", lambda: 0)
     with pytest.raises(gate.PostFinalRebootAcceptanceError, match="Final reboot"):
         gate.verify_and_accept()
@@ -48,6 +49,7 @@ def test_post_final_reboot_gate_accepts_only_verified_new_boot(monkeypatch, tmp_
     monkeypatch.setattr(gate, "STATE_PATH", state_path)
     monkeypatch.setattr(gate, "BOOT_ID_PATH", boot_path)
     monkeypatch.setattr(gate, "NAUTILUS", nautilus)
+    monkeypatch.setattr(gate, "STATE_OWNER_UID", state_path.stat().st_uid)
     monkeypatch.setattr(gate.os, "geteuid", lambda: 0)
     monkeypatch.setattr(gate, "_active_local_kiosk_session", lambda: "session-1")
     monkeypatch.setattr(gate, "lockdown_status", lambda: {
@@ -64,3 +66,13 @@ def test_post_final_reboot_gate_accepts_only_verified_new_boot(monkeypatch, tmp_
     assert persisted["kiosk_session_ready"] is True
     assert persisted["nautilus_ready"] is True
     assert persisted["account_separation_ready"] is True
+
+def test_post_final_reboot_gate_rejects_wrong_state_owner(monkeypatch, tmp_path: Path) -> None:
+    state_path = tmp_path / "customer-handoff.json"
+    _pending(state_path, "boot-a")
+    monkeypatch.setattr(gate, "STATE_PATH", state_path)
+    monkeypatch.setattr(gate, "STATE_OWNER_UID", state_path.stat().st_uid + 1)
+    monkeypatch.setattr(gate.os, "geteuid", lambda: 0)
+    with pytest.raises(gate.PostFinalRebootAcceptanceError, match="ownership/permissions"):
+        gate.verify_and_accept()
+

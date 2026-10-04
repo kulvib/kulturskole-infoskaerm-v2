@@ -24,6 +24,7 @@ NAUTILUS = Path("/usr/bin/nautilus")
 KIOSK_USER = "clientflow-kiosk"
 ADMIN_USER = "cfadmin"
 ADMIN_GROUPS = {"sudo", "admin"}
+STATE_OWNER_UID = 0
 
 
 class PostFinalRebootAcceptanceError(RuntimeError):
@@ -35,7 +36,7 @@ def _read_state() -> dict[str, object] | None:
         meta = STATE_PATH.lstat()
     except FileNotFoundError:
         return None
-    if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0 or (meta.st_mode & 0o077):
+    if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode) or meta.st_uid != STATE_OWNER_UID or (meta.st_mode & 0o077):
         raise PostFinalRebootAcceptanceError("Customer handoff-state har usikre ownership/permissions")
     try:
         value = json.loads(STATE_PATH.read_text(encoding="utf-8"))
