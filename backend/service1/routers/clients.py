@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from ..db import get_session
 from ..audit import add_audit_log
-from ..client_health_policy import build_client_health_issues
+from ..client_health_policy import build_client_health_issues_for_principal
 from ..models import (
     Client, ClientRead, ClientControlRoomListRead, ClientHealthIssueRead,
     ClientPresenceRead, ClientCreate, ClientUpdate, CalendarMarking, ChromeAction, Organization,
@@ -1097,11 +1097,14 @@ def _prepare_client_read(client: Client, presence: ClientPresence) -> Client:
     return client
 
 
-def _apply_client_health_projection(client: Client) -> None:
+def _apply_client_health_projection(client: Client, *, principal) -> None:
     _set_runtime_read_attr(
         client,
         "health_issues",
-        [ClientHealthIssueRead(**issue) for issue in build_client_health_issues(client)],
+        [
+            ClientHealthIssueRead(**issue)
+            for issue in build_client_health_issues_for_principal(client, principal)
+        ],
     )
 
 
@@ -1290,7 +1293,6 @@ def _prepare_single_client_read_from_loaded_presence(
         presence,
         projection_commands=system_commands,
     )
-    _apply_client_health_projection(client)
     return client
 
 
@@ -1352,7 +1354,6 @@ def _prepare_clients_read(session, clients: List[Client]) -> List[Client]:
             presence,
             projection_commands=system_commands.get(client_id),
         )
-        _apply_client_health_projection(client)
     return clients
 
 
@@ -1436,8 +1437,17 @@ def get_control_room_clients(session=Depends(get_session), user=Depends(get_curr
     the large detail-only payload before it leaves the backend.
     """
     if getattr(user, "role", None) == "bruger":
-        return get_clients_for_my_organization(session=session, user=user)
-    return get_clients(session=session, user=user)
+        clients = get_clients_for_my_organization(session=session, user=user)
+    else:
+        clients = get_clients(session=session, user=user)
+
+    # health_issues is an operator diagnostic surface and is intentionally
+    # serialized only from this role-aware Control Room projection. Admin and
+    # superadmin receive deterministic guidance; every other role receives an
+    # empty list even though the underlying runtime fields may be readable.
+    for client in clients:
+        _apply_client_health_projection(client, principal=user)
+    return clients
 
 
 @router.post("/clients/control-room-realtime/capability")

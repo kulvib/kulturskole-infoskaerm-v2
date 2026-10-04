@@ -9,6 +9,18 @@ _BAD_ERROR_STATES = {"error", "failed", "fejl"}
 _BAD_SERVICE_STATES = {"failed", "error", "not-found", "missing", "fejl"}
 
 
+def principal_can_view_client_health(principal: Any) -> bool:
+    """Only administrators may receive operator-facing client health details."""
+
+    return bool(
+        principal is not None
+        and (
+            getattr(principal, "is_superadmin", False)
+            or getattr(principal, "is_admin", False)
+        )
+    )
+
+
 def build_client_health_issues(client: Any) -> list[dict[str, str]]:
     """Return operator-facing issues from already-loaded client/runtime fields.
 
@@ -77,6 +89,17 @@ def build_client_health_issues(client: Any) -> list[dict[str, str]]:
             required_role="superadmin",
         )
 
+    firmware_update_status = str(getattr(client, "firmware_update_status", "") or "").strip().lower()
+    firmware_update_error = str(getattr(client, "firmware_update_error", "") or "").strip()
+    if firmware_update_status in _BAD_ERROR_STATES or firmware_update_error:
+        add(
+            "firmware_update_error",
+            "Firmware-opdatering fejlede",
+            firmware_update_error or str(getattr(client, "firmware_update_message", "") or "Firmware-opdateringen rapporterer fejl."),
+            "Kontroller firmware-opdateringens System-command og log. Kræver superadministrator.",
+            required_role="superadmin",
+        )
+
     cf_update_status = str(getattr(client, "client_update_status", "") or "").strip().lower()
     cf_update_error = str(getattr(client, "client_update_error", "") or "").strip()
     if cf_update_status in _BAD_ERROR_STATES or cf_update_error:
@@ -121,9 +144,14 @@ def build_client_health_issues(client: Any) -> list[dict[str, str]]:
 
     service_fields = (
         ("service_clientflow_status", "Status-agent", "clientflow-status-agent.service"),
+        ("service_calendar_status", "Kalender", "clientflow-calendar.service"),
         ("service_browser_guard_status", "Browser Guard", "clientflow-browser-guard.service"),
         ("service_remote_desktop_status", "Remote Desktop", "clientflow-remote-desktop-agent.service"),
         ("service_remote_terminal_status", "Terminal", "clientflow-terminal-agent.service"),
+        ("service_admin_terminal_status", "Administrator-terminal", "clientflow-root-terminal-broker.socket"),
+        ("service_livestream_status", "Livestream", "clientflow-livestream-producer.service"),
+        ("service_selfupdate_status", "ClientFlow updater", "clientflow-updater.timer"),
+        ("service_ubuntu_update_status", "Ubuntu update broker", "clientflow-system-broker.socket"),
     )
     for field, title, unit in service_fields:
         raw = str(getattr(client, field, "") or "").strip()
@@ -136,4 +164,12 @@ def build_client_health_issues(client: Any) -> list[dict[str, str]]:
                 required_role="superadmin",
             )
 
-    return issues[:8]
+    return issues
+
+
+def build_client_health_issues_for_principal(client: Any, principal: Any) -> list[dict[str, str]]:
+    """Role-scoped health projection used by the Control Room response."""
+
+    if not principal_can_view_client_health(principal):
+        return []
+    return build_client_health_issues(client)
