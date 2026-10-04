@@ -7,8 +7,9 @@ This pre-freeze closure adds operator visibility without changing the durable co
 - `Status` is left-aligned like `Lokalitet`.
 - Administrator and superadministrator receive a `Fejl` column.
 - The backend builds `health_issues` from already-loaded runtime/diagnostic fields; the list does not add a new DB poll or per-client query.
-- Only explicit error evidence is classified. Normal offline/idle states are not automatically faults.
+- Only explicit error evidence is classified. Normal offline/idle states are not automatically faults. Firmware update failures and every canonical service failure used by the Control Room projection are included.
 - Every issue contains deterministic operator guidance and a `required_role` boundary. Admin UI instructs the operator to contact a superadministrator when the suggested remediation requires elevated rights.
+- `health_issues` is serialized only from the role-aware Control Room summary: administrator and superadministrator receive it; viewer, ordinary user and client principals receive an empty list.
 
 ## Superadministrator livestream wall
 

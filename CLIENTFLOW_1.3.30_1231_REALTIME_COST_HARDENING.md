@@ -55,14 +55,14 @@ These values are encoded in the pre-change source and are covered by source/cont
 - Legacy cookie authorization remains as compatibility fallback.
 - `/last-segment-info` steady-state polling is removed; HLS fragment events provide segment progress.
 - Stable health fallback is reduced from 1 second to 10 seconds.
-- Hidden pages stop HLS work; backend lifecycle/grace remains the restart-churn guard.
+- An already-running HLS/viewer session stays warm for up to 30 seconds after temporary browser-tab visibility loss; if still hidden after the grace, browser media/viewer work is released. Real page departure still leaves immediately, and backend lifecycle/grace remains the restart-churn guard.
 
 ## Remote Desktop
 
 - Visible active mode remains 6 fps.
 - Visible idle mode reduces to 1 fps after 20 seconds.
 - Deep visible idle observation reduces to 0.2 fps after 120 seconds.
-- Hidden pages stop streaming immediately.
+- An already-running Remote Desktop capture stays warm for up to 30 seconds after temporary browser-tab visibility loss; if still hidden after the grace, capture stops. A new capture is never started while the page is already hidden.
 - Mouse/keyboard/wheel activity resumes active mode immediately.
 - SHA-256 frame dedup suppresses unchanged JPEG frames, with a sparse refresh guard.
 - Browser activity presence is process-local while active; durable DB activity rows are opened/closed for audit but are no longer renewed every 15 seconds.
