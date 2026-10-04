@@ -177,7 +177,7 @@ def verify_shared_agent_wake_token(authorization: str | None, *, client_id: int,
     Revocation therefore remains enforced on every durable queue operation while
     this bounded token allows idle wake traffic to stay off Postgres.
     """
-    _validate_domain(domain, commands=True)
+    _validate_domain(domain)
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Bearer token mangler")
     token = authorization[7:].strip()

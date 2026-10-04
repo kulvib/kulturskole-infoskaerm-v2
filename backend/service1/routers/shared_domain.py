@@ -23,6 +23,7 @@ from ..calendar_control import (
 )
 from ..system_control import apply_status_power_observation, apply_system_command_completion
 from ..models import Client
+from ..ephemeral_presence import touch_presence
 from ..realtime_wakeup import current_generation, wait_for_change
 from ..ui_realtime import notify_ui_state_changed
 from ..shared_domain import (
@@ -149,6 +150,7 @@ def _apply_status_in_session(
         "observed_state": row.observed_state,
         "reported_at": row.reported_at,
     }
+    touch_presence(domain, client_id, at=row.reported_at)
     if client_identity is not None:
         response["client_identity"] = client_identity
     return response
@@ -372,6 +374,29 @@ async def display_wake_ws(websocket: WebSocket, client_id: int):
 @router.websocket("/system-agent/clients/{client_id}/commands/wake/ws")
 async def system_wake_ws(websocket: WebSocket, client_id: int):
     await _wake_ws(websocket, domain="system", client_id=client_id)
+
+
+def _agent_presence(domain: str, client_id: int, authorization: str | None):
+    # Signed domain tokens are verified locally. Durable status/auth remains
+    # database-authoritative on full checkpoints and token renewal.
+    verify_shared_agent_wake_token(authorization, client_id=client_id, domain=domain)
+    observed_at = touch_presence(domain, client_id)
+    return {"ok": True, "client_id": client_id, "domain": domain, "observed_at": observed_at}
+
+
+@router.post("/status-agent/clients/{client_id}/presence")
+def status_agent_presence(client_id: int, authorization: str | None = Header(default=None)):
+    return _agent_presence("status", client_id, authorization)
+
+
+@router.post("/display-agent/clients/{client_id}/presence")
+def display_agent_presence(client_id: int, authorization: str | None = Header(default=None)):
+    return _agent_presence("display", client_id, authorization)
+
+
+@router.post("/system-agent/clients/{client_id}/presence")
+def system_agent_presence(client_id: int, authorization: str | None = Header(default=None)):
+    return _agent_presence("system", client_id, authorization)
 
 
 @router.put("/status-agent/clients/{client_id}/status")

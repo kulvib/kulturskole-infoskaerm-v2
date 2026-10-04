@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import asyncio
+import hashlib
 import json
 import threading
 import time
@@ -214,9 +215,12 @@ class QueueAgent:
         self._last_claim_status_reported = False
         self.logger = configure_logging(f"clientflow.{transport.credential.domain.value}")
         self._last_status = 0.0
+        self._last_presence = 0.0
+        self._last_status_digest: str | None = None
+        self._durable_status_checkpoint_seconds = 60.0
         self._wake_channel = (
             CommandWakeChannel(transport, self.logger)
-            if transport.credential.domain.value in {"display", "system"}
+            if transport.credential.domain.value in {"display", "system", "livestream"}
             else None
         )
         self._wake_channel_active = False
@@ -224,17 +228,65 @@ class QueueAgent:
     def _prefix(self) -> str:
         return self.transport.credential.domain.value.replace("_", "-")
 
-    def _status_due(self, *, force: bool = False) -> bool:
+    @staticmethod
+    def _stable_status_value(value: Any) -> Any:
+        """Remove naturally volatile telemetry from change detection only.
+
+        The complete payload is still persisted by each durable checkpoint.
+        Timestamp churn must not manufacture a 15-second database write, while
+        actual state/error/configuration values continue to force one.
+        """
+        if isinstance(value, dict):
+            stable: dict[str, Any] = {}
+            for key, item in value.items():
+                normalized = str(key).strip().lower()
+                if (
+                    normalized in {"timestamp", "uptime_seconds", "client_time_utc"}
+                    or normalized.endswith("_at")
+                ):
+                    continue
+                stable[str(key)] = QueueAgent._stable_status_value(item)
+            return stable
+        if isinstance(value, list):
+            return [QueueAgent._stable_status_value(item) for item in value]
+        return value
+
+    def _status_snapshot(self, *, state: str = "online") -> tuple[dict[str, Any], str]:
+        body = build_status_body(observed_state=state, payload=self.status_payload())
+        stable_body = self._stable_status_value(body)
+        digest = hashlib.sha256(
+            json.dumps(stable_body, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()
+        return body, digest
+
+    def _full_status_due(self, body: dict[str, Any], digest: str, *, force: bool = False) -> bool:
+        if force or self._last_status_digest != digest:
+            return True
+        return time.monotonic() - self._last_status >= self._durable_status_checkpoint_seconds
+
+    def _send_presence_if_due(self, *, force: bool = False) -> None:
         now = time.monotonic()
-        if not force and now - self._last_status < SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS:
-            return False
-        return True
+        if not force and now - self._last_presence < SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS:
+            return
+        client_id = self.transport.credential.client_id
+        self.transport.json_request(
+            "POST",
+            f"/api/{self._prefix()}-agent/clients/{client_id}/presence",
+            json_body={},
+            timeout=15,
+        )
+        self._last_presence = time.monotonic()
 
     def _report_status_if_due(self, *, force: bool = False, state: str = "online") -> None:
-        if not self._status_due(force=force):
-            return
-        report_status(self.transport, observed_state=state, payload=self.status_payload())
-        self._last_status = time.monotonic()
+        body, digest = self._status_snapshot(state=state)
+        if self._full_status_due(body, digest, force=force):
+            report_status(self.transport, observed_state=state, payload=body["status_payload"])
+            now = time.monotonic()
+            self._last_status = now
+            self._last_presence = now
+            self._last_status_digest = digest
+        else:
+            self._send_presence_if_due()
 
     def _claim(self, *, status_report: dict[str, Any] | None = None) -> CommandContext | None:
         client_id = self.transport.credential.client_id
@@ -304,12 +356,15 @@ class QueueAgent:
         while True:
             try:
                 piggybacked_status: dict[str, Any] | None = None
-                if self.piggyback_status_on_claim and self._status_due():
-                    piggybacked_status = build_status_body(
-                        observed_state="online",
-                        payload=self.status_payload(),
-                    )
-                elif not self.piggyback_status_on_claim:
+                piggybacked_digest: str | None = None
+                if self.piggyback_status_on_claim:
+                    candidate, candidate_digest = self._status_snapshot(state="online")
+                    if self._full_status_due(candidate, candidate_digest):
+                        piggybacked_status = candidate
+                        piggybacked_digest = candidate_digest
+                    else:
+                        self._send_presence_if_due()
+                else:
                     self._report_status_if_due()
 
                 context = self._claim(status_report=piggybacked_status)
@@ -317,7 +372,10 @@ class QueueAgent:
                     if self._last_claim_status_reported:
                         # The backend applies status and claim in one transaction. Only
                         # advance the cadence when the backend explicitly acknowledges it.
-                        self._last_status = time.monotonic()
+                        now_status = time.monotonic()
+                        self._last_status = now_status
+                        self._last_presence = now_status
+                        self._last_status_digest = piggybacked_digest
                     else:
                         # Rolling-upgrade compatibility: older backends may ignore the
                         # optional field. Preserve liveness with the historical PUT.

@@ -31,6 +31,8 @@ from .client_activity import (
 )
 from .db import engine
 from .models import Client
+from .realtime_wakeup import queue_wakeup_after_commit
+from .livestream_presence import active_client_ids as ephemeral_viewer_client_ids, active_keys as ephemeral_viewer_keys, leave as ephemeral_viewer_leave, touch as ephemeral_viewer_touch
 from .livestream_v2_models import (
     LivestreamV2AgentStatus,
     LivestreamV2Command,
@@ -309,6 +311,7 @@ def _normalise_viewer_id(value: str | None) -> str:
 
 def _expire_stale_viewers(session: Session, client_id: int, *, now: datetime) -> None:
     cutoff = now - timedelta(seconds=VIEWER_LEASE_SECONDS)
+    live_ephemeral = ephemeral_viewer_keys(client_id, lease_seconds=VIEWER_LEASE_SECONDS, now=now)
     rows = session.exec(
         select(LivestreamV2Viewer).where(
             LivestreamV2Viewer.client_id == client_id,
@@ -317,6 +320,8 @@ def _expire_stale_viewers(session: Session, client_id: int, *, now: datetime) ->
         )
     ).all()
     for row in rows:
+        if (row.viewer_id, row.principal_key) in live_ephemeral:
+            continue
         row.ended_at = row.last_seen_at + timedelta(seconds=VIEWER_LEASE_SECONDS)
         row.end_reason = "lease_expired"
         session.add(row)
@@ -325,14 +330,16 @@ def _expire_stale_viewers(session: Session, client_id: int, *, now: datetime) ->
 def active_viewer_count(session: Session, client_id: int) -> int:
     now = _now()
     _expire_stale_viewers(session, client_id, now=now)
-    return len(
-        session.exec(
-            select(LivestreamV2Viewer.id).where(
-                LivestreamV2Viewer.client_id == client_id,
-                LivestreamV2Viewer.ended_at.is_(None),
-            )
-        ).all()
-    )
+    ephemeral = ephemeral_viewer_keys(client_id, lease_seconds=VIEWER_LEASE_SECONDS, now=now)
+    durable = session.exec(
+        select(LivestreamV2Viewer).where(
+            LivestreamV2Viewer.client_id == client_id,
+            LivestreamV2Viewer.ended_at.is_(None),
+        )
+    ).all()
+    keys = {(row.viewer_id, row.principal_key) for row in durable}
+    keys.update(ephemeral)
+    return len(keys)
 
 
 def viewer_heartbeat(
@@ -354,23 +361,34 @@ def viewer_heartbeat(
             LivestreamV2Viewer.viewer_id == viewer_id,
         )
     ).first()
+    source_value = str(source or "")[:120] or None
     if row is None:
         row = LivestreamV2Viewer(
             client_id=client_id,
             viewer_id=viewer_id,
             principal_key=principal_key,
-            source=str(source or "")[:120] or None,
+            source=source_value,
             created_at=now,
             last_seen_at=now,
         )
+        session.add(row)
     else:
         if row.principal_key != principal_key:
             raise HTTPException(status_code=409, detail="viewer_id tilhører en anden session")
-        row.source = str(source or "")[:120] or None
-        row.last_seen_at = now
-        row.ended_at = None
-        row.end_reason = None
-    session.add(row)
+        # Steady heartbeats are ephemeral. Persist only a lifecycle transition
+        # (re-open after leave/expiry) or a changed source label.
+        changed = False
+        if row.ended_at is not None:
+            row.last_seen_at = now
+            row.ended_at = None
+            row.end_reason = None
+            changed = True
+        if row.source != source_value:
+            row.source = source_value
+            changed = True
+        if changed:
+            session.add(row)
+    ephemeral_viewer_touch(client_id, viewer_id, principal_key, at=now)
     generation = current_generation(session, client_id)
     command = None
     if generation is None and not explicit_stop_latched(session, client_id):
@@ -395,8 +413,10 @@ def viewer_leave(
     ).first()
     if row is None:
         return None
-    if row.principal_key != _principal_key(principal):
+    principal_key = _principal_key(principal)
+    if row.principal_key != principal_key:
         raise HTTPException(status_code=409, detail="viewer_id tilhører en anden session")
+    ephemeral_viewer_leave(client_id, row.viewer_id, principal_key)
     if row.ended_at is None:
         row.ended_at = _now()
         row.end_reason = "leave"
@@ -448,6 +468,7 @@ def enqueue_command(
         updated_at=_now(),
     )
     session.add(command)
+    queue_wakeup_after_commit(session, domain="livestream", client_id=client_id)
     return command
 
 
@@ -1025,14 +1046,19 @@ def _active_viewer_client_ids(
     *,
     now: datetime | None = None,
 ) -> set[int]:
-    """Return live viewer clients while expiring stale leases in one sweep query."""
+    """Return live viewer clients while persisting only lease-expiry boundaries."""
     now = now or _now()
     cutoff = now - timedelta(seconds=VIEWER_LEASE_SECONDS)
+    active = ephemeral_viewer_client_ids(lease_seconds=VIEWER_LEASE_SECONDS, now=now)
     rows = session.exec(
         select(LivestreamV2Viewer).where(LivestreamV2Viewer.ended_at.is_(None))
     ).all()
-    active: set[int] = set()
     for row in rows:
+        if (row.viewer_id, row.principal_key) in ephemeral_viewer_keys(
+            int(row.client_id), lease_seconds=VIEWER_LEASE_SECONDS, now=now
+        ):
+            active.add(int(row.client_id))
+            continue
         if row.last_seen_at < cutoff:
             row.ended_at = row.last_seen_at + timedelta(seconds=VIEWER_LEASE_SECONDS)
             row.end_reason = "lease_expired"

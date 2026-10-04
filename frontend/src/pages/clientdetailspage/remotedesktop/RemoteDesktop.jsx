@@ -25,8 +25,13 @@ import {
   getClient,
   getOrganizations,
   getRemoteDesktopBrowserWsUrl,
+  openRemoteDesktopBrowserHttpRelay,
+  sendRemoteDesktopBrowserHttpRelay,
+  pollRemoteDesktopBrowserHttpRelay,
+  closeRemoteDesktopBrowserHttpRelay,
 } from "../../../api";
 import RemoteDesktopFileManager from "./RemoteDesktopFileManager";
+import { createHttpRelaySocket, createWebSocketWithHttpsFallback } from "../../../api/httpRelaySocket";
 import AppSnackbar from "../../../components/AppSnackbar";
 import {
   buildRemoteDesktopBrowserDownloadUrl,
@@ -312,7 +317,8 @@ export default function RemoteDesktop() {
 
     const scheduleReconnect = (reason = "") => {
       if (attemptId !== connectAttemptRef.current || reconnectTimerRef.current) return;
-      const delay = Math.min(1000 * (2 ** Math.min(reconnectAttemptRef.current, 4)), 10_000);
+      const baseDelay = Math.min(1000 * (2 ** Math.min(reconnectAttemptRef.current, 4)), 10_000);
+      const delay = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
       reconnectAttemptRef.current += 1;
       setStatus(`${reason || "Forbindelse afbrudt"} · genopretter …`);
       reconnectTimerRef.current = window.setTimeout(() => {
@@ -369,10 +375,23 @@ export default function RemoteDesktop() {
 
     let ws;
     try {
-      ws = new WebSocket(
-        getRemoteDesktopBrowserWsUrl(clientId),
-        getBrowserWsProtocols(ticket)
-      );
+      ws = createWebSocketWithHttpsFallback({
+        openWebSocket: () => new WebSocket(
+          getRemoteDesktopBrowserWsUrl(clientId),
+          getBrowserWsProtocols(ticket)
+        ),
+        openHttpsRelay: async () => {
+          const opened = await openRemoteDesktopBrowserHttpRelay(clientId);
+          const relayId = String(opened?.relay_id || "");
+          if (!relayId) throw new Error("Remote Desktop HTTPS-fallback mangler relay-id");
+          return createHttpRelaySocket({
+            relayId,
+            sendPayload: (payload) => sendRemoteDesktopBrowserHttpRelay(clientId, relayId, payload),
+            pollMessages: () => pollRemoteDesktopBrowserHttpRelay(clientId, relayId, 25),
+            closeRelay: () => closeRemoteDesktopBrowserHttpRelay(clientId, relayId),
+          });
+        },
+      });
     } catch (err) {
       setError(err?.message || "Kunne ikke åbne WebSocket-forbindelsen.");
       setStatus("WebSocket-fejl");
@@ -384,7 +403,7 @@ export default function RemoteDesktop() {
       reconnectAttemptRef.current = 0;
       setError("");
       setConnected(true);
-      setStatus("Browser forbundet");
+      setStatus(ws.transport === "https_long_poll" ? "Browser forbundet via HTTPS-fallback" : "Browser forbundet");
     };
 
     ws.onclose = (event) => {
@@ -484,6 +503,11 @@ export default function RemoteDesktop() {
           setError("");
           showActionMessage(msg.message || "Shout out vist på klienten");
         }
+        return;
+      }
+
+      if (msg.type === "file_activity") {
+        markRemoteActivity();
         return;
       }
 
@@ -631,6 +655,7 @@ export default function RemoteDesktop() {
     };
   }, [
     clientId,
+    markRemoteActivity,
     send,
     startStream,
     showActionMessage,

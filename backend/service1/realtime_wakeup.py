@@ -13,7 +13,7 @@ import threading
 import time
 from typing import Final
 
-_ALLOWED_DOMAINS: Final = frozenset({"display", "system"})
+_ALLOWED_DOMAINS: Final = frozenset({"display", "system", "livestream"})
 _CONDITION = threading.Condition()
 _GENERATIONS: dict[tuple[str, int], int] = defaultdict(int)
 

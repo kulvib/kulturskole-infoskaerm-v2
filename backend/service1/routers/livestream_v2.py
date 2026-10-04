@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 from typing import Any, Optional
+import asyncio
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from ..auth import get_current_user_or_client
 from ..db import engine
 from ..models import Client
+from ..realtime_wakeup import current_generation as wake_generation, wait_for_change as wait_for_wake_change
 from ..livestream_v2 import (
     CLIENT_TOKEN_TTL_SECONDS,
     MAX_HLS_FILE_BYTES,
@@ -168,6 +170,55 @@ def _generation_json(generation) -> dict[str, Any] | None:
         "last_sequence": generation.last_sequence,
         "error_code": generation.error_code,
     }
+
+
+
+
+def _require_livestream_wake_token(authorization: Optional[str], *, client_id: int) -> None:
+    with Session(engine) as session:
+        require_agent_token(session, authorization, client_id=client_id)
+
+
+@router.get("/livestream-agent/clients/{client_id}/commands/wait")
+def livestream_command_wait(
+    client_id: int,
+    after: int = Query(default=0, ge=0),
+    timeout_seconds: int = Query(default=25, ge=1, le=30),
+    authorization: Optional[str] = Header(default=None),
+):
+    _require_livestream_wake_token(authorization, client_id=client_id)
+    generation = wait_for_wake_change("livestream", client_id, after, timeout_seconds)
+    return {"ok": True, "generation": generation, "changed": generation > int(after)}
+
+
+@router.websocket("/livestream-agent/clients/{client_id}/commands/wake/ws")
+async def livestream_command_wake_ws(websocket: WebSocket, client_id: int):
+    authorization = websocket.headers.get("authorization")
+    try:
+        _require_livestream_wake_token(authorization, client_id=client_id)
+    except HTTPException:
+        await websocket.close(code=4401, reason="Ugyldigt Livestream wake-token")
+        return
+    await websocket.accept()
+    generation = wake_generation("livestream", client_id)
+    await websocket.send_json({"type": "wake_ready", "generation": generation})
+    next_auth_recheck = asyncio.get_running_loop().time() + 15.0
+    try:
+        while True:
+            now = asyncio.get_running_loop().time()
+            timeout = min(15.0, max(0.5, next_auth_recheck - now))
+            next_generation = await asyncio.to_thread(
+                wait_for_wake_change, "livestream", client_id, generation, timeout
+            )
+            if next_generation > generation:
+                generation = next_generation
+                await websocket.send_json({"type": "command_available", "generation": generation})
+            elif asyncio.get_running_loop().time() >= next_auth_recheck:
+                _require_livestream_wake_token(authorization, client_id=client_id)
+                next_auth_recheck = asyncio.get_running_loop().time() + 15.0
+                await websocket.send_json({"type": "keepalive", "generation": generation})
+    except (WebSocketDisconnect, RuntimeError, HTTPException):
+        return
 
 
 @router.post("/livestream-agent/clients/{client_id}/commands/claim")
@@ -367,6 +418,19 @@ def browser_viewer_heartbeat(
         session.commit()
         media_capability, media_capability_expires_at = issue_livestream_media_capability(
             client_id=cid, principal=user
+        )
+        # Native HLS cannot attach Authorization headers. Mirror the same short-
+        # lived read-only capability into an HttpOnly, SameSite cookie scoped to
+        # this client's HLS path. Current Hls.js still uses the explicit Bearer
+        # header, so no credential is exposed in a media URL.
+        response.set_cookie(
+            key="clientflow_hls_media_capability",
+            value=media_capability,
+            max_age=MEDIA_CAPABILITY_TTL_SECONDS,
+            path=f"/hls/{cid}",
+            secure=True,
+            httponly=True,
+            samesite="strict",
         )
         return {
             "ok": True,

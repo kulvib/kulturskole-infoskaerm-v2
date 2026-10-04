@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
+import random
 import ssl
 import threading
 import time
@@ -226,7 +227,9 @@ class DomainTransport:
 
 
 def backoff_seconds(attempt: int) -> float:
-    return min(60.0, 1.0 * (2 ** min(max(attempt, 0), 6)))
+    """Bounded exponential retry delay with jitter to avoid fleet thundering-herds."""
+    base = min(60.0, 1.0 * (2 ** min(max(attempt, 0), 6)))
+    return min(60.0, max(0.2, base * random.uniform(0.8, 1.2)))
 
 
 def utc_epoch() -> float:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,12 +19,50 @@ from .constants import Domain, SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS
 from .logging_utils import configure_logging
 from .net import DomainTransport, backoff_seconds
 from .power_lifecycle import PowerLifecycleError, collect_completed_local_power_event
-from .status import report_status
+from .status import boot_id as status_boot_id, report_status
 
 ACTIVE_SYSTEMD_ROOT = Path("/opt/clientflow/active/client-runtime/systemd")
 SYS_CLASS_NET = Path("/sys/class/net")
 PUBLIC_IDENTITY_PATH = Path(os.getenv("CLIENTFLOW_STATUS_PUBLIC_IDENTITY_PATH", "/var/lib/clientflow/status/client-public.json"))
 STATUS_SYNC_PATH = Path(os.getenv("CLIENTFLOW_STATUS_SYNC_PATH", "/var/lib/clientflow/status/last-success.json"))
+DURABLE_STATUS_CHECKPOINT_SECONDS = max(60.0, float(os.getenv("CLIENTFLOW_STATUS_DURABLE_CHECKPOINT_SECONDS", "60")))
+
+
+_STATUS_FINGERPRINT_VOLATILE_FIELDS = frozenset({
+    # These values naturally change every collection and are persisted by the
+    # bounded durable checkpoint instead of manufacturing a DB write every 15s.
+    "uptime_seconds",
+    "load_average",
+    "memory_available_bytes",
+    "disk_free_bytes",
+    "diagnostics_updated_at",
+    "client_time_utc",
+})
+
+
+def _status_change_fingerprint(payload: dict[str, Any], *, boot: str) -> str:
+    """Hash operational state while excluding naturally volatile telemetry.
+
+    Service/network/NTP/power/version changes still force an immediate durable
+    status write. Clock, uptime, free-space and load telemetry are refreshed by
+    the at-most-60-second durable checkpoint while the 15-second DB-free
+    presence ping preserves online freshness.
+    """
+    stable_payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in _STATUS_FINGERPRINT_VOLATILE_FIELDS
+    }
+    material = {"boot_id": boot, "payload": stable_payload}
+    return hashlib.sha256(
+        json.dumps(
+            material,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _meminfo() -> dict[str, int]:
@@ -293,10 +332,29 @@ def main() -> int:
     credential = DomainCredential.load(Domain.STATUS)
     transport = DomainTransport(credential)
     attempt = 0
+    last_full_at = 0.0
+    last_digest: str | None = None
     while True:
         try:
-            response = report_status(transport, observed_state="online", payload=collect_host_status())
-            sync_public_identity(response, client_id=credential.client_id)
+            payload = collect_host_status()
+            digest = _status_change_fingerprint(payload, boot=status_boot_id())
+            now_mono = time.monotonic()
+            full_checkpoint = (
+                last_digest != digest
+                or now_mono - last_full_at >= DURABLE_STATUS_CHECKPOINT_SECONDS
+            )
+            if full_checkpoint:
+                response = report_status(transport, observed_state="online", payload=payload)
+                sync_public_identity(response, client_id=credential.client_id)
+                last_full_at = now_mono
+                last_digest = digest
+            else:
+                transport.json_request(
+                    "POST",
+                    f"/api/status-agent/clients/{credential.client_id}/presence",
+                    json_body={},
+                    timeout=15,
+                )
             record_backend_sync_success(client_id=credential.client_id)
             attempt = 0
             time.sleep(SHARED_DOMAIN_STATUS_REPORT_INTERVAL_SECONDS)

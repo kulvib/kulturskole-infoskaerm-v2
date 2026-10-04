@@ -15,6 +15,7 @@ from sqlalchemy.orm import load_only
 
 from .client_domain_models import ClientDomainCredential, ClientDomainStatus
 from .models import Client
+from .ephemeral_presence import last_seen as ephemeral_last_seen
 
 PRESENCE_DOMAINS = ("status", "display", "system")
 ONLINE_OBSERVED_STATE = "online"
@@ -129,6 +130,9 @@ def evaluate_domain_presence(
 
     observed_state = str(getattr(status, "observed_state", "") or "").strip().lower()
     reported_at = _as_naive_utc(getattr(status, "reported_at", None))
+    ephemeral_at = _as_naive_utc(ephemeral_last_seen(domain, int(client.id)))
+    if ephemeral_at is not None and (reported_at is None or ephemeral_at > reported_at):
+        reported_at = ephemeral_at
     if reported_at is None:
         return DomainPresence(
             domain=domain,

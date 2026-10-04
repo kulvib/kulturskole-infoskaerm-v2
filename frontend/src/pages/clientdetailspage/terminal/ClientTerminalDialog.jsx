@@ -36,10 +36,15 @@ import {
   getAdminTerminalStepUpToken,
   getBrowserWsProtocols,
   getTerminalBrowserWsUrl,
+  openTerminalBrowserHttpRelay,
+  sendTerminalBrowserHttpRelay,
+  pollTerminalBrowserHttpRelay,
+  closeTerminalBrowserHttpRelay,
   hasRecentAdminTerminalStepUp,
   setAdminTerminalStepUp,
 } from "../../../api";
 import { compactDarkChipSx } from "../../../utils/chipStyles";
+import { createHttpRelaySocket, createWebSocketWithHttpsFallback } from "../../../api/httpRelaySocket";
 import { shouldAutoOpenTerminalPty } from "./terminalOpenPolicy.mjs";
 
 function nowTime() {
@@ -685,7 +690,8 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
 
     const scheduleReconnect = () => {
       if (closedByComponent || reconnectTimer) return;
-      const delay = Math.min(1000 * (2 ** Math.min(reconnectAttempt, 4)), 10_000);
+      const baseDelay = Math.min(1000 * (2 ** Math.min(reconnectAttempt, 4)), 10_000);
+      const delay = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
       reconnectAttempt += 1;
       reconnectTimer = window.setTimeout(() => {
         reconnectTimer = null;
@@ -697,10 +703,23 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
       try {
         const ticket = await createTerminalBrowserWsTicket(client.id, mode);
         if (closedByComponent) return;
-        ws = new WebSocket(
-          getTerminalBrowserWsUrl(client.id, mode),
-          getBrowserWsProtocols(ticket)
-        );
+        ws = createWebSocketWithHttpsFallback({
+          openWebSocket: () => new WebSocket(
+            getTerminalBrowserWsUrl(client.id, mode),
+            getBrowserWsProtocols(ticket)
+          ),
+          openHttpsRelay: async () => {
+            const opened = await openTerminalBrowserHttpRelay(client.id, mode);
+            const relayId = String(opened?.relay_id || "");
+            if (!relayId) throw new Error("Terminal HTTPS-fallback mangler relay-id");
+            return createHttpRelaySocket({
+              relayId,
+              sendPayload: (payload) => sendTerminalBrowserHttpRelay(client.id, relayId, payload),
+              pollMessages: () => pollTerminalBrowserHttpRelay(client.id, relayId, 25),
+              closeRelay: () => closeTerminalBrowserHttpRelay(client.id, relayId),
+            });
+          },
+        });
         wsRef.current = ws;
       } catch (err) {
         if (!closedByComponent) {
