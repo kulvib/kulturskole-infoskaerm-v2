@@ -400,6 +400,15 @@ class ClientPresenceRead(SQLModel):
     system: ClientDomainPresenceRead = Field(default_factory=lambda: _default_domain_presence("system"))
 
 
+class ClientHealthIssueRead(SQLModel):
+    code: str
+    severity: str = "warning"
+    title: str
+    message: str
+    suggested_resolution: str
+    required_role: str = "admin"
+
+
 class ClientControlRoomListRead(ClientBase):
     """Minimal Control Room list projection.
 
@@ -430,6 +439,7 @@ class ClientControlRoomListRead(ClientBase):
     pending_os_update: Optional[bool] = False
     organization_id: Optional[int] = None
     state: Optional[str] = "normal"
+    health_issues: list[ClientHealthIssueRead] = Field(default_factory=list)
 
 
 class ClientRead(ClientBase):

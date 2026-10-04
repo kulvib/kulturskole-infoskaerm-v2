@@ -8,7 +8,11 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from ..db import get_session
 from ..audit import add_audit_log
-from ..models import Client, ClientRead, ClientControlRoomListRead, ClientPresenceRead, ClientCreate, ClientUpdate, CalendarMarking, ChromeAction, Organization
+from ..client_health_policy import build_client_health_issues
+from ..models import (
+    Client, ClientRead, ClientControlRoomListRead, ClientHealthIssueRead,
+    ClientPresenceRead, ClientCreate, ClientUpdate, CalendarMarking, ChromeAction, Organization,
+)
 from ..auth import get_current_user, get_current_admin_user, get_current_superadmin_user, get_current_user_or_client, require_client_self_or_user, principal_is_client, get_password_hash, validate_password_strength
 from ..models import utcnow
 from ..observability import log_safe_exception
@@ -1093,6 +1097,14 @@ def _prepare_client_read(client: Client, presence: ClientPresence) -> Client:
     return client
 
 
+def _apply_client_health_projection(client: Client) -> None:
+    _set_runtime_read_attr(
+        client,
+        "health_issues",
+        [ClientHealthIssueRead(**issue) for issue in build_client_health_issues(client)],
+    )
+
+
 _LEGACY_DISPLAY_PENDING_ACTIONS = {"start", "stop", "restart", "sleep", "wakeup", "reset_browser"}
 _LEGACY_SYSTEM_PENDING_ACTIONS = {"shutdown", "os_update"}
 
@@ -1278,6 +1290,7 @@ def _prepare_single_client_read_from_loaded_presence(
         presence,
         projection_commands=system_commands,
     )
+    _apply_client_health_projection(client)
     return client
 
 
@@ -1339,6 +1352,7 @@ def _prepare_clients_read(session, clients: List[Client]) -> List[Client]:
             presence,
             projection_commands=system_commands.get(client_id),
         )
+        _apply_client_health_projection(client)
     return clients
 
 
