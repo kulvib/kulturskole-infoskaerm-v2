@@ -16,6 +16,7 @@ import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
 import HistoryIcon from "@mui/icons-material/History";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import ConstructionIcon from "@mui/icons-material/Construction";
+import GridViewIcon from "@mui/icons-material/GridView";
 
 import OrganizationAdministration from "./OrganizationAdministration";
 import UserAdministration from "./UserAdministration";
@@ -29,6 +30,8 @@ import {
   pageHeaderPaperSx,
   pageShellSx,
 } from "../../utils/layoutStyles";
+
+const LivestreamOverview = React.lazy(() => import("./LivestreamOverview"));
 
 const DEFAULT_SECTION = "organisation";
 
@@ -54,6 +57,13 @@ const SECTIONS = [
     label: "Installation",
     icon: <RocketLaunchIcon fontSize="small" />,
     superadminOnly: true,
+  },
+  {
+    key: "livestream",
+    label: "Livestreams",
+    icon: <GridViewIcon fontSize="small" />,
+    superadminOnly: true,
+    viewerAllowed: false,
   },
   {
     key: "maintenance",
@@ -271,6 +281,19 @@ export default function AdminPage() {
           ) : (
             <Alert severity="error">
               Kun superadministratorer og Se adgang kan se installationskoder.
+            </Alert>
+          ))}
+
+        {activeSection === "livestream" &&
+          (isSuperadmin ? (
+            <Box>
+              <React.Suspense fallback={<Typography color="text.secondary">Indlæser livestreams …</Typography>}>
+                <LivestreamOverview />
+              </React.Suspense>
+            </Box>
+          ) : (
+            <Alert severity="error">
+              Kun superadministratorer kan se alle klienters livestream.
             </Alert>
           ))}
 

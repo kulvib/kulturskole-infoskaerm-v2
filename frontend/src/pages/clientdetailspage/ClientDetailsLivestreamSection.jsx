@@ -17,6 +17,7 @@ const STALE_SEGMENT_RESTART_AFTER_SECONDS = 90;
 const STALE_SEGMENT_RESTART_COOLDOWN_MS = 90_000;
 const STALE_WATCHDOG_POLL_MS = 5_000;
 const VIEWER_HEARTBEAT_MS = 25_000;
+const HIDDEN_MEDIA_WARM_GRACE_MS = 30_000;
 const FULLSCREEN_WATCHDOG_MS = 2_000;
 const HIDDEN_INACTIVITY_STOP_MS = 3 * 60 * 1000;
 const INACTIVITY_STOP_MESSAGE = "Siden har ikke været besøgt i 3 min., derfor er livestreamen stoppet.";
@@ -703,6 +704,7 @@ export default function ClientDetailsLivestreamSection({
   const viewerIdRef = useRef(`viewer-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const viewerLeaveSentRef = useRef(false);
   const hiddenInactivityTimerRef = useRef(null);
+  const hiddenMediaGraceTimerRef = useRef(null);
   const mediaCapabilityRef = useRef("");
 
   const [serverReady, setServerReady]           = useState(false);
@@ -952,6 +954,10 @@ export default function ClientDetailsLivestreamSection({
       window.clearTimeout(hiddenInactivityTimerRef.current);
       hiddenInactivityTimerRef.current = null;
     }
+    if (hiddenMediaGraceTimerRef.current) {
+      window.clearTimeout(hiddenMediaGraceTimerRef.current);
+      hiddenMediaGraceTimerRef.current = null;
+    }
     lastDisplayRuntimeSignatureRef.current = "";
     setInactivityStopped(false);
     setInactivityStopMessage("");
@@ -959,17 +965,20 @@ export default function ClientDetailsLivestreamSection({
     setAutoStartError("");
   }, [clientId]);
 
-  // Page Visibility is the media-work authority. Hidden tabs stop HLS/health
-  // work immediately through pageVisible/viewer-leave, while this independent
-  // timer preserves the existing three-minute inactivity state. Keeping this
-  // listener independent of inactivityStopped is important: it must be able to
-  // observe the tab becoming visible again and reactivate the viewer lifecycle.
+  // Page Visibility is the media-work authority, with an already-running player kept warm for 30 seconds.
+  // A quick tab switch therefore resumes without rebuilding HLS. After the
+  // bounded grace, browser media/health work is released. The independent
+  // three-minute inactivity marker remains a UX state, not lifecycle authority.
   useEffect(() => {
     const applyVisibility = () => {
       const visible = document.visibilityState !== "hidden";
-      setPageVisible(visible);
 
       if (visible) {
+        if (hiddenMediaGraceTimerRef.current) {
+          window.clearTimeout(hiddenMediaGraceTimerRef.current);
+          hiddenMediaGraceTimerRef.current = null;
+        }
+        setPageVisible(true);
         if (hiddenInactivityTimerRef.current) {
           window.clearTimeout(hiddenInactivityTimerRef.current);
           hiddenInactivityTimerRef.current = null;
@@ -977,6 +986,13 @@ export default function ClientDetailsLivestreamSection({
         setInactivityStopped(false);
         setInactivityStopMessage("");
         return;
+      }
+
+      if (!hiddenMediaGraceTimerRef.current) {
+        hiddenMediaGraceTimerRef.current = window.setTimeout(() => {
+          hiddenMediaGraceTimerRef.current = null;
+          setPageVisible(false);
+        }, HIDDEN_MEDIA_WARM_GRACE_MS);
       }
 
       if (!hiddenInactivityTimerRef.current) {
@@ -992,6 +1008,10 @@ export default function ClientDetailsLivestreamSection({
     document.addEventListener("visibilitychange", applyVisibility);
     return () => {
       document.removeEventListener("visibilitychange", applyVisibility);
+      if (hiddenMediaGraceTimerRef.current) {
+        window.clearTimeout(hiddenMediaGraceTimerRef.current);
+        hiddenMediaGraceTimerRef.current = null;
+      }
       if (hiddenInactivityTimerRef.current) {
         window.clearTimeout(hiddenInactivityTimerRef.current);
         hiddenInactivityTimerRef.current = null;
@@ -1065,14 +1085,15 @@ export default function ClientDetailsLivestreamSection({
   }, [clientId, clientOnline, ensureStreamStarted, onRestartStream, resetStreamState]);
 
   // -------------------------------------------------------------------------
-  // Viewer-owned lifecycle: 25s heartbeat, 75s lease, 30s backend grace.
-  // Hidden/page-leave/unmount sends leave immediately; the backend is the
-  // lifecycle authority and coalesces start/stop across multiple viewers.
+  // Viewer-owned lifecycle: 25s heartbeat, 75s lease and a 30s browser warm-grace.
+  // Hidden tabs retain their existing viewer briefly, then send leave. Real page
+  // departure/unmount still leaves immediately. Backend coalesces multiple viewers.
   // -------------------------------------------------------------------------
   useEffect(() => {
     if (!clientId || inactivityStopped) return undefined;
 
     let stopped = false;
+    let hiddenLeaveTimer = null;
     viewerLeaveSentRef.current = false;
 
     const sendHeartbeat = async () => {
@@ -1136,18 +1157,33 @@ export default function ClientDetailsLivestreamSection({
       sendHeartbeat();
     };
 
+    const clearHiddenLeaveTimer = () => {
+      if (hiddenLeaveTimer) {
+        window.clearTimeout(hiddenLeaveTimer);
+        hiddenLeaveTimer = null;
+      }
+    };
+
+    const scheduleHiddenLeave = (source) => {
+      clearHiddenLeaveTimer();
+      hiddenLeaveTimer = window.setTimeout(() => {
+        hiddenLeaveTimer = null;
+        if (document.visibilityState === "hidden") sendLeaveOnce(source);
+      }, HIDDEN_MEDIA_WARM_GRACE_MS);
+    };
+
     const handleVisibilityChange = () => {
       const visible = document.visibilityState !== "hidden";
-      setPageVisible(visible);
       if (!visible) {
-        sendLeaveOnce("client_details_livestream_hidden");
+        scheduleHiddenLeave("client_details_livestream_hidden_grace_expired");
       } else {
+        clearHiddenLeaveTimer();
         reactivateViewer();
       }
     };
 
     if (document.visibilityState === "hidden") {
-      sendLeaveOnce("client_details_livestream_hidden_mount");
+      scheduleHiddenLeave("client_details_livestream_hidden_mount_grace_expired");
     } else {
       sendHeartbeat();
     }
@@ -1171,6 +1207,7 @@ export default function ClientDetailsLivestreamSection({
 
     return () => {
       stopped = true;
+      clearHiddenLeaveTimer();
       window.clearInterval(interval);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("pagehide", onPageHide);
