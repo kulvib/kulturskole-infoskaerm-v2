@@ -655,6 +655,7 @@ export default function RemoteDesktop() {
     };
   }, [
     clientId,
+    markRemoteActivity,
     send,
     startStream,
     showActionMessage,
