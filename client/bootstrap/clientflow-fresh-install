@@ -60,6 +60,7 @@ RELEASE_ID_RE = re.compile(r"^clientflow-\d+\.\d+\.\d+-seq-[1-9]\d*$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 MAX_JSON_BYTES = 128 * 1024
 INSTALL_STATE = Path("/var/lib/clientflow/release/install-state.json")
+CUSTOMER_HANDOFF_STATE = Path("/var/lib/clientflow/release/customer-handoff.json")
 RELEASES_ROOT = Path("/opt/clientflow/releases")
 KIOSK_USER = "clientflow-kiosk"
 LOGINCTL = Path("/usr/bin/loginctl")
@@ -935,6 +936,35 @@ def _current_boot_id() -> str:
     return value
 
 
+def _write_customer_handoff_state(payload: dict[str, object]) -> None:
+    CUSTOMER_HANDOFF_STATE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, temp_name = tempfile.mkstemp(prefix=".customer-handoff-", dir=str(CUSTOMER_HANDOFF_STATE.parent))
+    temp_path = Path(temp_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, CUSTOMER_HANDOFF_STATE)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _stage_post_final_reboot_acceptance() -> None:
+    _write_customer_handoff_state({
+        "schema_version": 1,
+        "status": "awaiting_post_final_reboot_acceptance",
+        "pre_reboot_boot_id": _current_boot_id(),
+        "lockdown_verified_before_reboot": True,
+        "staged_at": time.time(),
+    })
+
+
 def _post_reboot_package_manager_healthy() -> bool:
     if REBOOT_REQUIRED_PATH.exists():
         return False
@@ -1246,9 +1276,10 @@ def _customer_install() -> int:
     _apply_customer_kiosk_lockdown()
     ok("Kiosk lockdown er aktiv og lokalt verificeret.")
 
-    phase("9/9 · Aktivering færdig")
-    ok("Aktivering færdig. Final reboot verificerer nu den aktive kiosk-lockdown ved boot.")
-    confirmed_reboot("kundeaktivering gennemført med kiosk lockdown", seconds=5)
+    phase("9/9 · Final reboot og post-boot acceptance")
+    _stage_post_final_reboot_acceptance()
+    ok("Activation er gennemført. Kundeoverdragelse er først accepteret efter final reboot og post-boot verifikation.")
+    confirmed_reboot("kundeaktivering afventer post-final-reboot acceptance", seconds=5)
     return 0
 
 def main() -> int:

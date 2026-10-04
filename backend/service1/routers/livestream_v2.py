@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
-from ..auth import get_current_user_or_client
+from ..auth import get_access_token_session_context, get_current_user_or_client, oauth2_scheme
 from ..db import engine
-from ..models import Client
+from ..models import Client, User
 from ..realtime_wakeup import current_generation as wake_generation, wait_for_change as wait_for_wake_change
 from ..livestream_v2 import (
     CLIENT_TOKEN_TTL_SECONDS,
@@ -402,6 +402,7 @@ def browser_viewer_heartbeat(
     body: ViewerHeartbeatBody,
     response: Response,
     user=Depends(get_current_user_or_client),
+    token: str = Depends(oauth2_scheme),
 ):
     require_hls_access(user, client_id)
     _require_active_platform_client(int(client_id))
@@ -416,8 +417,15 @@ def browser_viewer_heartbeat(
             source=body.source,
         )
         session.commit()
+        auth_session_binding = None
+        parent_session_expires_at = None
+        if isinstance(user, User):
+            auth_session_binding, parent_session_expires_at = get_access_token_session_context(token, user)
         media_capability, media_capability_expires_at = issue_livestream_media_capability(
-            client_id=cid, principal=user
+            client_id=cid,
+            principal=user,
+            auth_session_binding=auth_session_binding,
+            parent_session_expires_at=parent_session_expires_at,
         )
         # Native HLS cannot attach Authorization headers. Mirror the same short-
         # lived read-only capability into an HttpOnly, SameSite cookie scoped to

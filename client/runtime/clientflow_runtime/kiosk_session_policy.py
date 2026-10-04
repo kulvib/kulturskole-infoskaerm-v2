@@ -59,6 +59,7 @@ def _session_properties(session_id: str) -> dict[str, str]:
             "--property=Active",
             "--property=Remote",
             "--property=Seat",
+            "--property=Type",
         ],
         check=False,
     )
@@ -88,6 +89,7 @@ def _active_local_kiosk_session() -> str | None:
             and properties.get("Active", "").lower() == "yes"
             and properties.get("Remote", "").lower() == "no"
             and properties.get("Seat") == "seat0"
+            and properties.get("Type", "").lower() == "wayland"
         ):
             return session_id
     return None

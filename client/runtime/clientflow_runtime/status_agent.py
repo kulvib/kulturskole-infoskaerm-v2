@@ -25,7 +25,7 @@ ACTIVE_SYSTEMD_ROOT = Path("/opt/clientflow/active/client-runtime/systemd")
 SYS_CLASS_NET = Path("/sys/class/net")
 PUBLIC_IDENTITY_PATH = Path(os.getenv("CLIENTFLOW_STATUS_PUBLIC_IDENTITY_PATH", "/var/lib/clientflow/status/client-public.json"))
 STATUS_SYNC_PATH = Path(os.getenv("CLIENTFLOW_STATUS_SYNC_PATH", "/var/lib/clientflow/status/last-success.json"))
-DURABLE_STATUS_CHECKPOINT_SECONDS = max(60.0, float(os.getenv("CLIENTFLOW_STATUS_DURABLE_CHECKPOINT_SECONDS", "60")))
+DURABLE_STATUS_CHECKPOINT_SECONDS = 60.0
 
 
 _STATUS_FINGERPRINT_VOLATILE_FIELDS = frozenset({

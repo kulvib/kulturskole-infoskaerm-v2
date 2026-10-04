@@ -61,7 +61,7 @@ def test_fresh_install_requires_lockdown_before_final_reboot():
     bootstrap = read("client/bootstrap/clientflow-fresh-install")
     assert "desktop_lockdown_enabled=True" in enrollment
     apply_pos = bootstrap.index("_apply_customer_kiosk_lockdown()", bootstrap.index("def _customer_install"))
-    reboot_pos = bootstrap.index('confirmed_reboot("kundeaktivering gennemført med kiosk lockdown"')
+    reboot_pos = bootstrap.index('confirmed_reboot("kundeaktivering afventer post-final-reboot acceptance"')
     assert apply_pos < reboot_pos
     assert 'payload.get("status") != "applied"' in bootstrap
 
@@ -108,6 +108,11 @@ def test_municipal_firewall_fallback_covers_terminal_and_remote_desktop():
     assert "QUEUE_DEPTH = 64" in relay
     assert "MAX_QUEUE_BYTES = 48 * 1024 * 1024" in relay
     assert "RELAY_TTL_SECONDS = 15 * 60" in relay
+    assert "MAX_TOTAL_QUEUE_BYTES = 128 * 1024 * 1024" in relay
+    assert "MAX_RELAYS_PER_OWNER = 8" in relay
+    assert "RELAY_CLOSE_GRACE_SECONDS = 30" in relay
+    assert "_reserve_global_bytes" in relay
+    assert "_relay_owner_key" in relay
     assert "process-local" in relay
     for source in (terminal, remote):
         assert "/http/open" in source
@@ -144,7 +149,8 @@ def test_shared_liveness_keeps_15_second_freshness_without_15_second_db_writes()
     for domain in ("status", "display", "system"):
         assert f'/{domain}-agent/clients/{{client_id}}/presence' in shared
     assert "ephemeral_last_seen" in presence
-    assert "DURABLE_STATUS_CHECKPOINT_SECONDS" in status_agent
+    assert "DURABLE_STATUS_CHECKPOINT_SECONDS = 60.0" in status_agent
+    assert "CLIENTFLOW_STATUS_DURABLE_CHECKPOINT_SECONDS" not in status_agent
     assert "_STATUS_FINGERPRINT_VOLATILE_FIELDS" in status_agent
     for volatile in ("uptime_seconds", "client_time_utc", "diagnostics_updated_at", "load_average"):
         assert f'"{volatile}"' in status_agent
@@ -205,3 +211,46 @@ def test_current_hls_paths_prefer_short_lived_capability_without_url_secret():
     assert 'samesite="strict"' in router
     assert 'xhr.setRequestHeader("Authorization", `Bearer ${token}`)' in browser
     assert "media_capability=" not in browser
+
+
+def test_https_relay_browser_access_is_bound_to_login_session_context():
+    terminal = read("backend/service1/routers/terminal.py")
+    remote = read("backend/service1/routers/remote_desktop_v2.py")
+    for source in (terminal, remote):
+        assert '"auth_session_binding"' in source
+        assert '"user_token_version"' in source
+    assert "require_active_browser_auth_session_binding" in terminal
+    assert "_http_browser_session_binding" in remote
+
+
+def test_livestream_media_capability_is_parent_session_bounded():
+    capability = read("backend/service1/livestream_media_capability.py")
+    router = read("backend/service1/routers/livestream_v2.py")
+    auth = read("backend/service1/auth.py")
+    assert "get_access_token_session_context" in auth
+    assert '"auth_session_binding"' in capability
+    assert '"parent_session_exp"' in capability
+    assert "min(ttl_expiry, parent_expiry)" in capability
+    assert "get_access_token_session_context(token, user)" in router
+
+
+def test_customer_handoff_is_accepted_only_after_final_reboot_runtime_gate():
+    bootstrap = read("client/bootstrap/clientflow-fresh-install")
+    gate = read("client/runtime/clientflow_runtime/post_final_reboot_acceptance.py")
+    session_policy = read("client/runtime/clientflow_runtime/kiosk_session_policy.py")
+    unit = read("client/systemd/clientflow-post-final-reboot-acceptance.service")
+    target = read("client/systemd/clientflow.target")
+    pyproject = read("client/runtime/pyproject.toml")
+    assert '"status": "awaiting_post_final_reboot_acceptance"' in bootstrap
+    assert "_stage_post_final_reboot_acceptance()" in bootstrap
+    assert 'phase("9/9 · Final reboot og post-boot acceptance")' in bootstrap
+    assert '"status": "accepted"' in gate
+    assert "current_boot == previous_boot" in gate
+    assert "_active_local_kiosk_session()" in gate
+    assert '"--property=Type"' in session_policy
+    assert 'properties.get("Type", "").lower() == "wayland"' in session_policy
+    assert 'lockdown.get("status") != "applied"' in gate
+    assert "NAUTILUS.is_file()" in gate
+    assert "clientflow-post-final-reboot-acceptance" in pyproject
+    assert "clientflow-post-final-reboot-acceptance.service" in target
+    assert "Restart=on-failure" in unit
