@@ -93,7 +93,7 @@ def test_customer_flow_matches_legacy_customer_order_and_removes_second_manual_a
         "_prepare_pre_activation_graphical_session()",
         "_install_activation_waiter()",
         "_apply_customer_kiosk_lockdown()",
-        'confirmed_reboot("kundeaktivering gennemført med kiosk lockdown", seconds=5)',
+        'confirmed_reboot("kundeaktivering afventer post-final-reboot acceptance", seconds=5)',
     ]
     positions = [normal.index(token) for token in order]
     assert positions == sorted(positions)

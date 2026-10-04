@@ -41,7 +41,7 @@ def test_https_relay_reuses_websocket_shape_with_scope_and_bounded_lifecycle() -
     asyncio.run(scenario())
 
 
-def test_https_relay_lookup_fails_closed_after_explicit_close() -> None:
+def test_https_relay_explicit_close_has_bounded_drain_grace() -> None:
     async def scenario() -> None:
         async def handler(socket) -> None:
             await socket.accept()
@@ -50,8 +50,29 @@ def test_https_relay_lookup_fails_closed_after_explicit_close() -> None:
         relay = await create_relay(handler, scope={"kind": "test", "client_id": 8})
         assert await get_relay(relay.relay_id) is relay
         await close_relay(relay.relay_id, reason="test_close")
-        with pytest.raises(HTTPException) as exc:
-            await get_relay(relay.relay_id)
-        assert exc.value.status_code == 404
+        drained = await get_relay(relay.relay_id)
+        assert drained.closed is True
+        messages = [json.loads(value) for value in await drained.poll_to_http(1)]
+        assert any(value.get("type") == "relay_closed" for value in messages)
+
+    asyncio.run(scenario())
+
+
+def test_https_relay_global_byte_budget_fails_closed(monkeypatch) -> None:
+    import service1.http_ws_relay as relay_module
+
+    async def scenario() -> None:
+        async def handler(socket) -> None:
+            await socket.accept()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(relay_module, "MAX_TOTAL_QUEUE_BYTES", 12)
+        relay = await create_relay(
+            handler, scope={"kind": "budget-test", "client_id": 9, "user_id": 1}
+        )
+        relay._put_outgoing("12345678")
+        with pytest.raises(RuntimeError, match="global byte-backpressure"):
+            relay._put_outgoing("12345678")
+        await close_relay(relay.relay_id, reason="budget_test_done")
 
     asyncio.run(scenario())

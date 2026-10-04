@@ -21,9 +21,21 @@ AUDIENCE = "clientflow-livestream-media"
 TTL_SECONDS = min(max(15, int(os.getenv("LIVESTREAM_MEDIA_CAPABILITY_TTL_SECONDS", "45"))), 120)
 
 
-def issue_livestream_media_capability(*, client_id: int, principal: object) -> tuple[str, datetime]:
+def issue_livestream_media_capability(
+    *,
+    client_id: int,
+    principal: object,
+    auth_session_binding: str | None = None,
+    parent_session_expires_at: datetime | None = None,
+) -> tuple[str, datetime]:
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(seconds=TTL_SECONDS)
+    ttl_expiry = now + timedelta(seconds=TTL_SECONDS)
+    parent_expiry = parent_session_expires_at
+    if parent_expiry is not None and parent_expiry.tzinfo is None:
+        parent_expiry = parent_expiry.replace(tzinfo=timezone.utc)
+    expires_at = min(ttl_expiry, parent_expiry) if parent_expiry is not None else ttl_expiry
+    if expires_at <= now:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Browser-sessionen er udløbet")
     principal_id = getattr(principal, "id", None)
     claims: dict[str, Any] = {
         "iss": ISSUER,
@@ -32,6 +44,8 @@ def issue_livestream_media_capability(*, client_id: int, principal: object) -> t
         "purpose": "livestream_media_read",
         "client_id": int(client_id),
         "principal_id": str(principal_id) if principal_id is not None else None,
+        "auth_session_binding": str(auth_session_binding or "") or None,
+        "parent_session_exp": int(parent_expiry.timestamp()) if parent_expiry is not None else None,
         "iat": int(now.timestamp()),
         "nbf": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),
@@ -60,6 +74,16 @@ def verify_livestream_media_capability(token: str | None, *, client_id: int) -> 
         or claims.get("sub") != f"livestream-media:{int(client_id)}"
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Media-capability tilhører en anden klient")
+    parent_exp = claims.get("parent_session_exp")
+    session_binding = claims.get("auth_session_binding")
+    if session_binding and parent_exp is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Media-capability mangler parent-session udløb")
+    if parent_exp is not None:
+        try:
+            if int(claims.get("exp") or 0) > int(parent_exp):
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Media-capability overstiger parent-session")
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Media-capability har ugyldig parent-session") from exc
     return claims
 
 

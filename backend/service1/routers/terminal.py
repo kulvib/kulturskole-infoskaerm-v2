@@ -717,15 +717,25 @@ def create_terminal_browser_ws_ticket(
     )
 
 
+def _terminal_http_browser_binding(*, token: str, user: User, session: Session) -> str:
+    binding = require_active_browser_auth_session_binding(session, token=token, user=user)
+    if user.id is None:
+        raise HTTPException(status_code=401, detail="Terminal-session mangler bruger-id")
+    return binding
+
+
 @router.post("/browser/{client_id}/http/open")
 async def terminal_browser_http_open(
     client_id: int,
     body: TerminalHttpRelayOpenBody,
     request: Request,
     user: User = Depends(get_current_superadmin_user),
+    token: str = Depends(oauth2_scheme),
+    session: Session = Depends(get_session),
 ):
     """Open the HTTPS/443 fallback while reusing the exact WebSocket handler."""
     mode = _normalize_mode(body.mode.value)
+    auth_session_binding = _terminal_http_browser_binding(token=token, user=user, session=session)
     if not _client_exists_and_accessible(client_id, user):
         raise HTTPException(status_code=404, detail="Terminal-klient ikke fundet")
     headers = {
@@ -737,7 +747,12 @@ async def terminal_browser_http_open(
         lambda ws: terminal_browser_ws(ws, client_id, mode),
         headers=headers,
         client_host=(request.client.host if request.client else None),
-        scope={"kind": "terminal_browser", "client_id": client_id, "mode": mode},
+        scope={
+            "kind": "terminal_browser", "client_id": client_id, "mode": mode,
+            "user_id": int(user.id),
+            "user_token_version": int(getattr(user, "token_version", 0) or 0),
+            "auth_session_binding": auth_session_binding,
+        },
     )
     return {"relay_id": relay.relay_id, "transport": "https_long_poll"}
 
@@ -746,11 +761,18 @@ async def terminal_browser_http_open(
 async def terminal_browser_http_send(
     client_id: int, relay_id: str, body: TerminalHttpRelaySendBody,
     user: User = Depends(get_current_superadmin_user),
+    token: str = Depends(oauth2_scheme),
+    session: Session = Depends(get_session),
 ):
+    auth_session_binding = _terminal_http_browser_binding(token=token, user=user, session=session)
     if not _client_exists_and_accessible(client_id, user):
         raise HTTPException(status_code=404, detail="Terminal-klient ikke fundet")
     relay = await get_relay(relay_id)
-    require_relay_scope(relay, kind="terminal_browser", client_id=client_id)
+    require_relay_scope(
+        relay, kind="terminal_browser", client_id=client_id, user_id=int(user.id),
+        user_token_version=int(getattr(user, "token_version", 0) or 0),
+        auth_session_binding=auth_session_binding,
+    )
     raw = json.dumps(body.payload, ensure_ascii=False, separators=(",", ":"))
     if len(raw) > MAX_STAGED_SCRIPT_B64_CHARS + 10_000:
         raise HTTPException(status_code=413, detail="Terminal-relay meddelelse er for stor")
@@ -762,20 +784,34 @@ async def terminal_browser_http_send(
 async def terminal_browser_http_poll(
     client_id: int, relay_id: str, timeout_seconds: int = Query(default=25, ge=1, le=30),
     user: User = Depends(get_current_superadmin_user),
+    token: str = Depends(oauth2_scheme),
+    session: Session = Depends(get_session),
 ):
+    auth_session_binding = _terminal_http_browser_binding(token=token, user=user, session=session)
     if not _client_exists_and_accessible(client_id, user):
         raise HTTPException(status_code=404, detail="Terminal-klient ikke fundet")
     relay = await get_relay(relay_id)
-    require_relay_scope(relay, kind="terminal_browser", client_id=client_id)
+    require_relay_scope(
+        relay, kind="terminal_browser", client_id=client_id, user_id=int(user.id),
+        user_token_version=int(getattr(user, "token_version", 0) or 0),
+        auth_session_binding=auth_session_binding,
+    )
     return {"messages": await relay.poll_to_http(timeout_seconds), "closed": relay.closed}
 
 
 @router.delete("/browser/{client_id}/http/{relay_id}")
 async def terminal_browser_http_close(
     client_id: int, relay_id: str, user: User = Depends(get_current_superadmin_user),
+    token: str = Depends(oauth2_scheme),
+    session: Session = Depends(get_session),
 ):
+    auth_session_binding = _terminal_http_browser_binding(token=token, user=user, session=session)
     relay = await get_relay(relay_id)
-    require_relay_scope(relay, kind="terminal_browser", client_id=client_id)
+    require_relay_scope(
+        relay, kind="terminal_browser", client_id=client_id, user_id=int(user.id),
+        user_token_version=int(getattr(user, "token_version", 0) or 0),
+        auth_session_binding=auth_session_binding,
+    )
     await close_relay(relay_id, reason="terminal_browser_http_closed")
     return {"ok": True}
 

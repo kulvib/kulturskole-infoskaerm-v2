@@ -29,6 +29,7 @@ CLIENTFLOW_ENTRYPOINTS = (
     "clientflow-browser-guard",
     "clientflow-display-input-wake",
     "clientflow-platform-prepare",
+    "clientflow-post-final-reboot-acceptance",
     "clientflow-time-integrity",
     "clientflow-kiosk-session-policy",
     "clientflow-kiosk-quicksettings-guard",

@@ -157,3 +157,33 @@ prove the candidate bytes, including WSS-blocked HTTPS fallback, post-reboot
 lockdown with Nautilus/DING, UI responsiveness, Livestream/Remote Desktop
 behavior and measured production Neon impact, before approval or catalog
 promotion.
+
+## Final pre-freeze closure after whole-chat audit
+
+Before source freeze, a second whole-chat audit closed the remaining fail-closed
+edges without changing the immutable 1.3.29/1230 release bytes:
+
+- Status durable recovery checkpoints are fixed at 60 seconds; deployment
+  environment cannot silently stretch the recovery boundary while 15-second
+  DB-free liveness remains intact.
+- The process-local HTTPS relay has both per-relay and process-global byte
+  backpressure, a per-owner concurrency quota, bounded TTL and a 30-second
+  closed-relay drain grace so in-flight long polls observe deterministic close
+  instead of racing a 404.
+- Terminal and Remote Desktop browser HTTPS fallback is bound to the same
+  active browser login-session context and token-version as their WebSocket
+  fast paths.
+- Livestream media capabilities carry the browser-session binding and may never
+  outlive the parent login-session; media reads remain locally verifiable and
+  do not reintroduce per-segment Postgres authorization.
+- Fresh-install customer handoff is staged as
+  `awaiting_post_final_reboot_acceptance` before the final reboot. The activated
+  runtime marks it `accepted` only on a different boot after observing the
+  canonical local Wayland kiosk session, applied/verified kiosk lockdown,
+  kiosk/cfadmin privilege separation and executable Nautilus. This automated
+  gate complements rather than replaces the required physical DING/Nautilus
+  popup acceptance.
+
+The updater optimization remains deliberately deferred until authentic physical
+in-place update is proven; WebRTC/codec replacement remains measurement-gated
+and optional.

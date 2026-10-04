@@ -28,7 +28,7 @@ from sqlmodel import Session, select
 from starlette.background import BackgroundTask
 from starlette.responses import FileResponse
 
-from ..auth import validate_browser_auth_session_binding, verify_ws_token
+from ..auth import get_access_token_session_binding, validate_browser_auth_session_binding, verify_ws_token
 from ..client_activity import end_activity_lease, maintain_activity_lease
 from ..db import engine
 from ..models import Client, User
@@ -223,6 +223,13 @@ def _get_http_user(request: Request) -> Optional[User | Client]:
     with Session(engine) as session:
         return verify_ws_token(token, session)
 
+
+
+def _http_browser_session_binding(request: Request, user: User) -> str:
+    token = _extract_http_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Remote Desktop-session mangler adgangstoken")
+    return get_access_token_session_binding(token, user)
 
 def _require_superadmin(principal: User | Client | None) -> User:
     if not isinstance(principal, User):
@@ -1200,6 +1207,7 @@ async def remote_desktop_browser_http_open(
 ):
     principal = _get_http_user(request)
     user = _require_superadmin(principal)
+    auth_session_binding = _http_browser_session_binding(request, user)
     if not _platform_client_accessible(client_id, user):
         raise HTTPException(status_code=404, detail="Klient ikke fundet eller ingen adgang")
     relay = await create_relay(
@@ -1210,7 +1218,11 @@ async def remote_desktop_browser_http_open(
             "user-agent": request.headers.get("user-agent") or "",
         },
         client_host=(request.client.host if request.client else None),
-        scope={"kind": "rd_browser", "client_id": client_id, "user_id": int(user.id)},
+        scope={
+            "kind": "rd_browser", "client_id": client_id, "user_id": int(user.id),
+            "user_token_version": int(getattr(user, "token_version", 0) or 0),
+            "auth_session_binding": auth_session_binding,
+        },
     )
     return {"relay_id": relay.relay_id, "transport": "https_long_poll"}
 
@@ -1220,8 +1232,13 @@ async def remote_desktop_browser_http_send(
     client_id: int, relay_id: str, body: RemoteDesktopHttpRelaySendBody, request: Request,
 ):
     user = _require_superadmin(_get_http_user(request))
+    auth_session_binding = _http_browser_session_binding(request, user)
     relay = await get_relay(relay_id)
-    require_relay_scope(relay, kind="rd_browser", client_id=client_id, user_id=int(user.id))
+    require_relay_scope(
+        relay, kind="rd_browser", client_id=client_id, user_id=int(user.id),
+        user_token_version=int(getattr(user, "token_version", 0) or 0),
+        auth_session_binding=auth_session_binding,
+    )
     raw = json.dumps(body.payload, ensure_ascii=False, separators=(",", ":"))
     if len(raw) > MAX_BROWSER_MESSAGE_CHARS:
         raise HTTPException(status_code=413, detail="Remote Desktop browser-relay meddelelse er for stor")
@@ -1234,8 +1251,13 @@ async def remote_desktop_browser_http_poll(
     client_id: int, relay_id: str, request: Request, timeout_seconds: int = 25,
 ):
     user = _require_superadmin(_get_http_user(request))
+    auth_session_binding = _http_browser_session_binding(request, user)
     relay = await get_relay(relay_id)
-    require_relay_scope(relay, kind="rd_browser", client_id=client_id, user_id=int(user.id))
+    require_relay_scope(
+        relay, kind="rd_browser", client_id=client_id, user_id=int(user.id),
+        user_token_version=int(getattr(user, "token_version", 0) or 0),
+        auth_session_binding=auth_session_binding,
+    )
     timeout_seconds = min(30, max(1, int(timeout_seconds)))
     return {"messages": await relay.poll_to_http(timeout_seconds), "closed": relay.closed}
 
@@ -1243,8 +1265,13 @@ async def remote_desktop_browser_http_poll(
 @router.delete("/remote-desktop/browser/{client_id}/http/{relay_id}")
 async def remote_desktop_browser_http_close(client_id: int, relay_id: str, request: Request):
     user = _require_superadmin(_get_http_user(request))
+    auth_session_binding = _http_browser_session_binding(request, user)
     relay = await get_relay(relay_id)
-    require_relay_scope(relay, kind="rd_browser", client_id=client_id, user_id=int(user.id))
+    require_relay_scope(
+        relay, kind="rd_browser", client_id=client_id, user_id=int(user.id),
+        user_token_version=int(getattr(user, "token_version", 0) or 0),
+        auth_session_binding=auth_session_binding,
+    )
     await close_relay(relay_id, reason="remote_desktop_browser_http_closed")
     return {"ok": True}
 

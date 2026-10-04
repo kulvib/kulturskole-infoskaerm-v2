@@ -521,6 +521,26 @@ def get_access_token_session_binding(token: str, user: User) -> str:
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
+def get_access_token_session_context(token: str, user: User) -> tuple[str, datetime]:
+    """Return the current browser-session binding and absolute session expiry.
+
+    Capabilities can bind themselves to the same login context as browser
+    WebSockets without consulting Postgres on every subsequent media request.
+    """
+    binding = get_access_token_session_binding(token, user)
+    payload = _decode_token_or_raise(token)
+    raw_session_expiry = str(payload.get("session_expires_at") or "").strip()
+    if not raw_session_expiry:
+        raise HTTPException(status_code=401, detail="Sessionen mangler sikkerhedsbinding")
+    try:
+        expiry = _coerce_aware_utc(datetime.fromisoformat(raw_session_expiry.replace("Z", "+00:00")))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Sessionen har ugyldig udløbstid") from exc
+    if expiry is None or expiry <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Sessionen er udløbet")
+    return binding, expiry
+
+
 def require_active_browser_auth_session_binding(
     session: Session,
     *,

@@ -25,7 +25,10 @@ from fastapi import HTTPException, WebSocketDisconnect
 MAX_RELAYS = 512
 QUEUE_DEPTH = 64
 MAX_QUEUE_BYTES = 48 * 1024 * 1024
+MAX_TOTAL_QUEUE_BYTES = 128 * 1024 * 1024
+MAX_RELAYS_PER_OWNER = 8
 RELAY_TTL_SECONDS = 15 * 60
+RELAY_CLOSE_GRACE_SECONDS = 30
 MAX_POLL_SECONDS = 30
 
 
@@ -43,6 +46,7 @@ class HttpWebSocketRelay:
     closed: bool = False
     close_code: int | None = None
     close_reason: str = ""
+    closed_at: float | None = None
     incoming: asyncio.Queue[tuple[str, int]] = field(default_factory=lambda: asyncio.Queue(maxsize=QUEUE_DEPTH))
     outgoing: asyncio.Queue[tuple[str, int]] = field(default_factory=lambda: asyncio.Queue(maxsize=QUEUE_DEPTH))
     incoming_bytes: int = 0
@@ -63,7 +67,8 @@ class HttpWebSocketRelay:
         self.closed = True
         self.close_code = int(code)
         self.close_reason = str(reason or "")[:120]
-        self.last_activity_at = time.monotonic()
+        self.closed_at = time.monotonic()
+        self.last_activity_at = self.closed_at
         try:
             self._put_outgoing(
                 _json_dumps({"type": "relay_closed", "code": self.close_code, "reason": self.close_reason})
@@ -86,6 +91,7 @@ class HttpWebSocketRelay:
             try:
                 payload, size = await asyncio.wait_for(self.incoming.get(), timeout=5.0)
                 self.incoming_bytes = max(0, self.incoming_bytes - size)
+                _release_global_bytes(size)
                 self.last_activity_at = time.monotonic()
                 return payload
             except asyncio.TimeoutError:
@@ -96,7 +102,10 @@ class HttpWebSocketRelay:
         if self.closed:
             raise HTTPException(status_code=410, detail="HTTPS relay er lukket")
         self.last_activity_at = time.monotonic()
-        self._put_incoming(str(payload))
+        try:
+            self._put_incoming(str(payload))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @staticmethod
     def _payload_size(payload: str) -> int:
@@ -106,9 +115,11 @@ class HttpWebSocketRelay:
         size = self._payload_size(payload)
         if self.incoming_bytes + size > MAX_QUEUE_BYTES:
             raise RuntimeError("HTTPS relay incoming byte-backpressure er nået")
+        _reserve_global_bytes(size)
         try:
             self.incoming.put_nowait((payload, size))
         except asyncio.QueueFull as exc:
+            _release_global_bytes(size)
             raise RuntimeError("HTTPS relay incoming queue-depth er nået") from exc
         self.incoming_bytes += size
 
@@ -116,9 +127,11 @@ class HttpWebSocketRelay:
         size = self._payload_size(payload)
         if self.outgoing_bytes + size > MAX_QUEUE_BYTES:
             raise RuntimeError("HTTPS relay outgoing byte-backpressure er nået")
+        _reserve_global_bytes(size)
         try:
             self.outgoing.put_nowait((payload, size))
         except asyncio.QueueFull as exc:
+            _release_global_bytes(size)
             raise RuntimeError("HTTPS relay outgoing queue-depth er nået") from exc
         self.outgoing_bytes += size
 
@@ -129,6 +142,7 @@ class HttpWebSocketRelay:
         try:
             first, size = await asyncio.wait_for(self.outgoing.get(), timeout=float(timeout))
             self.outgoing_bytes = max(0, self.outgoing_bytes - size)
+            _release_global_bytes(size)
             items.append(first)
         except asyncio.TimeoutError:
             return items
@@ -136,6 +150,7 @@ class HttpWebSocketRelay:
             try:
                 payload, size = self.outgoing.get_nowait()
                 self.outgoing_bytes = max(0, self.outgoing_bytes - size)
+                _release_global_bytes(size)
                 items.append(payload)
             except asyncio.QueueEmpty:
                 break
@@ -144,6 +159,38 @@ class HttpWebSocketRelay:
 
 _RELAYS: dict[str, HttpWebSocketRelay] = {}
 _LOCK = asyncio.Lock()
+_TOTAL_QUEUED_BYTES = 0
+
+
+def _reserve_global_bytes(size: int) -> None:
+    global _TOTAL_QUEUED_BYTES
+    if size < 0 or _TOTAL_QUEUED_BYTES + size > MAX_TOTAL_QUEUE_BYTES:
+        raise RuntimeError("HTTPS relay global byte-backpressure er nået")
+    _TOTAL_QUEUED_BYTES += size
+
+
+def _release_global_bytes(size: int) -> None:
+    global _TOTAL_QUEUED_BYTES
+    _TOTAL_QUEUED_BYTES = max(0, _TOTAL_QUEUED_BYTES - max(0, int(size)))
+
+
+def _relay_owner_key(scope: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        scope.get("kind"), scope.get("client_id"), scope.get("user_id"),
+        scope.get("credential_id"), scope.get("auth_session_binding"),
+    )
+
+
+def _discard_relay_buffers(relay: HttpWebSocketRelay) -> None:
+    for queue_name, bytes_name in (("incoming", "incoming_bytes"), ("outgoing", "outgoing_bytes")):
+        queue = getattr(relay, queue_name)
+        while True:
+            try:
+                _payload, size = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            _release_global_bytes(size)
+        setattr(relay, bytes_name, 0)
 
 
 def _json_dumps(value: dict[str, Any]) -> str:
@@ -156,12 +203,17 @@ async def _prune_locked() -> None:
     stale = [
         relay_id
         for relay_id, relay in _RELAYS.items()
-        if relay.closed or now - relay.last_activity_at > RELAY_TTL_SECONDS
+        if (
+            (relay.closed and relay.closed_at is not None and now - relay.closed_at > RELAY_CLOSE_GRACE_SECONDS)
+            or (not relay.closed and now - relay.last_activity_at > RELAY_TTL_SECONDS)
+        )
     ]
     for relay_id in stale:
         relay = _RELAYS.pop(relay_id, None)
-        if relay and relay.task and not relay.task.done():
-            relay.task.cancel()
+        if relay:
+            _discard_relay_buffers(relay)
+            if relay.task and not relay.task.done():
+                relay.task.cancel()
 
 
 async def create_relay(
@@ -185,6 +237,10 @@ async def create_relay(
         await _prune_locked()
         if len(_RELAYS) >= MAX_RELAYS:
             raise HTTPException(status_code=503, detail="HTTPS relay-kapaciteten er midlertidigt opbrugt")
+        owner = _relay_owner_key(relay.scope)
+        owner_count = sum(1 for current in _RELAYS.values() if _relay_owner_key(current.scope) == owner)
+        if owner_count >= MAX_RELAYS_PER_OWNER:
+            raise HTTPException(status_code=429, detail="For mange samtidige HTTPS relays for denne session/klient")
         _RELAYS[relay.relay_id] = relay
 
     async def runner() -> None:
@@ -214,12 +270,13 @@ async def get_relay(relay_id: str) -> HttpWebSocketRelay:
 
 async def close_relay(relay_id: str, *, reason: str = "http_client_closed") -> None:
     async with _LOCK:
-        relay = _RELAYS.pop(str(relay_id), None)
+        await _prune_locked()
+        relay = _RELAYS.get(str(relay_id))
     if relay is None:
         return
+    # Keep a closed relay addressable for a short bounded grace so an in-flight
+    # long poll can observe relay_closed/closed=true instead of racing a 404.
     await relay.close(1000, reason)
-    if relay.task and not relay.task.done():
-        relay.task.cancel()
 
 
 def require_relay_scope(relay: HttpWebSocketRelay, **expected: Any) -> None:
