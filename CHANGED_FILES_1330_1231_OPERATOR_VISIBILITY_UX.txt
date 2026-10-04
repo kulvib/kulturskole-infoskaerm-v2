@@ -1,0 +1,13 @@
+CLIENTFLOW_1.3.30_1231_OPERATOR_VISIBILITY_UX.md
+CHANGED_FILES_1330_1231_OPERATOR_VISIBILITY_UX.txt
+SHA256SUMS.txt
+backend/service1/client_health_policy.py
+backend/service1/models.py
+backend/service1/routers/clients.py
+frontend/src/pages/ClientInfoPage.jsx
+frontend/src/pages/adminpages/AdminPage.jsx
+frontend/src/pages/adminpages/LivestreamOverview.jsx
+frontend/src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx
+frontend/src/pages/clientdetailspage/remotedesktop/RemoteDesktop.jsx
+frontend/tests/clientOperationsUxContract.test.mjs
+scripts/tests/test_client_health_policy.py

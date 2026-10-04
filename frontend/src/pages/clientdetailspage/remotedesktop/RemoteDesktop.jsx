@@ -82,6 +82,7 @@ const RD_IDLE_FPS = 1;
 const RD_DEEP_IDLE_FPS = 0.2;
 const RD_IDLE_AFTER_MS = 20_000;
 const RD_DEEP_IDLE_AFTER_MS = 120_000;
+const RD_HIDDEN_WARM_GRACE_MS = 30_000;
 
 function sumFileSizes(files) {
   return Array.from(files || []).reduce((sum, file) => sum + Number(file?.size || 0), 0);
@@ -183,6 +184,7 @@ export default function RemoteDesktop() {
   const streamModeRef = useRef("stopped");
   const lastInteractionAtRef = useRef(Date.now());
   const pageVisibleRef = useRef(document.visibilityState !== "hidden");
+  const hiddenStopTimerRef = useRef(null);
 
   const [connected, setConnected] = useState(false);
   const [agentConnected, setAgentConnected] = useState(false);
@@ -436,7 +438,9 @@ export default function RemoteDesktop() {
         }
         setStatus(msg.agent_connected ? "Remote desktop klar" : "Venter på klient-agent");
         if (msg.agent_connected) {
-          setTimeout(() => startStream("active", true), 200);
+          setTimeout(() => {
+            if (pageVisibleRef.current) startStream("active", true);
+          }, 200);
           setTimeout(() => {
             setFileBrowserLoading(true);
             send({ type: "file_list_request", path: "", show_hidden: fileBrowserShowHiddenRef.current });
@@ -453,7 +457,9 @@ export default function RemoteDesktop() {
         }
         setStatus(msg.agent_connected ? "Klient-agent forbundet" : "Klient-agent ikke forbundet");
         if (msg.agent_connected) {
-          setTimeout(() => startStream("active", true), 200);
+          setTimeout(() => {
+            if (pageVisibleRef.current) startStream("active", true);
+          }, 200);
           setTimeout(() => {
             setFileBrowserLoading(true);
             send({ type: "file_list_request", path: "", show_hidden: fileBrowserShowHiddenRef.current });
@@ -679,6 +685,10 @@ export default function RemoteDesktop() {
         window.clearTimeout(shoutAckTimerRef.current);
         shoutAckTimerRef.current = null;
       }
+      if (hiddenStopTimerRef.current) {
+        window.clearTimeout(hiddenStopTimerRef.current);
+        hiddenStopTimerRef.current = null;
+      }
       try {
         wsRef.current?.send(JSON.stringify({ type: "stop_stream" }));
         wsRef.current?.close();
@@ -697,14 +707,33 @@ export default function RemoteDesktop() {
       else startStream("active");
     };
 
+    const clearHiddenStopTimer = () => {
+      if (hiddenStopTimerRef.current) {
+        window.clearTimeout(hiddenStopTimerRef.current);
+        hiddenStopTimerRef.current = null;
+      }
+    };
+
     const handleVisibility = () => {
       const visible = document.visibilityState !== "hidden";
       pageVisibleRef.current = visible;
       if (!visible) {
-        stopStream();
+        clearHiddenStopTimer();
+        // Keep the existing capture warm for a bounded grace. A quick tab
+        // switch therefore returns to the same stream/session without a new
+        // start handshake. Never start a new capture while already hidden.
+        if (streamModeRef.current !== "stopped") {
+          hiddenStopTimerRef.current = window.setTimeout(() => {
+            hiddenStopTimerRef.current = null;
+            if (!pageVisibleRef.current) stopStream();
+          }, RD_HIDDEN_WARM_GRACE_MS);
+        }
       } else {
+        clearHiddenStopTimer();
         lastInteractionAtRef.current = Date.now();
-        startStream("active", true);
+        if (streamModeRef.current === "stopped") {
+          startStream("active", true);
+        }
       }
     };
 
@@ -718,6 +747,10 @@ export default function RemoteDesktop() {
 
     return () => {
       window.clearInterval(timer);
+      if (hiddenStopTimerRef.current) {
+        window.clearTimeout(hiddenStopTimerRef.current);
+        hiddenStopTimerRef.current = null;
+      }
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("focus", handleActivity);
       window.removeEventListener("pointerdown", handleActivity);
