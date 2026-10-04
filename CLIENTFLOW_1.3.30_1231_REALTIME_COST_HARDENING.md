@@ -180,9 +180,15 @@ edges without changing the immutable 1.3.29/1230 release bytes:
   `awaiting_post_final_reboot_acceptance` before the final reboot. The activated
   runtime marks it `accepted` only on a different boot after observing the
   canonical local Wayland kiosk session, applied/verified kiosk lockdown,
-  kiosk/cfadmin privilege separation and executable Nautilus. This automated
-  gate complements rather than replaces the required physical DING/Nautilus
-  popup acceptance.
+  kiosk/cfadmin privilege separation, executable Nautilus and a healthy
+  Nautilus/DING session; it also requires the current-boot display start marker
+  with the exact 10-second startup contract, the configured kiosk URL, verified
+  Browser Guard/cookie/consent behavior, healthy critical ClientFlow services
+  and an authenticated backend status proving the client is `Approved`. Any
+  missing proof keeps the handoff fail-closed in
+  `awaiting_post_final_reboot_acceptance`. This automated gate complements
+  rather than replaces the required physical post-reboot DING/Nautilus, browser,
+  URL, cookie, service-health and Approved-status acceptance.
 
 The updater optimization remains deliberately deferred until authentic physical
 in-place update is proven; WebRTC/codec replacement remains measurement-gated

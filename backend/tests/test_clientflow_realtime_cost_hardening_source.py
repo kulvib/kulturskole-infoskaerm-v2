@@ -241,6 +241,7 @@ def test_customer_handoff_is_accepted_only_after_final_reboot_runtime_gate():
     unit = read("client/systemd/clientflow-post-final-reboot-acceptance.service")
     target = read("client/systemd/clientflow.target")
     pyproject = read("client/runtime/pyproject.toml")
+    hardening = read("CLIENTFLOW_1.3.30_1231_REALTIME_COST_HARDENING.md")
     assert '"status": "awaiting_post_final_reboot_acceptance"' in bootstrap
     assert "_stage_post_final_reboot_acceptance()" in bootstrap
     assert 'phase("9/9 · Final reboot og post-boot acceptance")' in bootstrap
@@ -265,3 +266,12 @@ def test_customer_handoff_is_accepted_only_after_final_reboot_runtime_gate():
     assert "After=network-online.target" in unit
     assert "CLIENTFLOW_CREDENTIAL_FILE=/etc/clientflow/credentials/status.json" in unit
     assert "Restart=on-failure" in unit
+    for documented_proof in (
+        "exact 10-second startup contract",
+        "configured kiosk URL",
+        "Browser Guard/cookie/consent behavior",
+        "healthy critical ClientFlow services",
+        "client is `Approved`",
+        "keeps the handoff fail-closed",
+    ):
+        assert documented_proof in hardening

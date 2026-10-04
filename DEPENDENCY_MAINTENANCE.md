@@ -56,3 +56,5 @@ Audit-undtagelser skal være specifikke, tidsbegrænsede og dokumenterede i `fro
 ## Produktspecifik status
 
 Display bevarer HLS-, WebSocket-, ClientFlow- og Remote Desktop-afhængighederne. Dependency-opdateringer må ikke kombineres med produktændringer.
+
+For ClientFlow 1.3.30/1231 er `hls.js` eksplicit release-fastlåst til `1.6.16`, som allerede er den resolverede og testede runtime-version i lockfilen. Den må ikke løftes som del af den sidste pre-freeze closure. Nyere HLS.js skal vurderes særskilt efter 1.3.30 med den fysiske Livestream-regressionssuite og målte startup/reconnect/live-edge-resultater, før en ny version kan accepteres. Dette er en release-risiko-disposition, ikke en security-undtagelse.

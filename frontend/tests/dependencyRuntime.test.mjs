@@ -22,6 +22,7 @@ const EXPECTED = Object.freeze({
   "@mui/x-date-pickers": "9.14.0",
   "@hello-pangea/dnd": "18.0.1",
   "date-fns": "4.4.0",
+  "hls.js": "1.6.16",
 });
 
 test("React Router runtime kan initialiseres", () => {

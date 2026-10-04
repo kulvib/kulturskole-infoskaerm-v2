@@ -19,6 +19,7 @@ PYTHON_VERSION = "3.13.16"
 NODE_VERSION = "24.21.0"
 NPM_VERSION = "11.19.0"
 PIP_VERSION = "26.1.2"
+HLS_JS_RELEASE_PIN = "1.6.16"
 DIRECT_RE = re.compile(r"^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?==([^\s;]+)$")
 LOCK_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([^\s\\]+)(?:\s+\\)?$")
 
@@ -156,6 +157,13 @@ def main() -> int:
         "vite": "8.1.4",
     }
     packages = lock.get("packages") or {}
+    if package.get("dependencies", {}).get("hls.js") != HLS_JS_RELEASE_PIN:
+        raise ValueError(f"ClientFlow 1.3.30/1231 hls.js skal være release-fastlåst til {HLS_JS_RELEASE_PIN}")
+    if packages.get("node_modules/hls.js", {}).get("version") != HLS_JS_RELEASE_PIN:
+        raise ValueError(f"package-lock resolver ikke hls.js til {HLS_JS_RELEASE_PIN}")
+    dependency_notes = (ROOT / "DEPENDENCY_MAINTENANCE.md").read_text(encoding="utf-8")
+    if "hls.js" not in dependency_notes or HLS_JS_RELEASE_PIN not in dependency_notes or "efter 1.3.30" not in dependency_notes:
+        raise ValueError("Dependency-noterne mangler den eksplicitte 1.3.30 HLS release-disposition")
     for name, version in expected_dev.items():
         if package.get("devDependencies", {}).get(name) != version:
             raise ValueError(f"{name} skal være fastlåst til {version}")
