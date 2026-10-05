@@ -40,22 +40,16 @@ def test_1226_customer_terminal_copy_matches_reviewed_document() -> None:
 
     assert 'input("Lokation/rum (valgfri, Enter = tom): ")' in common
     assert "Koden vises som: CF-____-____-____" not in customer
-    assert 'ok("CF-koden er accepteret.")' in customer
-    lockdown_phase = 'phase("8/9 · Kunde-lockdown før final reboot")'
-    lockdown_apply = "_apply_customer_kiosk_lockdown()"
-    complete_phase = 'phase("9/9 · Final reboot og post-boot acceptance")'
-    final_reboot = 'confirmed_reboot("kundeaktivering afventer post-final-reboot acceptance", seconds=5)'
-    assert lockdown_phase in customer
-    assert complete_phase in customer
-    assert 'ok("Kiosk lockdown er aktiv og lokalt verificeret.")' in customer
-    assert 'ok("Activation er gennemført. Kundeoverdragelse er først accepteret efter final reboot og post-boot verifikation.")' in customer
-    phase_index = customer.index(lockdown_phase)
-    apply_index = customer.index(lockdown_apply, phase_index)
-    complete_index = customer.index(complete_phase, apply_index)
-    reboot_index = customer.index(final_reboot, complete_index)
-    assert phase_index < apply_index < complete_index < reboot_index
-    assert "kræves ikke et ekstra klik" not in customer
-
+    assert 'ok("CF-koden er accepteret, og exact release er staged som pending activation.")' in customer
+    reboot_phase = 'phase("7/9 · Pre-activation reboot og automatisk approval/activation")'
+    preactivation_reboot = 'confirmed_reboot("pre-activation reboot før backend-godkendelse", seconds=5)'
+    assert reboot_phase in customer
+    assert "Fase 8/9 (activation + kiosk-lockdown)" in customer
+    assert "9/9 (final reboot + post-boot acceptance)" in customer
+    customer_flow = customer[customer.index("def _customer_install"):customer.index("def main()") ]
+    assert "_apply_customer_kiosk_lockdown()" not in customer_flow
+    assert "_stage_post_final_reboot_acceptance()" not in customer_flow
+    assert customer_flow.index(reboot_phase) < customer_flow.index(preactivation_reboot)
 
 def test_1226_reboot_copy_is_lowercase_and_grammatically_correct() -> None:
     common = COMMON.read_text(encoding="utf-8")

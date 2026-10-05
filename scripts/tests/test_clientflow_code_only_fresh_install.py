@@ -196,7 +196,7 @@ def test_approved_transition_401_from_pending_readiness_still_reaches_canonical_
     monkeypatch.setattr(module, "_canonical_kiosk_session", lambda: "7")
     monkeypatch.setattr(module, "_publish_post_reboot_approval_readiness", pending_only_readiness)
     monkeypatch.setattr(module, "_canonical_staged_activation", canonical_activation)
-    monkeypatch.setattr(module, "_cleanup_completed_bootstrap", lambda: cleaned.append(True))
+    monkeypatch.setattr(module, "_finalize_activated_customer_handoff", lambda: cleaned.append(True))
     monkeypatch.setattr(module, "_ensure_preactivation_gui_started", lambda: None)
     monkeypatch.setattr(
         module.time,
@@ -280,8 +280,144 @@ def test_fresh_install_prepares_graphical_login_before_queuing_reboot():
     customer_start = source.index("def _customer_install")
     post_install = source[customer_start:source.index("def main()", customer_start)]
     assert post_install.index("_prepare_pre_activation_graphical_session()") < post_install.index("_install_activation_waiter()")
-    assert post_install.index("_install_activation_waiter()") < post_install.index("_apply_customer_kiosk_lockdown()") < post_install.index('confirmed_reboot("kundeaktivering afventer post-final-reboot acceptance", seconds=5)')
+    assert post_install.index("_install_activation_waiter()") < post_install.index('confirmed_reboot("pre-activation reboot før backend-godkendelse", seconds=5)')
+    assert "_apply_customer_kiosk_lockdown()" not in post_install
+    assert "_stage_post_final_reboot_acceptance()" not in post_install
     assert "_queue_controlled_pre_activation_reboot()" not in post_install
+
+
+
+def test_customer_handoff_finalization_applies_lockdown_before_final_reboot(monkeypatch):
+    module = _load_helper()
+    calls = []
+    monkeypatch.setattr(
+        module,
+        "_existing_install_state",
+        lambda: {
+            "status": "activated",
+            "activated_release_id": "clientflow-1.3.31-seq-1232",
+        },
+    )
+    handoff = None
+
+    def read_handoff():
+        return handoff
+
+    def stage_handoff():
+        nonlocal handoff
+        calls.append("stage")
+        handoff = {
+            "schema_version": 1,
+            "status": "awaiting_post_final_reboot_acceptance",
+            "pre_reboot_boot_id": "11111111-1111-1111-1111-111111111111",
+            "lockdown_verified_before_reboot": True,
+        }
+
+    monkeypatch.setattr(module, "_customer_handoff_state", read_handoff)
+    monkeypatch.setattr(
+        module,
+        "_disable_preactivation_gui",
+        lambda **kwargs: calls.append(("retire_gui", kwargs)),
+    )
+    monkeypatch.setattr(module, "_apply_customer_kiosk_lockdown", lambda: calls.append("lockdown"))
+    monkeypatch.setattr(module, "_stage_post_final_reboot_acceptance", stage_handoff)
+    monkeypatch.setattr(module, "_current_boot_id", lambda: "11111111-1111-1111-1111-111111111111")
+    monkeypatch.setattr(module, "_queue_controlled_final_reboot", lambda: calls.append("final_reboot"))
+    monkeypatch.setattr(
+        module,
+        "_cleanup_completed_bootstrap",
+        lambda: (_ for _ in ()).throw(AssertionError("bootstrap must survive until final reboot")),
+    )
+
+    module._finalize_activated_customer_handoff()
+
+    assert calls == [
+        ("retire_gui", {"remove_unit": True, "preserve_running": True}),
+        "lockdown",
+        "stage",
+        "final_reboot",
+    ]
+
+
+def test_customer_handoff_finalization_after_new_boot_cleans_without_reboot(monkeypatch):
+    module = _load_helper()
+    calls = []
+    monkeypatch.setattr(
+        module,
+        "_existing_install_state",
+        lambda: {
+            "status": "activated",
+            "activated_release_id": "clientflow-1.3.31-seq-1232",
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "_customer_handoff_state",
+        lambda: {
+            "schema_version": 1,
+            "status": "awaiting_post_final_reboot_acceptance",
+            "pre_reboot_boot_id": "11111111-1111-1111-1111-111111111111",
+            "lockdown_verified_before_reboot": True,
+        },
+    )
+    monkeypatch.setattr(module, "_current_boot_id", lambda: "22222222-2222-2222-2222-222222222222")
+    monkeypatch.setattr(module, "_disable_preactivation_gui", lambda **_kwargs: calls.append("retire_gui"))
+    monkeypatch.setattr(module, "_cleanup_completed_bootstrap", lambda: calls.append("cleanup"))
+    monkeypatch.setattr(
+        module,
+        "_queue_controlled_final_reboot",
+        lambda: (_ for _ in ()).throw(AssertionError("must not reboot twice")),
+    )
+    monkeypatch.setattr(
+        module,
+        "_apply_customer_kiosk_lockdown",
+        lambda: (_ for _ in ()).throw(AssertionError("must not reapply lockdown after final reboot")),
+    )
+
+    module._finalize_activated_customer_handoff()
+
+    assert calls == ["retire_gui", "cleanup"]
+
+
+def test_controlled_final_reboot_requires_activated_lockdown_handoff(monkeypatch):
+    module = _load_helper()
+    monkeypatch.setattr(
+        module,
+        "_existing_install_state",
+        lambda: {
+            "status": "activated",
+            "activated_release_id": "clientflow-1.3.31-seq-1232",
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "_customer_handoff_state",
+        lambda: {
+            "schema_version": 1,
+            "status": "awaiting_post_final_reboot_acceptance",
+            "pre_reboot_boot_id": "11111111-1111-1111-1111-111111111111",
+            "lockdown_verified_before_reboot": True,
+        },
+    )
+    monkeypatch.setattr(module, "_current_boot_id", lambda: "11111111-1111-1111-1111-111111111111")
+    captured = {}
+
+    class Result:
+        returncode = 0
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return Result()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    module._queue_controlled_final_reboot()
+
+    assert captured["command"] == [
+        str(module.SYSTEMCTL), "--no-block", "--check-inhibitors=no", "reboot"
+    ]
+    assert captured["kwargs"] == {"check": False, "timeout": 10}
+    assert "--force" not in captured["command"]
 
 
 def test_55a_is_wired_into_canonical_database_contract_and_migration_runner():

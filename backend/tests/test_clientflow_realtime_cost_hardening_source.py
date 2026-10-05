@@ -60,9 +60,15 @@ def test_fresh_install_requires_lockdown_before_final_reboot():
     enrollment = read("backend/service1/routers/enrollment.py")
     bootstrap = read("client/bootstrap/clientflow-fresh-install")
     assert "desktop_lockdown_enabled=True" in enrollment
-    apply_pos = bootstrap.index("_apply_customer_kiosk_lockdown()", bootstrap.index("def _customer_install"))
-    reboot_pos = bootstrap.index('confirmed_reboot("kundeaktivering afventer post-final-reboot acceptance"')
-    assert apply_pos < reboot_pos
+    finalizer = bootstrap[
+        bootstrap.index("def _finalize_activated_customer_handoff"):
+        bootstrap.index("def _post_reboot_package_manager_healthy")
+    ]
+    assert finalizer.index("_apply_customer_kiosk_lockdown()") < finalizer.index("_stage_post_final_reboot_acceptance()")
+    assert finalizer.index("_stage_post_final_reboot_acceptance()") < finalizer.index("_queue_controlled_final_reboot()")
+    customer = bootstrap[bootstrap.index("def _customer_install"):bootstrap.index("def main()") ]
+    assert "_apply_customer_kiosk_lockdown()" not in customer
+    assert 'confirmed_reboot("pre-activation reboot før backend-godkendelse", seconds=5)' in customer
     assert 'payload.get("status") != "applied"' in bootstrap
 
 
@@ -244,7 +250,9 @@ def test_customer_handoff_is_accepted_only_after_final_reboot_runtime_gate():
     hardening = read("CLIENTFLOW_1.3.30_1231_REALTIME_COST_HARDENING.md")
     assert '"status": "awaiting_post_final_reboot_acceptance"' in bootstrap
     assert "_stage_post_final_reboot_acceptance()" in bootstrap
-    assert 'phase("9/9 · Final reboot og post-boot acceptance")' in bootstrap
+    assert "Fase 8/9 (activation + kiosk-lockdown)" in bootstrap
+    assert "9/9 (final reboot + post-boot acceptance)" in bootstrap
+    assert "_queue_controlled_final_reboot()" in bootstrap
     assert '"status": "accepted"' in gate
     assert "current_boot == previous_boot" in gate
     assert "_active_local_kiosk_session()" in gate
