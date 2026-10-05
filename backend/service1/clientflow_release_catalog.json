@@ -1,20 +1,20 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1230,
-  "latest_stable": "1.3.29",
-  "default_install_version": "1.3.29",
+  "catalog_sequence": 1231,
+  "latest_stable": "1.3.30",
+  "default_install_version": "1.3.30",
   "retention_policy": {
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
   },
-  "created_at": "2026-10-02T15:45:00Z",
+  "created_at": "2026-10-05T16:22:19Z",
   "releases": [
     {
-      "version": "1.3.29",
-      "client_version": "1.3.29",
-      "release_sequence": 1230,
-      "revision": "clientflow-1.3.29-seq-1230",
+      "version": "1.3.30",
+      "client_version": "1.3.30",
+      "release_sequence": 1231,
+      "revision": "clientflow-1.3.30-seq-1231",
       "status": "stable",
       "installable": true,
       "update_allowed": false,
@@ -34,16 +34,16 @@
         "requires_platform_preflight": true
       },
       "notes": [
-        "Canonical ClientFlow 1.3.29 physical-acceptance repair release. It carries the Remote Desktop kiosk-home permission fix, Browser Guard ordinary-start consent-overlay cleanup and live calendar status-colour reset discovered during the 1.3.28/1229 Ubuntu 26.04 physical run. Embedded runtime Python deliberately remains 3.13.14.",
-        "This selector authority is intentionally fresh-install-only. No authentic older ClientFlow physical baseline remains available for an evidence-based 1.3.28 -> 1.3.29 in-place update proof, so update_allowed is false and in_place_update is absent from catalog install_modes. Do not infer update compatibility from the immutable bundle's technical capabilities.",
-        "Promoted to fresh-install selection only after exact source e0f0986c7c7a214d8b25d3fe3bcfb1df93149e30 passed CI #1185 / run 37020483780, runtime-input transport #13 / run 37022128292 produced sequence-1230 inputs at SHA-256 14c5fee3193b8a8c93559643afa5bf96de910ca64233e483628aafee643021fb, release-build #34 / run 37022826670 produced byte-identical candidates, approval #17 / run 37024325019 approved candidate db998add1acefeae384bb293ece0e077faab075cf161afb9ed633dcdf3c48251, and the exact 224153600-byte approved bundle was immutably published and re-read at SHA-256 aa0fc65730b2b7be925eca33f0a2028af675f42e3e2826bc1bd7533e43a94b40 before this selector change. Final clean Ubuntu 26.04 fresh-install physical acceptance remains the immediate post-deployment gate."
+        "Canonical ClientFlow 1.3.30 hardening and operator-visibility release. It preserves the 10-second display/browser contracts, fail-closed post-reboot acceptance, outbound-TCP-443 WSS/HTTPS fallback design, deterministic role-scoped health visibility, shared multi-viewer Livestream generation and 30-second Livestream/Remote Desktop warm-grace behaviour. Embedded runtime Python deliberately remains 3.13.14.",
+        "This selector authority is intentionally fresh-install-only. The immutable approved bundle advertises in_place_update as a technical bundle capability, but no authentic older physical ClientFlow baseline has proven that path for 1.3.30. Therefore update_allowed is false and in_place_update is absent from catalog install_modes. Do not infer update compatibility from bundle capabilities.",
+        "Promoted to fresh-install selection only after exact source 6995280649c68bbd201dee73edde7d6a1f71eaa5 passed CI #1219 / run 37210696042, runtime-input transport #14 / run 37212319478 produced sequence-1231 inputs at SHA-256 14c5fee3193b8a8c93559643afa5bf96de910ca64233e483628aafee643021fb, release-build #35 / run 37230708535 produced byte-identical candidates, approval #18 / run 37267974054 approved candidate 2491c1a15a182e4836b0458e812b304ec7c01d6f897e209b2a49d401930cc8e0, and the exact 224174080-byte approved bundle was transported, immutably published and independently re-read at SHA-256 b3fbe2530907d86e581704a58819c01f17d8ca2f8842a0d2f6e35f9bb9138cd7 before this selector change. Final clean Ubuntu 26.04 fresh-install physical acceptance remains the immediate post-deployment gate."
       ],
-      "release_id": "clientflow-1.3.29-seq-1230",
+      "release_id": "clientflow-1.3.30-seq-1231",
       "artifact_type": "runtime_release",
       "install_modes": [
         "fresh_install"
       ],
-      "block_reason": "ClientFlow 1.3.29 er kun frigivet til fresh install; in-place update er ikke fysisk verificeret fra en autentisk ældre ClientFlow-baseline."
+      "block_reason": "ClientFlow 1.3.30 er kun frigivet til fresh install; in-place update er ikke fysisk verificeret fra en autentisk ældre ClientFlow-baseline."
     }
   ]
 }

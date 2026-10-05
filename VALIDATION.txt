@@ -1,3 +1,52 @@
+ClientFlow 1.3.30 / sequence 1231 fresh-install-only catalog-promotion validation
+Date: 2026-10-05
+
+Immutable authority before selector change:
+PASS: exact canonical source commit = 6995280649c68bbd201dee73edde7d6a1f71eaa5.
+PASS: exact-source CI = #1219 / run 37210696042 / completed success.
+PASS: runtime-input transport #14 / run 37212319478 / completed success.
+PASS: runtime-input transport size = 222248960.
+PASS: runtime-input transport SHA-256 = 14c5fee3193b8a8c93559643afa5bf96de910ca64233e483628aafee643021fb.
+PASS: release build #35 / run 37230708535 produced byte-identical independent candidates and passed the executable-candidate gate.
+PASS: candidate SHA-256 = 2491c1a15a182e4836b0458e812b304ec7c01d6f897e209b2a49d401930cc8e0.
+PASS: installer SHA-256 = 56d929b290e80e7e2ab6dbfe3dcbfc74aaa097e70fb2e1c81062bc06703a820d.
+PASS: payload SHA-256 = 90d79f760c29bbb3d7c4c0c1af56b1451626490a14d502d2821f74d5bf509fed.
+PASS: approval #18 / run 37267974054 / completed success.
+PASS: approval reference = clientflow-1.3.30-seq-1231/6995280649c68bbd201dee73edde7d6a1f71eaa5.
+PASS: approved transport tag = clientflow-1.3.30-1231-approved-transport.
+PASS: approved transport asset = clientflow-approved-1.3.30-1231.tar.
+PASS: approved bundle size = 224174080.
+PASS: approved bundle SHA-256 = b3fbe2530907d86e581704a58819c01f17d8ca2f8842a0d2f6e35f9bb9138cd7.
+PASS: immutable Render store path = /var/data/clientflow-release-artifacts/store/clientflow-1.3.30-seq-1231.tar.
+PASS: canonical publication exit code = 0.
+PASS: independent store re-read matched exact size and SHA-256 and ended PUBLICATION_VERIFIED_OK.
+
+Catalog policy in this package:
+PASS: catalog/source aligned at 1.3.30 / sequence 1231.
+PASS: 1.3.30 is the only default fresh-install selection.
+PASS: install_modes = [fresh_install] and update_allowed = false.
+PASS: no min_current_version is advertised because no in-place path is authorized.
+PASS: fresh-install resolver selects 1.3.30/1231.
+PASS: update resolver fails closed with the evidence-bound fresh-install-only block reason.
+PASS: rollback remains disabled and controlled reboot remains required.
+PASS: Ubuntu minimum remains 26.04 / amd64 / GNOME Wayland platform preflight.
+PASS: embedded runtime Python remains 3.13.14.
+PASS: immutable security-rejected sequence 1228 remains absent.
+PASS: historical 1.3.30 source-freeze evidence is retained without retroactive rewriting.
+PASS: promotion package changes selector/evidence/tests/checksums only; runtime, UI, installer, database, dependency, transport and media source remain byte-identical to frozen source.
+
+Physical evidence boundary:
+UNVERIFIED: in-place update to 1.3.30 from an authentic older physical ClientFlow baseline; catalog update authority therefore remains closed.
+PENDING: merge this promotion package and require green GitHub CI on the exact promotion commit.
+PENDING: deploy that exact promotion commit and independently verify live catalog plus approved-artifact resolution.
+PENDING: clean Ubuntu 26.04 physical fresh-install acceptance through 01 -> 02 -> backend approval -> post-final-reboot acceptance and the full relevant frozen-domain regression set.
+
+Local gates:
+PASS: focused promotion/catalog/fresh-install/source-hygiene regression suite = 72 passed.
+PASS: canonical SHA256SUMS self-check = 213/213 entries verified after final promotion package content was fixed.
+
+---
+
 ClientFlow 1.3.30 / sequence 1231 source-freeze validation
 Date: 2026-10-04
 

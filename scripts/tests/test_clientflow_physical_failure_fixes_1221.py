@@ -49,7 +49,7 @@ def _method_local_tuple(source: str, class_name: str, method_name: str, name: st
                             return ast.literal_eval(child.value)
     raise AssertionError(f"{class_name}.{method_name} local {name} not found")
 
-def test_staged_1330_1231_keeps_promoted_1329_1230_fresh_only_and_skips_rejected_1228():
+def test_promoted_1330_1231_stays_fresh_only_and_skips_rejected_1228():
     assert VERSION.read_text(encoding="utf-8").strip() == "1.3.30"
     release_input = json.loads(_source(RELEASE_INPUT))
     assert release_input["release_sequence"] == 1231
@@ -58,12 +58,12 @@ def test_staged_1330_1231_keeps_promoted_1329_1230_fresh_only_and_skips_rejected
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
-    assert catalog["catalog_sequence"] == 1230
-    assert catalog["latest_stable"] == "1.3.29"
-    assert catalog["default_install_version"] == "1.3.29"
+    assert catalog["catalog_sequence"] == 1231
+    assert catalog["latest_stable"] == "1.3.30"
+    assert catalog["default_install_version"] == "1.3.30"
     selected = catalog["releases"][0]
-    assert selected["release_id"] == "clientflow-1.3.29-seq-1230"
-    assert selected["release_sequence"] == 1230
+    assert selected["release_id"] == "clientflow-1.3.30-seq-1231"
+    assert selected["release_sequence"] == 1231
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
     assert selected["install_modes"] == ["fresh_install"]
