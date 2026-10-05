@@ -30,6 +30,7 @@ This checklist is for the current correctness/isolation phase. Production-readin
 - [ ] A new source/build identity is not made selectable in `clientflow_release_catalog.json` before its exact approved bundle is physically published in the immutable backend store.
 - [ ] During staged promotion, publication validates the approved bundle against source/build identity; the existing runtime catalog remains on the last physically published approved release.
 - [ ] Catalog promotion is a separate gate performed only after the new store artifact has been re-read and verified by exact release ID, size and whole-bundle SHA-256.
+- [ ] After catalog promotion/redeploy, the exact promoted approved release passes the required fresh Ubuntu physical acceptance before the release is claimed physically accepted; a failure requires a new source/build identity and never rewrites approved bytes.
 - [ ] `min_current_version` reflects an actually reachable installed update-controller path; a release must not claim an older bootstrap version that cannot execute the canonical activation chain.
 - [ ] Release build is dispatched from the exact source SHA that already has a successful canonical CI push run.
 - [ ] Runtime-input transport is produced by `scripts/build_clientflow_runtime_input_transport.py`; rebuilding from the same locked platform bytes yields the same TAR SHA-256.
@@ -44,6 +45,7 @@ This checklist is for the current correctness/isolation phase. Production-readin
 - [ ] Approval is bound to exact candidate SHA-256, source commit and fresh-installer SHA-256.
 - [ ] Approval reads hash/manifest/payload from one pinned candidate file identity; candidate pathname replacement cannot change promoted bytes.
 - [ ] Approved bundle verifies with its exact whole-bundle SHA-256.
+- [ ] Normal USB/operator physical acceptance is not attempted with a `deployable: false` candidate; exact-byte approval precedes immutable publication and catalog selection.
 - [ ] Backend publication streams from the same pinned approved-bundle identity that was verified and uses atomic no-replace publication into a pinned secure artifact directory.
 - [ ] Manifest schema 8 embeds the exact fresh-installer bytes inside the approved bundle; no loose installer path is a release authority.
 - [ ] Before any installer code executes, the canonical host-bootstrap verifies one pinned approved-bundle identity, extracts the embedded installer from that same open bundle, and materializes root-owned private bundle/installer copies under `/run`.
