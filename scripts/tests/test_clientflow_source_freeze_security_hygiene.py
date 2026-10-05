@@ -92,7 +92,7 @@ def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() 
         }
     ]
 
-def test_1330_1231_source_is_frozen_while_1329_1230_update_authority_stays_closed() -> None:
+def test_1330_1231_frozen_source_is_promoted_fresh_only_while_update_authority_stays_closed() -> None:
     assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.30"
     release_input = json.loads(
         (ROOT / "client" / "release" / "release-input.json").read_text(encoding="utf-8")
@@ -105,11 +105,11 @@ def test_1330_1231_source_is_frozen_while_1329_1230_update_authority_stays_close
             encoding="utf-8"
         )
     )
-    assert catalog["catalog_sequence"] == 1230
-    assert catalog["latest_stable"] == "1.3.29"
-    assert catalog["default_install_version"] == "1.3.29"
+    assert catalog["catalog_sequence"] == 1231
+    assert catalog["latest_stable"] == "1.3.30"
+    assert catalog["default_install_version"] == "1.3.30"
     selected = catalog["releases"][0]
-    assert selected["release_id"] == "clientflow-1.3.29-seq-1230"
+    assert selected["release_id"] == "clientflow-1.3.30-seq-1231"
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
     assert selected["install_modes"] == ["fresh_install"]
@@ -131,6 +131,15 @@ def test_1330_1231_source_is_frozen_while_1329_1230_update_authority_stays_close
     assert "No physical acceptance, immutable publication or catalog promotion is claimed" in freeze
     assert "CLIENTFLOW_1.3.30_1231_SOURCE_FREEZE_CLOSURE.md" in changed
     assert "scripts/tests/test_clientflow_source_freeze_security_hygiene.py" in changed
+
+    promotion = (ROOT / "CLIENTFLOW_1.3.30_1231_FRESH_INSTALL_CATALOG_PROMOTION.md").read_text(
+        encoding="utf-8"
+    )
+    assert "fresh-install-only catalog promotion" in promotion
+    assert "6995280649c68bbd201dee73edde7d6a1f71eaa5" in promotion
+    assert "b3fbe2530907d86e581704a58819c01f17d8ca2f8842a0d2f6e35f9bb9138cd7" in promotion
+    assert "PUBLICATION_VERIFIED_OK" in promotion
+    assert "Physical acceptance is **PENDING**" in promotion
 
 def test_source_checksum_manifest_matches_current_files() -> None:
     import hashlib
@@ -200,6 +209,8 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CLIENTFLOW_1.3.30_1231_SOURCE_IDENTITY.md" in seen
     assert "CLIENTFLOW_1.3.30_1231_SOURCE_FREEZE_CLOSURE.md" in seen
     assert "CHANGED_FILES_1330_1231_SOURCE_FREEZE.txt" in seen
+    assert "CLIENTFLOW_1.3.30_1231_FRESH_INSTALL_CATALOG_PROMOTION.md" in seen
+    assert "CHANGED_FILES_1330_1231_FRESH_INSTALL_CATALOG_PROMOTION.txt" in seen
 
 
 def test_1323_1224_initial_freeze_is_explicitly_superseded_before_build() -> None:
