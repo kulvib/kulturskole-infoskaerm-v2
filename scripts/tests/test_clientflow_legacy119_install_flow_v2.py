@@ -92,14 +92,14 @@ def test_customer_flow_matches_legacy_customer_order_and_removes_second_manual_a
         "remove_desktop_install_icons(KIOSK_USER)",
         "_prepare_pre_activation_graphical_session()",
         "_install_activation_waiter()",
-        "_apply_customer_kiosk_lockdown()",
-        'confirmed_reboot("kundeaktivering afventer post-final-reboot acceptance", seconds=5)',
+        'confirmed_reboot("pre-activation reboot før backend-godkendelse", seconds=5)',
     ]
     positions = [normal.index(token) for token in order]
     assert positions == sorted(positions)
     assert "Midlertidig bootstrap-netværksprofil UUID" not in source
     assert "Koden vises som: CF-____-____-____" not in source
-    assert 'ok("CF-koden er accepteret.")' in source
+    assert 'ok("CF-koden er accepteret, og exact release er staged som pending activation.")' in source
+    assert "_apply_customer_kiosk_lockdown()" not in normal
     assert "cfadmin er allerede defineret i 01 Klient klargøring" in source
     assert '"--factory-state"' in source
 
@@ -312,8 +312,10 @@ def test_successful_first_activation_removes_only_exact_bootstrap_artifacts():
     assert "BOOTSTRAP_FILES" in cleanup
     assert ".rmdir()" in cleanup
     assert "rmtree" not in cleanup
+    finalizer = source[source.index("def _finalize_activated_customer_handoff"):source.index("def _post_reboot_package_manager_healthy")]
+    assert finalizer.count("_cleanup_completed_bootstrap()") == 2
     waiter = source[source.index("def _activation_wait"):source.index("def _factory_identity")]
-    assert waiter.count("_cleanup_completed_bootstrap()") == 2
+    assert waiter.count("_finalize_activated_customer_handoff()") == 2
 
 
 def test_usb_start_verifies_top_level_and_payload_manifests_before_sudo_install():

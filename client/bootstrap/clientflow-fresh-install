@@ -5,9 +5,12 @@ The short enrollment code is exchanged with the canonical backend for its
 already-bound exact release.  First activation is deliberately separate from
 installation: installation ends in durable ``pending_manual_activation``. The
 helper then materializes the staged release's graphical kiosk-session baseline
-before it queues one controlled reboot, so GDM can establish the canonical
-``clientflow-kiosk`` Wayland session. A later invocation activates only the
-immutable staged release through ``python -P -m clientflow_release``.
+before it queues one operator-confirmed reboot, so GDM can establish the
+canonical ``clientflow-kiosk`` Wayland session. The boot-enabled approval waiter
+then activates only the immutable staged release through ``python -P -m
+clientflow_release``. After healthy activation it applies kiosk lockdown, stages
+the post-final-reboot acceptance contract, and queues the final controlled
+reboot.
 """
 from __future__ import annotations
 
@@ -965,6 +968,86 @@ def _stage_post_final_reboot_acceptance() -> None:
     })
 
 
+def _customer_handoff_state() -> dict[str, object] | None:
+    if not CUSTOMER_HANDOFF_STATE.exists():
+        return None
+    state = _secure_root_json(CUSTOMER_HANDOFF_STATE)
+    if state.get("schema_version") != 1:
+        raise RuntimeError("Customer handoff-state har ukendt schema")
+    return state
+
+
+def _queue_controlled_final_reboot() -> None:
+    """Queue the post-activation reboot only from a durable handoff state."""
+    state = _existing_install_state()
+    if not isinstance(state, dict) or state.get("status") != "activated":
+        raise RuntimeError("Final reboot afvist: ClientFlow er ikke durably activated")
+    release_id = str(state.get("activated_release_id") or "").strip()
+    if not RELEASE_ID_RE.fullmatch(release_id):
+        raise RuntimeError("Final reboot afvist: aktiv release-id mangler eller er ugyldig")
+
+    handoff = _customer_handoff_state()
+    if not isinstance(handoff, dict) or handoff.get("status") != "awaiting_post_final_reboot_acceptance":
+        raise RuntimeError("Final reboot afvist: durable customer handoff-state mangler")
+    if handoff.get("lockdown_verified_before_reboot") is not True:
+        raise RuntimeError("Final reboot afvist: kiosk lockdown er ikke verificeret")
+    if str(handoff.get("pre_reboot_boot_id") or "").strip() != _current_boot_id():
+        raise RuntimeError("Final reboot afvist: customer handoff-state tilhører ikke dette boot")
+
+    result = subprocess.run(
+        [str(SYSTEMCTL), "--no-block", "--check-inhibitors=no", "reboot"],
+        check=False,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("Kunne ikke køe den kontrollerede final reboot")
+    print(
+        "ClientFlow er aktiveret og kiosk-lockdown er verificeret. "
+        "Klienten genstarter nu til post-final-reboot acceptance."
+    )
+
+
+def _finalize_activated_customer_handoff() -> None:
+    """Finish the customer handoff after healthy canonical first activation."""
+    state = _existing_install_state()
+    if not isinstance(state, dict) or state.get("status") != "activated":
+        raise RuntimeError("Kundeoverdragelse kræver durable activated install-state")
+
+    # The already visible preactivation GUI may be adopted by the active Display
+    # runtime in this boot, but its temporary bootstrap unit must not start again
+    # on the final boot. Keep the current process alive while retiring the unit.
+    _disable_preactivation_gui(remove_unit=True, preserve_running=True)
+
+    handoff = _customer_handoff_state()
+    if handoff is None:
+        _apply_customer_kiosk_lockdown()
+        _stage_post_final_reboot_acceptance()
+        handoff = _customer_handoff_state()
+        if not isinstance(handoff, dict):
+            raise RuntimeError("Customer handoff-state blev ikke staged durably")
+
+    status = str(handoff.get("status") or "")
+    if status == "accepted":
+        _cleanup_completed_bootstrap()
+        return
+    if status != "awaiting_post_final_reboot_acceptance":
+        raise RuntimeError(f"Customer handoff-state har uventet status: {status or 'tom'}")
+    if handoff.get("lockdown_verified_before_reboot") is not True:
+        raise RuntimeError("Customer handoff-state mangler verificeret kiosk lockdown")
+
+    pre_reboot_boot_id = str(handoff.get("pre_reboot_boot_id") or "").strip()
+    if not re.fullmatch(r"[0-9a-f-]{36}", pre_reboot_boot_id):
+        raise RuntimeError("Customer handoff-state mangler gyldigt pre-reboot boot-id")
+    if pre_reboot_boot_id != _current_boot_id():
+        # The final reboot has already happened.  Post-final-reboot acceptance is
+        # owned by the active release service, so bootstrap can now retire safely.
+        _cleanup_completed_bootstrap()
+        print("Final reboot er observeret; post-final-reboot acceptance fortsætter i aktiv runtime.")
+        return
+
+    _queue_controlled_final_reboot()
+
+
 def _post_reboot_package_manager_healthy() -> bool:
     if REBOOT_REQUIRED_PATH.exists():
         return False
@@ -1057,7 +1140,7 @@ def _activation_wait() -> int:
             return 1
         status = str(state.get("status") or "")
         if status == "activated":
-            _cleanup_completed_bootstrap()
+            _finalize_activated_customer_handoff()
             return 0
         if status != "pending_manual_activation":
             print(f"ClientFlow first-activation har uventet state: {status}", file=sys.stderr)
@@ -1105,8 +1188,8 @@ def _activation_wait() -> int:
         if result == 0:
             updated = _existing_install_state()
             if isinstance(updated, dict) and updated.get("status") == "activated":
-                _cleanup_completed_bootstrap()
                 print("ClientFlow er backend-godkendt og automatisk aktiveret.")
+                _finalize_activated_customer_handoff()
                 return 0
         _ensure_preactivation_gui_started()
         print("ClientFlow afventer backend-godkendelse; prøver igen om 10 sekunder.")
@@ -1264,22 +1347,19 @@ def _customer_install() -> int:
     _prepare_pre_activation_graphical_session()
     _install_preactivation_gui_service()
 
-    phase("7/9 · Automatisk approval/activation")
+    phase("7/9 · Pre-activation reboot og automatisk approval/activation")
     try:
         _install_activation_waiter()
     except Exception:
         _disable_preactivation_gui(remove_unit=True)
         raise
-    ok("CF-koden er accepteret.")
-
-    phase("8/9 · Kunde-lockdown før final reboot")
-    _apply_customer_kiosk_lockdown()
-    ok("Kiosk lockdown er aktiv og lokalt verificeret.")
-
-    phase("9/9 · Final reboot og post-boot acceptance")
-    _stage_post_final_reboot_acceptance()
-    ok("Activation er gennemført. Kundeoverdragelse er først accepteret efter final reboot og post-boot verifikation.")
-    confirmed_reboot("kundeaktivering afventer post-final-reboot acceptance", seconds=5)
+    ok("CF-koden er accepteret, og exact release er staged som pending activation.")
+    print(
+        "Efter denne genstart viser klienten den lokale afventer-godkendelse GUI. "
+        "Fase 8/9 (activation + kiosk-lockdown) og 9/9 (final reboot + post-boot acceptance) "
+        "fortsætter automatisk efter backend-godkendelse."
+    )
+    confirmed_reboot("pre-activation reboot før backend-godkendelse", seconds=5)
     return 0
 
 def main() -> int:

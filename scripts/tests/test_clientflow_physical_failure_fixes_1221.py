@@ -96,7 +96,9 @@ def test_fresh_install_materializes_graphical_login_before_reboot_and_activation
     customer_start = helper.index("def _customer_install")
     post_install = helper[customer_start:helper.index("def main()", customer_start)]
     assert post_install.index("_prepare_pre_activation_graphical_session()") < post_install.index("_install_activation_waiter()")
-    assert post_install.index("_install_activation_waiter()") < post_install.index("_apply_customer_kiosk_lockdown()") < post_install.index('confirmed_reboot("kundeaktivering afventer post-final-reboot acceptance", seconds=5)')
+    assert post_install.index("_install_activation_waiter()") < post_install.index('confirmed_reboot("pre-activation reboot før backend-godkendelse", seconds=5)')
+    assert "_apply_customer_kiosk_lockdown()" not in post_install
+    assert "_stage_post_final_reboot_acceptance()" not in post_install
     assert "_queue_controlled_pre_activation_reboot()" not in post_install
     assert 'prepare_graphical_login_baseline' in session_prepare
     assert '_ensure_exact_chrome' not in session_prepare
