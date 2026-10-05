@@ -106,14 +106,18 @@ After that green commit, the release chain is strictly:
 1. record the exact 40-character source-freeze SHA;
 2. produce source-SHA-qualified sequence-1232 runtime inputs;
 3. build two byte-identical 1.3.31/1232 release candidates;
-4. physically test those exact candidate bytes from a fresh clean Ubuntu 26.04
-   baseline through pre-activation reboot, approval/activation, kiosk lockdown,
-   final reboot and post-final-reboot acceptance;
-5. only after candidate physical acceptance, perform manual approval;
-6. publish the exact approved bytes immutably and independently re-read/verify
+4. manually approve only the exact reproducible candidate bytes, binding the
+   candidate SHA-256, embedded fresh-installer SHA-256 and source commit;
+5. publish the exact approved bytes immutably and independently re-read/verify
    size and SHA-256;
-7. promote the catalog separately to 1.3.31/1232;
-8. redeploy and repeat final promoted fresh-install acceptance.
+6. promote the catalog separately to 1.3.31/1232 and redeploy the backend;
+7. physically test the exact promoted approved bytes from a fresh clean Ubuntu
+   26.04 baseline through the canonical USB/operator path, including
+   pre-activation reboot, backend approval/activation, kiosk lockdown, final
+   reboot and post-final-reboot acceptance;
+8. claim physical acceptance only after that promoted end-to-end test passes.
+   A failure remains a release acceptance failure and requires a new source/build
+   identity; approved/published bytes are never rewritten in place.
 
 No physical acceptance, immutable publication or catalog promotion is claimed
 by this source-freeze closure itself.
