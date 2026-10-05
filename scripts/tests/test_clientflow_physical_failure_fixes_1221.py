@@ -49,10 +49,10 @@ def _method_local_tuple(source: str, class_name: str, method_name: str, name: st
                             return ast.literal_eval(child.value)
     raise AssertionError(f"{class_name}.{method_name} local {name} not found")
 
-def test_promoted_1330_1231_stays_fresh_only_and_skips_rejected_1228():
-    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.30"
+def test_source_1331_1232_leads_promoted_1330_1231_and_skips_rejected_1228():
+    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.31"
     release_input = json.loads(_source(RELEASE_INPUT))
-    assert release_input["release_sequence"] == 1231
+    assert release_input["release_sequence"] == 1232
     assert release_input["minimum_ubuntu_lts"] == "26.04"
     assert release_input["architecture"] == "amd64"
     assert release_input["runtime_python"] == "3.13.14"
