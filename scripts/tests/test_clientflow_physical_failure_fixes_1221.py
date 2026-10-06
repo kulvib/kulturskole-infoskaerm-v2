@@ -49,10 +49,10 @@ def _method_local_tuple(source: str, class_name: str, method_name: str, name: st
                             return ast.literal_eval(child.value)
     raise AssertionError(f"{class_name}.{method_name} local {name} not found")
 
-def test_source_1331_1232_matches_promoted_1331_1232_and_skips_rejected_1228():
-    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.31"
+def test_source_1332_1233_leads_promoted_1331_1232_and_skips_rejected_1228():
+    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.32"
     release_input = json.loads(_source(RELEASE_INPUT))
-    assert release_input["release_sequence"] == 1232
+    assert release_input["release_sequence"] == 1233
     assert release_input["minimum_ubuntu_lts"] == "26.04"
     assert release_input["architecture"] == "amd64"
     assert release_input["runtime_python"] == "3.13.14"
@@ -64,6 +64,7 @@ def test_source_1331_1232_matches_promoted_1331_1232_and_skips_rejected_1228():
     selected = catalog["releases"][0]
     assert selected["release_id"] == "clientflow-1.3.31-seq-1232"
     assert selected["release_sequence"] == 1232
+    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
     assert selected["install_modes"] == ["fresh_install"]
