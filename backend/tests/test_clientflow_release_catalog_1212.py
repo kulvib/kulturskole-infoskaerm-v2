@@ -17,12 +17,12 @@ ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = ROOT / "backend/service1/clientflow_release_catalog.json"
 
 
-def test_catalog_1231_promotes_exact_1330_fresh_install_identity() -> None:
+def test_catalog_1232_promotes_exact_1331_fresh_install_identity() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    assert data["catalog_sequence"] == 1231
-    assert data["latest_stable"] == "1.3.30"
-    assert data["default_install_version"] == "1.3.30"
+    assert data["catalog_sequence"] == 1232
+    assert data["latest_stable"] == "1.3.31"
+    assert data["default_install_version"] == "1.3.31"
     assert data["retention_policy"] == {
         "max_installable_versions": 1,
         "keep_blocked_metadata": False,
@@ -30,11 +30,11 @@ def test_catalog_1231_promotes_exact_1330_fresh_install_identity() -> None:
 
     assert len(data["releases"]) == 1
     release = data["releases"][0]
-    assert release["version"] == "1.3.30"
-    assert release["client_version"] == "1.3.30"
-    assert release["release_sequence"] == 1231
-    assert release["release_id"] == "clientflow-1.3.30-seq-1231"
-    assert release["revision"] == "clientflow-1.3.30-seq-1231"
+    assert release["version"] == "1.3.31"
+    assert release["client_version"] == "1.3.31"
+    assert release["release_sequence"] == 1232
+    assert release["release_id"] == "clientflow-1.3.31-seq-1232"
+    assert release["revision"] == "clientflow-1.3.31-seq-1232"
     assert release["status"] == "stable"
     assert release["installable"] is True
     assert release["update_allowed"] is False
@@ -45,7 +45,7 @@ def test_catalog_1231_promotes_exact_1330_fresh_install_identity() -> None:
     assert "ikke fysisk verificeret" in release["block_reason"]
 
 
-def test_catalog_1231_remains_promoted_1330_while_source_freezes_1331_1232() -> None:
+def test_catalog_1232_aligns_with_source_1331_1232_and_keeps_update_closed() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -57,11 +57,11 @@ def test_catalog_1231_remains_promoted_1330_while_source_freezes_1331_1232() -> 
     assert source_version == "1.3.31"
     assert release_input["release_sequence"] == 1232
     assert release_input["runtime_python"] == "3.13.14"
-    assert data["catalog_sequence"] == 1231
-    assert data["latest_stable"] == "1.3.30"
-    assert data["default_install_version"] == "1.3.30"
-    assert release_input["release_sequence"] == data["catalog_sequence"] + 1
-    assert release["release_id"] == "clientflow-1.3.30-seq-1231"
+    assert data["catalog_sequence"] == 1232
+    assert data["latest_stable"] == "1.3.31"
+    assert data["default_install_version"] == "1.3.31"
+    assert release_input["release_sequence"] == data["catalog_sequence"]
+    assert release["release_id"] == "clientflow-1.3.31-seq-1232"
     assert all(item.get("release_sequence") != 1228 for item in data["releases"])
     assert all(item.get("version") != "1.3.27" for item in data["releases"])
 
@@ -76,20 +76,20 @@ def test_catalog_1231_remains_promoted_1330_while_source_freezes_1331_1232() -> 
         assert field not in release
 
 
-def test_catalog_1231_fresh_install_resolves_but_update_resolution_is_fail_closed() -> None:
+def test_catalog_1232_fresh_install_resolves_but_update_resolution_is_fail_closed() -> None:
     load_catalog.cache_clear()
     fresh = resolve_fresh_install_release()
 
-    assert fresh["version"] == "1.3.30"
-    assert fresh["release_id"] == "clientflow-1.3.30-seq-1231"
-    assert fresh["release_sequence"] == 1231
+    assert fresh["version"] == "1.3.31"
+    assert fresh["release_id"] == "clientflow-1.3.31-seq-1232"
+    assert fresh["release_sequence"] == 1232
     assert fresh["status"] == "stable"
     assert fresh["installable"] is True
     assert fresh["update_allowed"] is False
     assert fresh["install_modes"] == ["fresh_install"]
 
     with pytest.raises(ClientFlowCatalogError, match="kun frigivet til fresh install"):
-        resolve_release("1.3.30")
+        resolve_release("1.3.31")
 
 
 def test_catalog_rejects_update_allowed_without_in_place_update_mode(tmp_path: Path, monkeypatch) -> None:
