@@ -25,6 +25,52 @@ def test_nautilus_is_never_denied_but_legacy_acl_is_cleanup_authority() -> None:
     assert "/usr/bin/nautilus" in lockdown.ACL_CLEANUP_BINARIES
 
 
+
+
+def test_ready_wayland_session_converges_gnome_baseline_before_lockdown(monkeypatch, tmp_path: Path) -> None:
+    user, record, _home = _account(tmp_path)
+    monkeypatch.setattr(lockdown, "_active_local_kiosk_session", lambda: "2")
+    original_exists = Path.exists
+    monkeypatch.setattr(
+        Path,
+        "exists",
+        lambda self: True if str(self) == f"/run/user/{record.pw_uid}/bus" else original_exists(self),
+    )
+    commands: list[list[str]] = []
+    monkeypatch.setattr(
+        lockdown,
+        "_run",
+        lambda command, **_kwargs: commands.append(command) or SimpleNamespace(returncode=0, stdout=""),
+    )
+    monkeypatch.setattr(
+        lockdown,
+        "_gsettings_value",
+        lambda _user, _record, schema, key: next(
+            expected for expected_schema, expected_key, expected in lockdown.ENFORCED_GSETTINGS
+            if expected_schema == schema and expected_key == key
+        ),
+    )
+
+    lockdown._require_gsettings_baseline_ready(user, record)
+
+    writes = [command for command in commands if "/usr/bin/gsettings" in command and "set" in command]
+    assert len(writes) == len(lockdown.ENFORCED_GSETTINGS)
+    for schema, key, expected in lockdown.ENFORCED_GSETTINGS:
+        assert any(command[-4:] == ["set", schema, key, expected] for command in writes)
+
+
+def test_unready_wayland_session_does_not_attempt_gsettings_convergence(monkeypatch, tmp_path: Path) -> None:
+    user, record, _home = _account(tmp_path)
+    monkeypatch.setattr(lockdown, "_active_local_kiosk_session", lambda: None)
+    commands: list[list[str]] = []
+    monkeypatch.setattr(lockdown, "_run", lambda command, **_kwargs: commands.append(command))
+
+    with pytest.raises(lockdown.KioskLockdownError, match="seat0 Wayland"):
+        lockdown._require_gsettings_baseline_ready(user, record)
+
+    assert commands == []
+
+
 def test_apply_rejects_unready_gnome_session_before_restrictive_mutations(monkeypatch, tmp_path: Path) -> None:
     account = _account(tmp_path)
     monkeypatch.setattr(lockdown, "_account", lambda: account)

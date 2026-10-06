@@ -706,7 +706,7 @@ export default function ClientInfoPage() {
 
   const lastFetchedClients = useRef([]);
   const isDraggingRef = useRef(false);
-  const fetchingClientsRef = useRef(false);
+  const fetchingClientsPromiseRef = useRef(null);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmClientId, setConfirmClientId] = useState(null);
@@ -751,33 +751,58 @@ export default function ClientInfoPage() {
   // ---------------------------------------------------------------------------
 
   const fetchClients = useCallback(
-    async (forceUpdate = false, showLoading = false) => {
-      if (isDraggingRef.current) return;
-      if (fetchingClientsRef.current) return;
-
-      fetchingClientsRef.current = true;
-      if (showLoading) setLoading(true);
-      try {
-        const data = await getControlRoomClients();
-
-        if (
-          forceUpdate ||
-          !isClientListEqual(data, lastFetchedClients.current)
-        ) {
-          setClients(data);
-          lastFetchedClients.current = data;
-        }
-      } catch (err) {
-        if (forceUpdate || showLoading) {
-          showSnackbar("Fejl: " + (err?.message || err), "error");
-        }
-      } finally {
-        fetchingClientsRef.current = false;
-        if (showLoading) setLoading(false);
+    (forceUpdate = false, showLoading = false) => {
+      if (isDraggingRef.current) return Promise.resolve();
+      if (fetchingClientsPromiseRef.current) {
+        return fetchingClientsPromiseRef.current;
       }
+
+      if (showLoading) setLoading(true);
+
+      let requestPromise;
+      requestPromise = (async () => {
+        try {
+          const data = await getControlRoomClients();
+
+          if (
+            forceUpdate ||
+            !isClientListEqual(data, lastFetchedClients.current)
+          ) {
+            setClients(data);
+            lastFetchedClients.current = data;
+          }
+        } catch (err) {
+          if (forceUpdate || showLoading) {
+            showSnackbar("Fejl: " + (err?.message || err), "error");
+          }
+        } finally {
+          if (fetchingClientsPromiseRef.current === requestPromise) {
+            fetchingClientsPromiseRef.current = null;
+          }
+          if (showLoading) setLoading(false);
+        }
+      })();
+
+      fetchingClientsPromiseRef.current = requestPromise;
+      return requestPromise;
     },
     [showSnackbar],
   );
+
+  const resyncClientsAfterCurrentFetch = useCallback(async () => {
+    const inFlight = fetchingClientsPromiseRef.current;
+    if (inFlight) {
+      try {
+        await inFlight;
+      } catch {
+        // fetchClients owns its user-facing error handling. A realtime wake
+        // still requires one authoritative snapshot after the in-flight read.
+      }
+    }
+    if (isPageVisible() && !isDraggingRef.current) {
+      await fetchClients(false, false);
+    }
+  }, [fetchClients]);
 
   const fetchDeletedClients = useCallback(
     async (showLoading = false) => {
@@ -824,13 +849,18 @@ export default function ClientInfoPage() {
             capability = issued?.capability || null;
             generation = Number(issued?.generation || 0);
             if (!capability) throw new Error("Realtime-capability mangler");
+            // Snapshot-after-subscription closes the race where a state commit
+            // lands between the previous list fetch and capability issuance.
+            if (isPageVisible() && !isDraggingRef.current) {
+              await resyncClientsAfterCurrentFetch();
+            }
           }
           const wake = await waitForControlRoomRealtime(capability, generation, 25);
           const nextGeneration = Number(wake?.generation || generation);
           const changed = wake?.changed === true || nextGeneration > generation;
           generation = Math.max(generation, nextGeneration);
           if (changed && isPageVisible() && !isDraggingRef.current) {
-            await fetchClients(false, false);
+            await resyncClientsAfterCurrentFetch();
           }
         } catch {
           capability = null;
@@ -840,7 +870,7 @@ export default function ClientInfoPage() {
     };
     void run();
     return () => { cancelled = true; };
-  }, [fetchClients]);
+  }, [resyncClientsAfterCurrentFetch]);
 
   // Initial load + adaptive reconciliation polling. Hidden pages perform no DB-backed poll.
   // Stable lists reconcile every 60s; pending/action states every 10s. Realtime wake refreshes immediately.

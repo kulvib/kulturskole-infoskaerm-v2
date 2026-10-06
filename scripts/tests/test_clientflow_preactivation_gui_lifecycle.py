@@ -90,7 +90,12 @@ def test_same_legacy_layout_gui_has_strict_status_only_pending_mode() -> None:
     assert 'STARTED_PREACTIVATION = GUI_MODE == "preactivation"' in source
     assert 'PREACTIVATION_MODE = STARTED_PREACTIVATION' in source
     assert 'PREACTIVATION_HANDOFF_PATH' in source
+    assert 'def _read_trusted_first_activation_handoff()' in source
     assert 'def _trusted_first_activation_handoff()' in source
+    assert 'activation_transition = bool(handoff and handoff.get("state") == "activating")' in source
+    assert '"Approved / Aktiverer"' in source
+    assert '"Aktiverer …"' in source
+    assert '"Approved – aktiverer ClientFlow"' in source
     assert 'metadata.st_uid != 0' in source
     assert 'metadata.st_mode & 0o022' in source
     assert 'def _refresh_gui_mode()' in source

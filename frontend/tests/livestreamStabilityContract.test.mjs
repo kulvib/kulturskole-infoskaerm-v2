@@ -139,3 +139,24 @@ test("hidden Livestream inactivity timer is lifecycle-independent and recoverabl
   assert.match(visibilityBlock, /document\.addEventListener\("visibilitychange", applyVisibility\)/);
   assert.match(visibilityBlock, /document\.removeEventListener\("visibilitychange", applyVisibility\)/);
 });
+
+
+test("livestream control and viewer heartbeat use refresh-aware auth and hide raw timeout errors", () => {
+  const api = read("src/api/api.js");
+  assert.match(source, /authenticatedFetch\(\s*`\$\{apiUrl\}\/api\/livestream-v2\/clients/);
+  assert.match(source, /authenticatedFetch\(`\$\{apiUrl\}\/api\/livestream-v2\/hls/);
+  assert.match(source, /isRequestTimeout\(err\)/);
+  assert.match(source, /Livestream-kontakt er forsinket — prøver igen automatisk/);
+  assert.match(api, /export function authenticatedFetch/);
+});
+
+test("livestream overview exposes playback latency and fullscreen per tile", () => {
+  const overview = read("src/pages/adminpages/LivestreamOverview.jsx");
+  assert.match(overview, /FullscreenIcon/);
+  assert.match(overview, /requestFullscreen/);
+  assert.match(overview, /aria-label=\{`Vis \$\{client\.name/);
+  assert.match(overview, /Forsinkelse: \$\{formatLatency\(latencySeconds\)\}/);
+  assert.match(overview, /hlsRef\.current\?\.latency/);
+  assert.match(overview, /seekable\.end/);
+  assert.match(overview, /authenticatedFetch\(`\$\{apiUrl\}\/api\/livestream-v2\/hls/);
+});

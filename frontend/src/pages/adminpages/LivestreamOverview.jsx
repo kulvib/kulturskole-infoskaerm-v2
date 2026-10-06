@@ -5,19 +5,32 @@ import {
   Button,
   Chip,
   CircularProgress,
+  IconButton,
   Paper,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
+import FullscreenIcon from "@mui/icons-material/Fullscreen";
 import GridViewIcon from "@mui/icons-material/GridView";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { Link } from "react-router-dom";
-import { apiUrl, authHeaders, getControlRoomClients } from "../../api";
+import { apiUrl, authHeaders, authenticatedFetch, getControlRoomClients } from "../../api";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 
 const VIEWER_HEARTBEAT_MS = 25_000;
 const PAGE_HIDDEN_WARM_GRACE_MS = 30_000;
 const HEALTH_STARTUP_POLL_MS = 2_000;
+
+function isRequestTimeout(error) {
+  return error?.name === "TimeoutError" || /signal.*timed out|timeout/i.test(String(error?.message || ""));
+}
+
+function formatLatency(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return "måler …";
+  return `${value.toFixed(1).replace(".", ",")} sek.`;
+}
 
 function makeViewerId(clientId) {
   const suffix = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -47,6 +60,7 @@ async function sendViewerLeave(clientId, viewerId, source = "livestream_wall_lea
 
 function LivestreamTile({ client, pageMediaActive }) {
   const rootRef = useRef(null);
+  const previewRef = useRef(null);
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const heartbeatTimerRef = useRef(null);
@@ -59,15 +73,46 @@ function LivestreamTile({ client, pageMediaActive }) {
   const [state, setState] = useState("idle");
   const [message, setMessage] = useState("");
   const [activeViewers, setActiveViewers] = useState(null);
+  const [latencySeconds, setLatencySeconds] = useState(null);
 
   const clientOnline = client?.presence?.is_online === true;
   const shouldRun = Boolean(pageMediaActive && intersecting && clientOnline);
+
+  const updateLatency = useCallback(() => {
+    const video = videoRef.current;
+    let measured = Number(hlsRef.current?.latency);
+    if ((!Number.isFinite(measured) || measured < 0) && video?.seekable?.length) {
+      try {
+        measured = Math.max(0, Number(video.seekable.end(video.seekable.length - 1)) - Number(video.currentTime));
+      } catch {
+        measured = Number.NaN;
+      }
+    }
+    if (Number.isFinite(measured) && measured >= 0) setLatencySeconds(measured);
+  }, []);
+
+  const handleFullscreen = useCallback(async () => {
+    const element = previewRef.current;
+    if (!element) return;
+    try {
+      if (document.fullscreenElement === element) {
+        await document.exitFullscreen?.();
+      } else if (element.requestFullscreen) {
+        await element.requestFullscreen();
+      } else if (element.webkitRequestFullscreen) {
+        element.webkitRequestFullscreen();
+      }
+    } catch {
+      setMessage("Browseren kunne ikke åbne preview i fuld skærm.");
+    }
+  }, []);
 
   const destroyPlayer = useCallback(() => {
     if (hlsRef.current) {
       try { hlsRef.current.destroy(); } catch {}
       hlsRef.current = null;
     }
+    setLatencySeconds(null);
     const video = videoRef.current;
     if (video) {
       try {
@@ -152,6 +197,12 @@ function LivestreamTile({ client, pageMediaActive }) {
             setMessage("");
             video.play().catch(() => {});
           });
+          hls.on(Hls.Events.FRAG_CHANGED, () => {
+            if (!cancelled) updateLatency();
+          });
+          hls.on(Hls.Events.LEVEL_UPDATED, () => {
+            if (!cancelled) updateLatency();
+          });
           hls.on(Hls.Events.ERROR, (_event, data) => {
             if (!data?.fatal || cancelled) return;
             if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
@@ -210,7 +261,7 @@ function LivestreamTile({ client, pageMediaActive }) {
     const heartbeat = async () => {
       if (cancelled) return;
       try {
-        const resp = await fetch(`${apiUrl}/api/livestream-v2/hls/${encodeURIComponent(client.id)}/viewer-heartbeat`, {
+        const resp = await authenticatedFetch(`${apiUrl}/api/livestream-v2/hls/${encodeURIComponent(client.id)}/viewer-heartbeat`, {
           method: "POST",
           credentials: "include",
           headers: {
@@ -235,10 +286,15 @@ function LivestreamTile({ client, pageMediaActive }) {
         if (!hlsRef.current && !healthTimerRef.current) {
           void checkHealthUntilReady();
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
-          setState("error");
-          setMessage("Kunne ikke registrere livestream-viewer.");
+          if (isRequestTimeout(error)) {
+            setState((current) => (current === "live" ? current : "starting"));
+            setMessage("Livestream-kontakt er forsinket — prøver igen automatisk …");
+          } else {
+            setState("error");
+            setMessage(error?.message || "Kunne ikke registrere livestream-viewer.");
+          }
         }
       }
     };
@@ -250,7 +306,7 @@ function LivestreamTile({ client, pageMediaActive }) {
       cancelled = true;
       stopLocalWork(true);
     };
-  }, [client.id, clientOnline, shouldRun, stopLocalWork]);
+  }, [client.id, clientOnline, shouldRun, stopLocalWork, updateLatency]);
 
   useEffect(() => () => stopLocalWork(true), [stopLocalWork]);
 
@@ -267,14 +323,41 @@ function LivestreamTile({ client, pageMediaActive }) {
         border: "1px solid rgba(148,163,184,0.16)",
       }}
     >
-      <Box sx={{ position: "relative", aspectRatio: "16 / 9", background: "#020617" }}>
+      <Box
+        ref={previewRef}
+        sx={{
+          position: "relative",
+          aspectRatio: "16 / 9",
+          background: "#020617",
+          "&:fullscreen": { width: "100vw", height: "100vh", aspectRatio: "auto" },
+        }}
+      >
         <video
           ref={videoRef}
           muted
           autoPlay
           playsInline
+          onTimeUpdate={updateLatency}
           style={{ width: "100%", height: "100%", display: "block", objectFit: "contain" }}
         />
+        <Tooltip title="Vis i fuld skærm">
+          <IconButton
+            aria-label={`Vis ${client.name || "livestream"} i fuld skærm`}
+            onClick={() => void handleFullscreen()}
+            size="small"
+            sx={{
+              position: "absolute",
+              top: 8,
+              right: 8,
+              zIndex: 3,
+              color: "white",
+              background: "rgba(2,6,23,0.62)",
+              "&:hover": { background: "rgba(2,6,23,0.82)" },
+            }}
+          >
+            <FullscreenIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
         {state !== "live" && (
           <Stack
             spacing={1}
@@ -312,7 +395,10 @@ function LivestreamTile({ client, pageMediaActive }) {
         </Stack>
         <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
           <Typography variant="caption" color="text.secondary">
-            {activeViewers == null ? "" : `${activeViewers} aktiv${activeViewers === 1 ? "" : "e"} seer${activeViewers === 1 ? "" : "e"}`}
+            {[
+              activeViewers == null ? "" : `${activeViewers} aktiv${activeViewers === 1 ? "" : "e"} seer${activeViewers === 1 ? "" : "e"}`,
+              `Forsinkelse: ${formatLatency(latencySeconds)}`,
+            ].filter(Boolean).join(" · ")}
           </Typography>
           <Button
             component={Link}

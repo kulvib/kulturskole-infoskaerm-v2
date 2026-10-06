@@ -283,3 +283,19 @@ def test_customer_handoff_is_accepted_only_after_final_reboot_runtime_gate():
         "keeps the handoff fail-closed",
     ):
         assert documented_proof in hardening
+
+
+def test_control_room_realtime_subscription_resyncs_snapshot_without_shortening_idle_poll():
+    client_list = read("frontend/src/pages/ClientInfoPage.jsx")
+    details = read("frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx")
+    assert "Snapshot-after-subscription" in client_list
+    assert "resyncClientsAfterCurrentFetch" in client_list
+    assert "const inFlight = fetchingClientsPromiseRef.current" in client_list
+    issued = client_list[client_list.index("const issued = await createControlRoomRealtimeCapability()"):]
+    assert issued.index("await resyncClientsAfterCurrentFetch()") < issued.index("await waitForControlRoomRealtime")
+    changed = issued[issued.index("const changed ="):]
+    assert "await resyncClientsAfterCurrentFetch()" in changed
+    assert "CHROME_STATUS_IDLE_POLL_MS = 60000" in details
+    assert "hotPollRealtimeResyncRef.current = true" in details
+    assert "if (hotPollRealtimeResyncRef.current)" in details
+    assert "hotPollRealtimeResyncRef.current = false" in details

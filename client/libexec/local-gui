@@ -133,40 +133,44 @@ DISPLAY_RESOLUTION_PRESET_LABELS = {
 }
 
 
-def _trusted_first_activation_handoff() -> str | None:
-    """Return exact approved release-id only for a root-controlled active handoff."""
+def _read_trusted_first_activation_handoff() -> dict[str, str] | None:
+    """Read root-controlled first-activation transition state without exposing controls."""
     if not STARTED_PREACTIVATION:
         return None
     try:
         metadata = PREACTIVATION_HANDOFF_PATH.lstat()
-    except FileNotFoundError:
-        return None
-    except OSError:
+    except (FileNotFoundError, OSError):
         return None
     if (
         not stat.S_ISREG(metadata.st_mode)
         or metadata.st_uid != 0
         or metadata.st_mode & 0o022
+        or metadata.st_size < 2
+        or metadata.st_size > 4096
     ):
         return None
     try:
-        if metadata.st_size < 2 or metadata.st_size > 4096:
-            return None
         payload = json.loads(PREACTIVATION_HANDOFF_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
         return None
     handoff_state = str(payload.get("state") or "").strip().lower()
+    release_id = str(payload.get("release_id") or "").strip()
     if handoff_state not in {"activating", "committed"}:
         return None
-    release_id = str(payload.get("release_id") or "").strip()
-    if (
-        not release_id.startswith("clientflow-")
-        or "/" in release_id
-        or ".." in release_id
-    ):
+    if not release_id.startswith("clientflow-") or "/" in release_id or ".." in release_id:
         return None
+    return {"state": handoff_state, "release_id": release_id}
+
+
+def _trusted_first_activation_handoff() -> str | None:
+    """Return exact approved release-id only for a root-controlled active handoff."""
+    handoff = _read_trusted_first_activation_handoff()
+    if handoff is None:
+        return None
+    handoff_state = handoff["state"]
+    release_id = handoff["release_id"]
     try:
         active_release = ACTIVE_ROOT.resolve(strict=True)
     except OSError:
@@ -1066,6 +1070,8 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
 
     def refresh(self) -> bool:
         try:
+            handoff = _read_trusted_first_activation_handoff()
+            activation_transition = bool(handoff and handoff.get("state") == "activating")
             _refresh_gui_mode()
             runtime = _read_json(STATUS_PATH)
             baseline_public = _read_json(PUBLIC_CLIENT_PATH)
@@ -1090,7 +1096,10 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             self._set("name_locality", f"{client_name} / {locality}")
 
             backend_state = _service_state("clientflow-status-agent.service")
-            if PREACTIVATION_MODE and client_id not in {"", "-"}:
+            if activation_transition and client_id not in {"", "-"}:
+                self._set("backend", "Approved / Aktiverer", COLOR_ORANGE)
+                backend_approved = True
+            elif PREACTIVATION_MODE and client_id not in {"", "-"}:
                 self._set("backend", "Pending / Venter på godkendelse", COLOR_ORANGE)
                 backend_approved = False
             elif client_id not in {"", "-"} and backend_state == "active":
@@ -1140,8 +1149,11 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 ):
                     value, color = self._service_display_state(state)
                     self._set(key, value, color)
-                value, color = self._ready_unit("clientflow-updater.timer")
-                self._set("update", value, color)
+                if activation_transition:
+                    self._set("update", "Aktiverer …", COLOR_ORANGE)
+                else:
+                    value, color = self._ready_unit("clientflow-updater.timer")
+                    self._set("update", value, color)
                 value, color = self._ready_unit("clientflow-system-broker.socket")
                 self._set("ubuntu_update", value, color)
             self._set("uptime", _uptime())
@@ -1161,7 +1173,9 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             power_state = str(runtime.get("display_power") or "unknown").strip().lower()
             running = bool(runtime.get("browser_pid")) and str(runtime.get("state") or "").lower() == "running"
             today_status = calendar[0][1] if calendar else "Off"
-            if backend_approved:
+            if activation_transition and client_id not in {"", "-"}:
+                op_text, op_color = "Approved – aktiverer ClientFlow", COLOR_ORANGE
+            elif backend_approved:
                 if power_state == "off":
                     op_text, op_color = "Dvale – online, skærm slukket", COLOR_BLUE
                 elif today_status == "On" and running:

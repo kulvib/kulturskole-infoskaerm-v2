@@ -34,12 +34,25 @@ let sessionExpiresAtInMemory = null;
 let refreshPromise = null;
 let bootRefreshPromise = null;
 let refreshBlockedUntil = 0;
+
+const REFRESH_LOCK_NAME = "planiq-auth-refresh-v1";
+
+export function isTerminalSessionRefreshError(error) {
+  const status = Number(error?.status ?? error?.response?.status ?? 0);
+  return status === 401 || status === 403;
+}
+
+async function runRefreshSerialized(operation) {
+  const locks = globalThis.navigator?.locks;
+  if (!locks?.request) return operation();
+  return locks.request(REFRESH_LOCK_NAME, { mode: "exclusive" }, operation);
+}
 let adminTerminalStepUpInMemory = null;
 const nativeFetch = globalThis.fetch.bind(globalThis);
 const NETWORK_ERROR_MESSAGE = "Netværksfejl – tjek din internetforbindelse og prøv igen.";
 
 function buildNetworkError(err) {
-  if (err?.name === "AbortError") return err;
+  if (err?.name === "AbortError" || err?.name === "TimeoutError") return err;
   return normalizeApiError(err, NETWORK_ERROR_MESSAGE);
 }
 
@@ -128,11 +141,11 @@ async function refreshAccessToken() {
     throw normalizeApiError(err, err.message);
   }
 
-  refreshPromise = fetchWithFriendlyErrors(`${authApiBase}/refresh`, {
+  refreshPromise = runRefreshSerialized(() => fetchWithFriendlyErrors(`${authApiBase}/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-  })
+  }))
     .then(async (res) => {
       if (!res.ok) {
         const err = await buildApiErrorFromResponse(res, "Sessionen er udløbet");
@@ -149,7 +162,7 @@ async function refreshAccessToken() {
       return data;
     })
     .catch((err) => {
-      if (err?.status !== 429) clearAuthToken();
+      if (isTerminalSessionRefreshError(err)) clearAuthToken();
       throw err;
     })
     .finally(() => {
@@ -195,11 +208,14 @@ async function apiFetch(input, init = {}) {
 
   try {
     await refreshAccessToken();
-  } catch {
-    clearAuthToken();
-    localStorage.removeItem("user");
-    window.location.href = "/login";
-    return first;
+  } catch (error) {
+    if (isTerminalSessionRefreshError(error)) {
+      clearAuthToken();
+      localStorage.removeItem("user");
+      window.location.href = "/login";
+      return first;
+    }
+    throw error;
   }
 
   return fetchWithFriendlyErrors(input, {
@@ -207,6 +223,10 @@ async function apiFetch(input, init = {}) {
     headers: authHeaders(fetchInit.headers || {}),
     credentials: fetchInit.credentials || "include",
   });
+}
+
+export function authenticatedFetch(input, init = {}) {
+  return apiFetch(input, init);
 }
 
 function handle401() {

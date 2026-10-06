@@ -17,6 +17,7 @@ import sys
 from typing import Any
 
 from .config import ClientIdentity
+from .kiosk_session_policy import _active_local_kiosk_session
 
 STATE_PATH = Path(os.getenv("CLIENTFLOW_KIOSK_LOCKDOWN_STATE", "/var/lib/clientflow/kiosk-lockdown/state.json"))
 POLKIT_ROOT = Path(os.getenv("CLIENTFLOW_POLKIT_RULES_DIR", "/etc/polkit-1/rules.d"))
@@ -68,13 +69,16 @@ DENIED_EXACT = (
 # cannot use a global local.d lock here because optional lockdown is kiosk-user-only
 # and cfadmin must remain unaffected. These security-critical kiosk values are therefore
 # actively verified and reconciled through the fixed-function broker.
+KIOSK_COMMAND_LINE_BASELINE = (
+    ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
+    ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
+)
 KIOSK_NOTIFICATION_BASELINE = (
     ("org.gnome.desktop.notifications", "show-banners", "false"),
     ("org.gnome.desktop.notifications", "show-in-lock-screen", "false"),
 )
 ENFORCED_GSETTINGS = (
-    ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
-    ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
+    *KIOSK_COMMAND_LINE_BASELINE,
     *KIOSK_NOTIFICATION_BASELINE,
 )
 OPTIONAL_GSETTINGS = (
@@ -429,36 +433,54 @@ def _apply_polkit(kiosk_user: str, enabled: bool) -> None:
     os.chmod(path, 0o644)
 
 
-def _require_gsettings_baseline_ready(kiosk_user: str, record) -> None:
-    """Fail before restrictive mutations until the kiosk GNOME session is ready.
+def _gsettings_base(kiosk_user: str, record) -> list[str]:
+    return [
+        "/usr/sbin/runuser", "-u", kiosk_user, "--", "env", f"HOME={record.pw_dir}",
+        f"XDG_RUNTIME_DIR=/run/user/{record.pw_uid}", f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{record.pw_uid}/bus",
+        "/usr/bin/gsettings",
+    ]
 
-    The always-on kiosk baseline owns these values. During early boot the user
-    D-Bus/GSettings session can briefly be unavailable; applying ACL/Polkit
-    before that readiness point creates a partial lockdown that DING observes.
-    The display command plane is retryable, so reject harmlessly and let the
-    next attempt converge once the session baseline is visible.
+
+def _require_gsettings_baseline_ready(kiosk_user: str, record) -> None:
+    """Converge the always-on GNOME baseline once the real kiosk session is ready.
+
+    The first-activation waiter races the recurring kiosk-session policy during
+    login. Readiness therefore means an active local seat0 Wayland session and
+    its user D-Bus, not that another asynchronous service happened to write the
+    expected values first. Restrictive launcher/ACL/Polkit mutations still wait
+    until this boundary and the baseline has been re-read successfully.
     """
+    if _active_local_kiosk_session() is None:
+        raise KioskLockdownError("GNOME kiosk-session er ikke aktiv på seat0 Wayland endnu")
+    bus = Path(f"/run/user/{record.pw_uid}/bus")
+    if not bus.exists():
+        raise KioskLockdownError("GNOME kiosk-session D-Bus er ikke klar endnu")
+
+    base = _gsettings_base(kiosk_user, record)
+    for schema, key, expected in ENFORCED_GSETTINGS:
+        _run([*base, "set", schema, key, expected])
+
     drift: list[str] = []
     for schema, key, expected in ENFORCED_GSETTINGS:
         if _gsettings_value(kiosk_user, record, schema, key) != expected:
             drift.append(f"gsettings:{schema}/{key}")
     if drift:
         raise KioskLockdownError(
-            "GNOME kiosk-session baseline er ikke klar endnu: " + "; ".join(drift[:6])
+            "GNOME kiosk-session baseline kunne ikke konvergeres: " + "; ".join(drift[:6])
         )
 
 
 def _apply_gsettings(kiosk_user: str, record, enabled: bool) -> None:
-    base = [
-        "/usr/sbin/runuser", "-u", kiosk_user, "--", "env", f"HOME={record.pw_dir}",
-        f"XDG_RUNTIME_DIR=/run/user/{record.pw_uid}", f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{record.pw_uid}/bus",
-        "/usr/bin/gsettings",
-    ]
+    base = _gsettings_base(kiosk_user, record)
     for schema, key, value in OPTIONAL_GSETTINGS:
         command = [*base, "set", schema, key, value] if enabled else [*base, "reset", schema, key]
         _run(command, required=False)
-    # Popup suppression belongs to the kiosk baseline, not the optional lockdown.
-    # Never reset these keys during rollback; keep Ubuntu/GNOME banners hidden.
+    # Command-line and notification values are always-on kiosk baselines.
+    # Reassert both groups on apply and rollback; optional lockdown must never
+    # weaken the canonical kiosk session. Keep notifications explicit because
+    # they are independently regression-locked against popup reintroduction.
+    for schema, key, value in KIOSK_COMMAND_LINE_BASELINE:
+        _run([*base, "set", schema, key, value], required=False)
     for schema, key, value in KIOSK_NOTIFICATION_BASELINE:
         _run([*base, "set", schema, key, value], required=False)
 
@@ -502,7 +524,8 @@ def apply() -> dict[str, Any]:
     kiosk_user, record, home = _account()
 
     # The GNOME user session is transiently incomplete during login. Never
-    # touch launchers/ACL/Polkit until the always-on baseline is observable.
+    # touch launchers/ACL/Polkit until seat0/Wayland+D-Bus is ready and the
+    # always-on GNOME baseline has been converged and re-read successfully.
     _require_gsettings_baseline_ready(kiosk_user, record)
     _write_state(True, "applying", "Kiosk lockdown anvendes", kiosk_user)
 

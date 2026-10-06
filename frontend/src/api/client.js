@@ -1,4 +1,4 @@
-import { apiUrl, authHeaders, clearAuthToken, performBootRefresh as apiPerformBootRefresh, refreshSession as apiRefreshSession, setAuthToken } from "./api";
+import { apiUrl, authHeaders, clearAuthToken, isTerminalSessionRefreshError, performBootRefresh as apiPerformBootRefresh, refreshSession as apiRefreshSession, setAuthToken } from "./api";
 import { createApiError, normalizeApiError } from "./apiError";
 
 const NETWORK_ERROR_MESSAGE = "Netværksfejl – tjek din internetforbindelse og prøv igen.";
@@ -144,22 +144,19 @@ async function request(method, path, body, config = {}) {
   });
 
   if (res.status === 401) {
-    let refreshed = false;
     try {
       await apiRefreshSession();
-      refreshed = true;
-    } catch {
-      // parseResponse håndterer den oprindelige 401 og afslutter den lokale session.
+    } catch (error) {
+      if (!isTerminalSessionRefreshError(error)) throw error;
+      return parseResponse(res, path);
     }
-    if (refreshed) {
-      res = await fetchWithFriendlyErrors(built, {
-        method,
-        headers: authHeaders({ ...(config?.headers || {}) }),
-        credentials: "include",
-        signal: config?.signal,
-        body: method === "GET" || method === "HEAD" ? undefined : mappedBody,
-      });
-    }
+    res = await fetchWithFriendlyErrors(built, {
+      method,
+      headers: authHeaders({ ...(config?.headers || {}) }),
+      credentials: "include",
+      signal: config?.signal,
+      body: method === "GET" || method === "HEAD" ? undefined : mappedBody,
+    });
   }
 
   return parseResponse(res, path);

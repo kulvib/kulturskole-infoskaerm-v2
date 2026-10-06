@@ -1092,6 +1092,7 @@ export default function ClientDetailsPage({
   });
   const hotPollFastUntilRef = useRef(0);
   const hotPollWakeRef = useRef(null);
+  const hotPollRealtimeResyncRef = useRef(false);
 
   // v7.1.34: Livestream-status skal følge den hurtige /chrome-status polling.
   // Ellers kan Start kiosk være låst af et stale initialt client-snapshot,
@@ -1199,13 +1200,25 @@ export default function ClientDetailsPage({
             capability = issued?.capability || null;
             generation = Number(issued?.generation || 0);
             if (!capability) throw new Error("Realtime-capability mangler");
+            // Latch a resync after subscription. If the hot poll is currently
+            // fetching, the latch is consumed immediately after that fetch so
+            // the capability-generation boundary cannot lose a state change.
+            if (isPageVisible()) {
+              hotPollRealtimeResyncRef.current = true;
+              if (typeof hotPollWakeRef.current === "function") {
+                hotPollWakeRef.current();
+              }
+            }
           }
           const wake = await waitForControlRoomRealtime(capability, generation, 25);
           const nextGeneration = Number(wake?.generation || generation);
           const changed = wake?.changed === true || nextGeneration > generation;
           generation = Math.max(generation, nextGeneration);
-          if (changed && isPageVisible() && typeof hotPollWakeRef.current === "function") {
-            hotPollWakeRef.current();
+          if (changed && isPageVisible()) {
+            hotPollRealtimeResyncRef.current = true;
+            if (typeof hotPollWakeRef.current === "function") {
+              hotPollWakeRef.current();
+            }
           }
         } catch {
           capability = null;
@@ -1358,6 +1371,10 @@ export default function ClientDetailsPage({
           }
           nextPollMs = CHROME_STATUS_ACTIVE_POLL_MS;
         }
+        if (hotPollRealtimeResyncRef.current) {
+          hotPollRealtimeResyncRef.current = false;
+          continue;
+        }
         await waitForNextPoll(nextPollMs);
       }
     }
@@ -1367,6 +1384,7 @@ export default function ClientDetailsPage({
       cancelled = true;
       if (typeof hotPollWakeRef.current === "function") hotPollWakeRef.current();
       hotPollWakeRef.current = null;
+      hotPollRealtimeResyncRef.current = false;
       window.removeEventListener("focus", wakeWhenVisible);
       document.removeEventListener("visibilitychange", wakeWhenVisible);
     };
