@@ -22,7 +22,7 @@ from urllib.parse import parse_qsl, urlsplit
 from .atomic import atomic_write_json
 from .config import DomainCredential
 from .constants import Domain
-from .kiosk_lockdown import status as lockdown_status
+from .kiosk_lockdown import apply as apply_lockdown, status as lockdown_status
 from .kiosk_session_policy import _active_local_kiosk_session
 from .net import DomainTransport
 
@@ -347,6 +347,20 @@ def verify_and_accept() -> dict[str, object]:
         raise PostFinalRebootAcceptanceError("Canonical clientflow-kiosk Wayland-session er endnu ikke aktiv på seat0")
 
     lockdown = lockdown_status()
+    if (
+        lockdown.get("desired") is True
+        and (
+            lockdown.get("status") != "applied"
+            or not isinstance(lockdown.get("enforcement"), dict)
+            or lockdown["enforcement"].get("ok") is not True
+        )
+    ):
+        try:
+            lockdown = apply_lockdown()
+        except Exception as exc:
+            raise PostFinalRebootAcceptanceError(
+                "Kiosk lockdown kunne ikke konvergeres efter final reboot"
+            ) from exc
     if (
         lockdown.get("desired") is not True
         or lockdown.get("status") != "applied"

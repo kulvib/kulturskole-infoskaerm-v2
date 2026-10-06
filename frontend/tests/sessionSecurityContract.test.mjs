@@ -63,3 +63,15 @@ test("session revocation is synchronously single-flight before the first await",
   assert.ok(release > firstAwait, "in-flight guard must be released after the sensitive action settles");
   assert.match(page, /const closeReauthentication = \(\) => \{[\s\S]*if \(revokeInFlightRef\.current\) return;/);
 });
+
+
+test("access-token renewal is cross-tab serialized and transient refresh failures do not force logout", () => {
+  const api = read("src/api/api.js");
+  const client = read("src/api/client.js");
+  assert.match(api, /navigator\?\.locks/);
+  assert.match(api, /REFRESH_LOCK_NAME/);
+  assert.match(api, /isTerminalSessionRefreshError/);
+  assert.match(api, /if \(isTerminalSessionRefreshError\(error\)\)[\s\S]*window\.location\.href = "\/login"/);
+  assert.match(api, /throw error;[\s\S]*return fetchWithFriendlyErrors/);
+  assert.match(client, /if \(!isTerminalSessionRefreshError\(error\)\) throw error/);
+});

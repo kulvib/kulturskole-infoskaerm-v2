@@ -8,7 +8,7 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import FullscreenIcon from "@mui/icons-material/Fullscreen";
 import { useTheme, alpha } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
-import { apiUrl, authHeaders, updateClient } from "../../api";
+import { apiUrl, authenticatedFetch, authHeaders, updateClient } from "../../api";
 
 const HEALTH_STARTUP_POLL_MS = 1000;
 const HEALTH_STABLE_POLL_MS = 10_000;
@@ -21,6 +21,10 @@ const HIDDEN_MEDIA_WARM_GRACE_MS = 30_000;
 const FULLSCREEN_WATCHDOG_MS = 2_000;
 const HIDDEN_INACTIVITY_STOP_MS = 3 * 60 * 1000;
 const INACTIVITY_STOP_MESSAGE = "Siden har ikke været besøgt i 3 min., derfor er livestreamen stoppet.";
+
+function isRequestTimeout(error) {
+  return error?.name === "TimeoutError" || /signal.*timed out|timeout/i.test(String(error?.message || ""));
+}
 
 // Low-latency regular HLS target. Med 2s segmenter starter vi efter 2 manifest-segmenter
 // og holder browseren tættere på live edge uden at bruge 1-segment-start.
@@ -565,7 +569,7 @@ async function sendLivestreamCommand(clientId, action, options = {}) {
     requestOptions.signal = AbortSignal.timeout(timeoutMs);
   }
 
-  const resp = await fetch(
+  const resp = await authenticatedFetch(
     `${apiUrl}/api/livestream-v2/clients/${encodeURIComponent(clientId)}/command`,
     requestOptions
   );
@@ -1099,7 +1103,7 @@ export default function ClientDetailsLivestreamSection({
     const sendHeartbeat = async () => {
       if (stopped || viewerLeaveSentRef.current || document.visibilityState === "hidden") return;
       try {
-        const resp = await fetch(`${apiUrl}/api/livestream-v2/hls/${encodeURIComponent(clientId)}/viewer-heartbeat`, {
+        const resp = await authenticatedFetch(`${apiUrl}/api/livestream-v2/hls/${encodeURIComponent(clientId)}/viewer-heartbeat`, {
           method: "POST",
           credentials: "include",
           headers: {
@@ -1135,9 +1139,16 @@ export default function ClientDetailsLivestreamSection({
           setAutoStartStatus("Livestream starter automatisk — venter på segmenter …");
         }
       } catch (err) {
+        if (isRequestTimeout(err)) {
+          // En enkelt transport-timeout må ikke nulstille en gyldig viewer-lease
+          // eller vise browserens rå "signal timed out" som producerfejl.
+          setAutoStartStatus("Livestream-kontakt er forsinket — prøver igen automatisk …");
+          setAutoStartError("");
+          return;
+        }
         setViewerContactEstablished(false);
-        // Browseren må ikke overtage lifecycle-authority, men heartbeat-fejl skal
-        // være synlige; ellers ser en 401/403/500 ud som en producer-fejl.
+        // Browseren må ikke overtage lifecycle-authority, men autoritative
+        // heartbeat-fejl skal være synlige; 401/403/500 må ikke ligne producerfejl.
         setAutoStartError(err?.message || "Viewer-heartbeat kunne ikke registreres.");
       }
     };

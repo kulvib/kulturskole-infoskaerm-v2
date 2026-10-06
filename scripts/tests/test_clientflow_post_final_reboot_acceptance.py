@@ -82,6 +82,44 @@ def test_post_final_reboot_gate_accepts_only_complete_verified_new_boot(monkeypa
     assert persisted["backend_approved_ready"] is True
 
 
+def test_post_final_reboot_gate_reapplies_desired_lockdown_drift(monkeypatch, tmp_path: Path) -> None:
+    state_path = _prepare_verified_gate(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(gate, "lockdown_status", lambda: {
+        "desired": True, "status": "pending", "enforcement": {"ok": False}
+    })
+
+    def apply():
+        calls.append("apply")
+        return {"desired": True, "status": "applied", "enforcement": {"ok": True}}
+
+    monkeypatch.setattr(gate, "apply_lockdown", apply)
+
+    result = gate.verify_and_accept()
+
+    assert calls == ["apply"]
+    assert result["status"] == "accepted"
+    assert json.loads(state_path.read_text(encoding="utf-8"))["kiosk_lockdown_status"] == "applied"
+
+
+def test_post_final_reboot_gate_lockdown_reapply_failure_stays_pending(monkeypatch, tmp_path: Path) -> None:
+    state_path = _prepare_verified_gate(monkeypatch, tmp_path)
+    monkeypatch.setattr(gate, "lockdown_status", lambda: {
+        "desired": True, "status": "pending", "enforcement": {"ok": False}
+    })
+
+    def fail_apply():
+        raise RuntimeError("GNOME session not ready")
+
+    monkeypatch.setattr(gate, "apply_lockdown", fail_apply)
+
+    with pytest.raises(gate.PostFinalRebootAcceptanceError, match="kunne ikke konvergeres"):
+        gate.verify_and_accept()
+
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["status"] == "awaiting_post_final_reboot_acceptance"
+
+
 @pytest.mark.parametrize("helper", [
     "_verify_nautilus_ding_session",
     "_verify_display_runtime",
