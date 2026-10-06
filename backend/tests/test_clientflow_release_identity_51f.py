@@ -56,14 +56,14 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
         assert selected_tuple < source_tuple
 
 
-def test_51f_promoted_1330_is_fresh_install_only_and_requires_reboot() -> None:
+def test_51f_promoted_1331_is_fresh_install_only_and_requires_reboot() -> None:
     catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = catalog["releases"][0]
 
-    assert release["version"] == "1.3.30"
+    assert release["version"] == "1.3.31"
     assert release["version"] == catalog["latest_stable"]
     assert release["version"] == catalog["default_install_version"]
-    assert release["release_sequence"] == 1231
+    assert release["release_sequence"] == 1232
     assert release["requires_reboot"] is True
     assert release["installable"] is True
     assert release["update_allowed"] is False
