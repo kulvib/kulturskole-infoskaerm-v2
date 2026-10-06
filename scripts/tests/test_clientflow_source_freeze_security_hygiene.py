@@ -150,6 +150,16 @@ def test_1331_1232_source_and_catalog_are_aligned_and_keep_update_closed() -> No
     assert "289489ce65501e8573d1406405cfd68b4e044ff8d0fc13b5f82d9a0ab72eb65f" in promotion_1232
     assert "IMMUTABLE_STORE_REREAD_VERIFIED" in promotion_1232
     assert "Physical acceptance is **PENDING**" in promotion_1232
+    assert "source-map-js` 1.2.1 to patched 1.2.2" in promotion_1232
+    assert "GHSA-68fv-2mgg-jv7q" in promotion_1232
+
+    promotion_changed = (
+        ROOT / "CHANGED_FILES_1331_1232_FRESH_INSTALL_CATALOG_PROMOTION.txt"
+    ).read_text(encoding="utf-8").splitlines()
+    assert "frontend/package-lock.json" in promotion_changed
+
+    frontend_lock = json.loads((ROOT / "frontend" / "package-lock.json").read_text(encoding="utf-8"))
+    assert frontend_lock["packages"]["node_modules/source-map-js"]["version"] == "1.2.2"
 
 def test_source_checksum_manifest_matches_current_files() -> None:
     import hashlib

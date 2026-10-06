@@ -90,9 +90,14 @@ normal USB physical acceptance. This promotion record and `VALIDATION.txt`
 carry the post-freeze release-chain evidence without rewriting immutable source
 or approved bundle bytes.
 
-No runtime, frontend, installer, database, dependency, media or release-format
-source is changed by this promotion package. Only selector/evidence/tests and
-the checksum manifest move forward.
+No ClientFlow runtime, frontend application source, installer, backend/database,
+media or release-format source is changed by this promotion package. During CI
+for the same promotion branch, the frontend lockfile was additionally advanced
+from transitive dev dependency `source-map-js` 1.2.1 to patched 1.2.2 after
+`GHSA-68fv-2mgg-jv7q` became actionable. That lockfile-only security correction
+does not alter the already approved/published ClientFlow 1.3.31/1232 bundle
+bytes or their source authority at
+`aa9a57caa7a08fed17baaa0395a6638173f0e265`.
 
 ## Post-deployment physical acceptance gate
 
