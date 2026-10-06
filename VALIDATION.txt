@@ -1,3 +1,57 @@
+ClientFlow 1.3.32 / sequence 1233 fresh-install-only catalog-promotion validation
+Date: 2026-10-06
+
+Immutable authority before selector change:
+PASS: exact canonical source commit = 82a8ea671b6427017c6db5ca83096f7ebcc69306.
+PASS: user reports canonical GitHub CI green on that exact source-freeze commit before release-chain dispatch.
+PASS: runtime-input transport #17 completed successfully.
+PASS: runtime-input transport tag = runtime-inputs-1233-82a8ea671b6427017c6db5ca83096f7ebcc69306-transport.
+PASS: runtime-input transport size = 222248960.
+PASS: runtime-input transport SHA-256 = 14c5fee3193b8a8c93559643afa5bf96de910ca64233e483628aafee643021fb.
+PASS: release build #38 / run 37512143962 completed successfully, produced byte-identical independent candidates and passed the Ubuntu 26.04 executable-candidate gate.
+PASS: candidate SHA-256 = 0f3f3c1fcd1f6d82417995a65ece421dc2e5ce59af4431fad03bdbb387afb09b.
+PASS: installer SHA-256 = 157c7682b7c75477630e465c208b4614b326c98e16620a8f5e521943ae5c82dd.
+PASS: payload SHA-256 = 4b6714c01066a0b6bec96cc7773c06e9d88225a11905e4d3481bac0d83ff24f8.
+PASS: approval #20 completed successfully.
+PASS: approval reference = clientflow-1.3.32-seq-1233/82a8ea671b6427017c6db5ca83096f7ebcc69306.
+PASS: approved transport tag = clientflow-1.3.32-1233-approved-transport and resolves to exact source commit 82a8ea671b6427017c6db5ca83096f7ebcc69306.
+PASS: approved transport asset = clientflow-approved-1.3.32-1233.tar.
+PASS: approved bundle size = 224174080.
+PASS: approved bundle SHA-256 = 93a56a360e4a74d0eb75ea77bc4cb2a592266d89a7daea9981391efc50252b35.
+PASS: immutable Render store path = /var/data/clientflow-release-artifacts/store/clientflow-1.3.32-seq-1233.tar.
+PASS: Render deployment source matched 82a8ea671b6427017c6db5ca83096f7ebcc69306 before publication.
+PASS: canonical publication exit code = 0.
+PASS: independent store re-read matched exact size and SHA-256.
+PASS: publication ended IMMUTABLE_STORE_REREAD_VERIFIED and PUBLICATION_VERIFIED_SUCCESSFULLY.
+
+Catalog policy in this package:
+PASS: catalog/source aligned at 1.3.32 / sequence 1233.
+PASS: 1.3.32 is the only default fresh-install selection.
+PASS: install_modes = [fresh_install] and update_allowed = false.
+PASS: rollback_allowed = false and no min_current_version is advertised.
+PASS: fresh-install resolver selects 1.3.32/1233.
+PASS: update resolver fails closed with the evidence-bound fresh-install-only block reason.
+PASS: controlled reboot remains required.
+PASS: Ubuntu minimum remains 26.04 / amd64 / GNOME Wayland platform preflight.
+PASS: embedded runtime Python remains 3.13.14.
+PASS: immutable security-rejected sequence 1228 remains absent.
+PASS: immutable 1.3.31/1232 artifact remains untouched as historical failed-acceptance evidence.
+PASS: promotion package changes selector/evidence/tests/checksums only; runtime, frontend application source, installer, database, dependency, transport and media source remain unchanged.
+
+Physical evidence boundary:
+UNVERIFIED: in-place update to 1.3.32 from an authentic older physical ClientFlow baseline; catalog update authority therefore remains closed.
+PENDING: merge this promotion package and require green GitHub CI on the exact promotion commit.
+PENDING: deploy that exact promotion commit and independently verify live catalog plus approved-artifact resolution.
+PENDING: manufacture/verify a new canonical USB from that promoted source.
+PENDING: repeat clean Ubuntu 26.04 physical fresh-install acceptance through Start ClientFlow.EXE -> 01 -> 02 -> pre-activation reboot -> backend approval/automatic activation -> converged kiosk lockdown -> final reboot -> post-final-reboot acceptance and the relevant frozen-domain regression set.
+
+Local gates:
+PASS: broad ClientFlow scripts/source/physical suite = 350 passed with the unchanged local PyJWT recursion-wrapping test deselected; canonical GitHub CI remains the final gate for that environment-specific dependency behaviour.
+PASS: backend release/catalog/fresh-install authority suite = 55 passed.
+PASS: canonical SHA256SUMS self-check = 223/223 entries verified.
+
+---
+
 ClientFlow 1.3.32 / sequence 1233 physical-acceptance runtime-convergence source-freeze validation
 Date: 2026-10-06
 
