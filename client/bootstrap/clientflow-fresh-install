@@ -51,6 +51,7 @@ from clientflow_bootstrap_common import (  # noqa: E402
     prompt_locality,
     read_cf_code,
     remove_customer_activation_sudoers,
+    remove_factory_kiosk_network_polkit_rule,
     remove_desktop_install_icons,
     require_root,
     warn,
@@ -883,6 +884,7 @@ def _disable_activation_waiter(*, remove_unit: bool = False) -> None:
 
 def _cleanup_completed_bootstrap() -> None:
     """Remove only exact bootstrap artifacts after healthy canonical activation."""
+    remove_factory_kiosk_network_polkit_rule()
     _disable_activation_waiter(remove_unit=True)
     _disable_preactivation_gui(remove_unit=True, preserve_running=True)
     for path in (*BOOTSTRAP_LAUNCHERS, FACTORY_STATE, USB_STATE, PENDING_BUNDLE):
@@ -1021,6 +1023,7 @@ def _finalize_activated_customer_handoff() -> None:
     handoff = _customer_handoff_state()
     if handoff is None:
         _apply_customer_kiosk_lockdown()
+        remove_factory_kiosk_network_polkit_rule()
         _stage_post_final_reboot_acceptance()
         handoff = _customer_handoff_state()
         if not isinstance(handoff, dict):

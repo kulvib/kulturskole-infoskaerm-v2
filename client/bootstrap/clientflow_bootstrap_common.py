@@ -39,6 +39,7 @@ VISUDO = Path("/usr/sbin/visudo")
 GDM_CONFIG = Path("/etc/gdm3/custom.conf")
 ACCOUNTS_SERVICE_ROOT = Path("/var/lib/AccountsService/users")
 FACTORY_ACTIVATION_SUDOERS = Path("/etc/sudoers.d/clientflow-factory-activation")
+FACTORY_KIOSK_NETWORK_POLKIT_RULE = Path("/etc/polkit-1/rules.d/48-clientflow-factory-kiosk-network.rules")
 KIOSK_USER = "clientflow-kiosk"
 KIOSK_DISPLAY_NAME = "ClientFlow kiosk user"
 ADMIN_USER = "cfadmin"
@@ -558,6 +559,73 @@ def validate_factory_kiosk_desktop_settings(user: str = KIOSK_USER) -> None:
             )
 
 
+def _factory_kiosk_network_polkit_text(user: str = KIOSK_USER) -> str:
+    """Deny kiosk-user NetworkManager mutations without opening a Polkit auth dialog."""
+    username = validate_local_user(user)
+    user_literal = json.dumps(username)
+    return (
+        "// ClientFlow factory/pre-activation kiosk NetworkManager guard.\n"
+        "polkit.addRule(function(action, subject) {\n"
+        f"  if (subject.user !== {user_literal}) return polkit.Result.NOT_HANDLED;\n"
+        '  var id = action.id || "";\n'
+        '  if (id.indexOf("org.freedesktop.NetworkManager.") === 0) return polkit.Result.NO;\n'
+        "  return polkit.Result.NOT_HANDLED;\n"
+        "});\n"
+    )
+
+
+def validate_factory_kiosk_network_polkit_rule(user: str = KIOSK_USER) -> None:
+    username = validate_local_user(user)
+    if username != KIOSK_USER:
+        raise BootstrapError("Factory NetworkManager Polkit-baseline må kun anvendes på canonical kiosk-bruger")
+    path = FACTORY_KIOSK_NETWORK_POLKIT_RULE
+    try:
+        meta = path.lstat()
+    except FileNotFoundError as exc:
+        raise BootstrapError(f"Factory kiosk NetworkManager Polkit-regel mangler: {path}") from exc
+    if stat.S_ISLNK(meta.st_mode) or not stat.S_ISREG(meta.st_mode):
+        raise BootstrapError(f"Factory kiosk NetworkManager Polkit-regel er ugyldig: {path}")
+    if meta.st_uid != 0 or stat.S_IMODE(meta.st_mode) != 0o644:
+        raise BootstrapError(f"Factory kiosk NetworkManager Polkit-regel har usikker ownership/mode: {path}")
+    try:
+        value = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise BootstrapError(f"Factory kiosk NetworkManager Polkit-regel kan ikke læses: {path}") from exc
+    if value != _factory_kiosk_network_polkit_text(username):
+        raise BootstrapError(f"Factory kiosk NetworkManager Polkit-regel har ugyldigt indhold: {path}")
+
+
+def prepare_factory_kiosk_network_polkit_rule(user: str = KIOSK_USER) -> None:
+    """Fail closed before first kiosk login while 02 keeps root-owned network authority."""
+    require_root()
+    username = validate_local_user(user)
+    if username != KIOSK_USER:
+        raise BootstrapError("Factory NetworkManager Polkit-baseline må kun anvendes på canonical kiosk-bruger")
+    parent = FACTORY_KIOSK_NETWORK_POLKIT_RULE.parent
+    try:
+        parent_meta = parent.lstat()
+    except FileNotFoundError as exc:
+        raise BootstrapError(f"Polkit rules-katalog mangler: {parent}") from exc
+    if (
+        stat.S_ISLNK(parent_meta.st_mode)
+        or not stat.S_ISDIR(parent_meta.st_mode)
+        or parent_meta.st_uid != 0
+        or (parent_meta.st_mode & 0o022)
+    ):
+        raise BootstrapError(f"Polkit rules-katalog har usikker ownership/permissions: {parent}")
+    _atomic_root_file(
+        FACTORY_KIOSK_NETWORK_POLKIT_RULE,
+        _factory_kiosk_network_polkit_text(username),
+        mode=0o644,
+    )
+    validate_factory_kiosk_network_polkit_rule(username)
+
+
+def remove_factory_kiosk_network_polkit_rule() -> None:
+    """Retire the temporary guard after the active runtime lockdown is verified."""
+    FACTORY_KIOSK_NETWORK_POLKIT_RULE.unlink(missing_ok=True)
+
+
 def prepare_factory_kiosk_desktop_settings(user: str = KIOSK_USER) -> None:
     if validate_local_user(user) != KIOSK_USER:
         raise BootstrapError("Factory desktop-baseline må kun anvendes på canonical kiosk-bruger")
@@ -589,6 +657,7 @@ def provision_factory_human_accounts() -> None:
     for username in (KIOSK_USER, ADMIN_USER):
         prepare_factory_gnome_initial_setup_markers(username)
         prepare_factory_popup_autostarts(username)
+    prepare_factory_kiosk_network_polkit_rule(KIOSK_USER)
     prepare_factory_kiosk_desktop_settings(KIOSK_USER)
     ok("cfadmin og clientflow-kiosk er oprettet og valideret")
 
@@ -885,6 +954,7 @@ def validate_factory_handoff(*, client_name: str, operator_user: str) -> None:
         validate_factory_gnome_initial_setup_markers(username)
         validate_factory_popup_autostarts(username)
     validate_factory_kiosk_desktop_settings(KIOSK_USER)
+    validate_factory_kiosk_network_polkit_rule(KIOSK_USER)
     validate_factory_bootstrap_user_hidden(operator_user)
     gdm = GDM_CONFIG.read_text(encoding="utf-8") if GDM_CONFIG.is_file() else ""
     if "AutomaticLoginEnable=true" not in gdm or f"AutomaticLogin={KIOSK_USER}" not in gdm or "WaylandEnable=true" not in gdm:

@@ -10,6 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 COMMON = ROOT / "client/bootstrap/clientflow_bootstrap_common.py"
 PLATFORM = ROOT / "client/runtime/clientflow_runtime/display_platform_prepare.py"
+FRESH = ROOT / "client/bootstrap/clientflow-fresh-install"
 
 
 def _load(path: Path, name: str):
@@ -85,3 +86,55 @@ def test_factory_handoff_fails_closed_on_gnome_and_popup_baselines() -> None:
         "validate_factory_popup_autostarts(username)"
     )
     assert handoff.index("validate_factory_popup_autostarts(username)") < handoff.index(ready)
+
+
+def test_factory_kiosk_network_polkit_guard_denies_without_auth_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load(COMMON, "clientflow_factory_network_polkit_text")
+    monkeypatch.setattr(module, "validate_local_user", lambda username: username)
+
+    text = module._factory_kiosk_network_polkit_text(module.KIOSK_USER)
+
+    assert 'subject.user !== "clientflow-kiosk"' in text
+    assert 'id.indexOf("org.freedesktop.NetworkManager.") === 0' in text
+    assert "return polkit.Result.NO" in text
+    assert "return polkit.Result.YES" not in text
+    assert "return polkit.Result.AUTH_ADMIN" not in text
+    assert "return polkit.Result.NOT_HANDLED" in text
+
+
+def test_factory_provisioning_installs_network_polkit_guard_before_first_kiosk_login() -> None:
+    source = COMMON.read_text(encoding="utf-8")
+    provision = source[
+        source.index("def provision_factory_human_accounts") : source.index("def _replace_ini_section_keys")
+    ]
+    assert "prepare_factory_kiosk_network_polkit_rule(KIOSK_USER)" in provision
+    assert provision.index("prepare_factory_kiosk_network_polkit_rule(KIOSK_USER)") < provision.index(
+        "prepare_factory_kiosk_desktop_settings(KIOSK_USER)"
+    )
+
+
+def test_factory_handoff_fails_closed_without_network_polkit_guard() -> None:
+    source = COMMON.read_text(encoding="utf-8")
+    handoff = source[source.index("def validate_factory_handoff") : source.index("def load_usb_state")]
+    guard = "validate_factory_kiosk_network_polkit_rule(KIOSK_USER)"
+    ready = "write_factory_state(client_name=client_name, operator_user=operator_user, handoff_ready=True)"
+    assert guard in handoff
+    assert handoff.index(guard) < handoff.index(ready)
+
+
+def test_factory_network_polkit_guard_is_retired_only_after_runtime_lockdown() -> None:
+    source = FRESH.read_text(encoding="utf-8")
+    finalize = source[
+        source.index("def _finalize_activated_customer_handoff") : source.index(
+            "def _post_reboot_package_manager_healthy"
+        )
+    ]
+    apply_call = "_apply_customer_kiosk_lockdown()"
+    remove_call = "remove_factory_kiosk_network_polkit_rule()"
+    stage_call = "_stage_post_final_reboot_acceptance()"
+    assert finalize.index(apply_call) < finalize.index(remove_call) < finalize.index(stage_call)
+
+    cleanup = source[source.index("def _cleanup_completed_bootstrap") : source.index("def _secure_root_json")]
+    assert remove_call in cleanup
