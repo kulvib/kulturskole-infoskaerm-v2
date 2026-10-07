@@ -92,12 +92,12 @@ def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() 
         }
     ]
 
-def test_1333_1234_promotion_preserves_source_freeze_history_and_release_chain() -> None:
-    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.33"
+def test_1334_1235_stage_preserves_1333_1234_source_freeze_history_and_release_chain() -> None:
+    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.34"
     release_input = json.loads(
         (ROOT / "client" / "release" / "release-input.json").read_text(encoding="utf-8")
     )
-    assert release_input["release_sequence"] == 1234
+    assert release_input["release_sequence"] == 1235
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(
@@ -109,7 +109,7 @@ def test_1333_1234_promotion_preserves_source_freeze_history_and_release_chain()
     assert catalog["latest_stable"] == "1.3.33"
     assert catalog["default_install_version"] == "1.3.33"
     selected = catalog["releases"][0]
-    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
     assert selected["release_id"] == "clientflow-1.3.33-seq-1234"
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
@@ -117,6 +117,15 @@ def test_1333_1234_promotion_preserves_source_freeze_history_and_release_chain()
     assert selected["install_modes"] == ["fresh_install"]
     assert "min_current_version" not in selected
     assert all(item.get("release_sequence") != 1228 for item in catalog["releases"])
+
+    stage = (ROOT / "CLIENTFLOW_1.3.34_1235_PHYSICAL_ACCEPTANCE_BLOCKERS_STAGE1.md").read_text(encoding="utf-8")
+    assert "staged source identity only" in stage
+    assert "Not source-frozen" in stage
+    assert "realtime capability" in stage
+    assert "exact canonical System command id" in stage
+    assert "Ikke bekræftet" in stage
+    assert "close-request" in stage
+    assert "Still open before 1.3.34/1235 source freeze" in stage
 
     rejection = (ROOT / "CLIENTFLOW_1.3.28_1229_SECURITY_REPLACEMENT.md").read_text(encoding="utf-8")
     assert "CVE-2026-101918" in rejection
@@ -302,6 +311,10 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CHANGED_FILES_1333_1234_SOURCE_FREEZE.txt" in seen
     assert "CLIENTFLOW_1.3.33_1234_FRESH_INSTALL_CATALOG_PROMOTION.md" in seen
     assert "CHANGED_FILES_1333_1234_FRESH_INSTALL_CATALOG_PROMOTION.txt" in seen
+    assert "CLIENTFLOW_1.3.34_1235_PHYSICAL_ACCEPTANCE_BLOCKERS_STAGE1.md" in seen
+    assert "CHANGED_FILES_1334_1235_PHYSICAL_ACCEPTANCE_BLOCKERS_STAGE1.txt" in seen
+    assert "frontend/tests/clientflowPhysicalAcceptanceBlockers1235.test.mjs" in seen
+    assert "scripts/tests/test_clientflow_1235_physical_acceptance_blockers_stage1.py" in seen
 
 
 def test_1323_1224_initial_freeze_is_explicitly_superseded_before_build() -> None:

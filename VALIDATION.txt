@@ -1008,3 +1008,21 @@ PENDING: generate a new source-SHA-qualified sequence-1228 runtime-input transpo
 PENDING: reproducible release build + Ubuntu 26.04 executable-candidate gate.
 PENDING: exact candidate approval and immutable publication/re-read.
 PENDING: only then catalog promotion to 1.3.27/1228.
+
+================================================================================
+ClientFlow 1.3.34 / sequence 1235 physical-acceptance blockers · stage 1
+2026-10-07
+================================================================================
+
+PASS: source/build identity staged as 1.3.34 / sequence 1235.
+PASS: promoted catalog remains immutable 1.3.33 / sequence 1234 fresh-install-only.
+PASS: Control Room realtime wait uses its short-lived capability directly and no longer passes through session-token apiFetch authorization replacement.
+PASS: Ubuntu update status carries exact canonical System command id for UI correlation; stale terminal error/timestamps from older commands are suppressed while a new command is pending.
+PASS: kiosk-lockdown UI separates desired state from observed state and only labels Active after observed status=applied.
+PASS: GTK4 local GUI removes close affordance, consumes close-request and retains existing Display-runtime process supervision for unexpected exits.
+PASS: focused Python regression set after stage changes is green (62 tests after checksum refresh gate is applied).
+INFO: local executable Vite transport test could not be completed in this container because npm dependency materialization timed out; the executable regression test is included for canonical GitHub CI, which remains the final gate.
+PENDING: physical Ubuntu update helper root-cause evidence from Viborg4.
+PENDING: physical kiosk-lockdown enforcement root-cause evidence from Viborg4.
+PENDING: any remaining runtime fix from those diagnostics before 1.3.34/1235 source freeze.
+PENDING: canonical GitHub CI for this stage branch.

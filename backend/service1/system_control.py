@@ -300,6 +300,7 @@ def os_update_projection_from_command(row: ClientCommand | None) -> dict[str, An
     if row is None:
         return {
             "pending_os_update": False,
+            "ubuntu_update_command_id": None,
             "ubuntu_update_status": "ready",
             "ubuntu_update_step": None,
             "ubuntu_update_message": None,
@@ -333,6 +334,7 @@ def os_update_projection_from_command(row: ClientCommand | None) -> dict[str, An
         message = "Ubuntu-opdatering gennemført; genstart er påkrævet"
     return {
         "pending_os_update": status in SYSTEM_ACTIVE_STATUSES,
+        "ubuntu_update_command_id": row.id,
         "ubuntu_update_status": public_status,
         "ubuntu_update_step": step,
         "ubuntu_update_message": message,

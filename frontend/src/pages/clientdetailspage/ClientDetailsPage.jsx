@@ -332,6 +332,7 @@ const UPDATE_LIVE_FIELDS = [
   "pending_reboot",
   "pending_shutdown",
   "pending_os_update",
+  "ubuntu_update_command_id",
   "ubuntu_updates_available",
   "service_ubuntu_update_status",
   "ubuntu_update_status",
@@ -1112,6 +1113,7 @@ export default function ClientDetailsPage({
     client?.state ?? "normal"
   );
   const [localOsUpdateBusy, setLocalOsUpdateBusy] = useState(false);
+  const [localOsUpdateCommandId, setLocalOsUpdateCommandId] = useState(null);
   const localOsUpdateBusyTimerRef = useRef(null);
 
   useEffect(() => {
@@ -1555,7 +1557,8 @@ export default function ClientDetailsPage({
   );
 
   const refreshAfterUbuntuUpdate = useCallback(
-    async ({ optimistic = false } = {}) => {
+    async ({ optimistic = false, commandId = null } = {}) => {
+      if (commandId) setLocalOsUpdateCommandId(String(commandId));
       if (optimistic) {
         setLocalOsUpdateBusy(true);
         if (localOsUpdateBusyTimerRef.current) {
@@ -1643,16 +1646,41 @@ export default function ClientDetailsPage({
     ["display_wake_complete", "system_wake_complete"].includes(String(liveStep || "").trim().toLowerCase()) &&
     String(effectivePendingAction || "none").trim().toLowerCase() === "none";
 
+  const correlatedLiveUpdateFields = useMemo(() => {
+    if (!localOsUpdateCommandId) return liveUpdateFields;
+    const observedCommandId = String(liveUpdateFields?.ubuntu_update_command_id || "");
+    if (observedCommandId === localOsUpdateCommandId) return liveUpdateFields;
+
+    // A newly queued update must never inherit terminal status/timestamps from
+    // the previous update command while the hot poll catches up. Preserve only
+    // unrelated live fields and present the new request as pending.
+    return {
+      ...liveUpdateFields,
+      pending_os_update: true,
+      ubuntu_update_command_id: localOsUpdateCommandId,
+      ubuntu_update_status: "requested",
+      ubuntu_update_step: "os_update_requested",
+      ubuntu_update_message: "Ubuntu-opdatering afventer System-agent",
+      ubuntu_update_error: null,
+      ubuntu_update_started_at: null,
+      ubuntu_update_updated_at: null,
+      ubuntu_update_finished_at: null,
+      ubuntu_update_progress: null,
+      ubuntu_update_package_count: null,
+      ubuntu_update_reboot_required: null,
+    };
+  }, [liveUpdateFields, localOsUpdateCommandId]);
+
   const liveClient = useMemo(
     () => ({
       ...(client || {}),
       ...liveDetailHotFields,
       ...liveDisplayResolution,
       ...liveNetworkStatus,
-      ...liveUpdateFields,
-      pending_reboot: liveUpdateFields.pending_reboot ?? client?.pending_reboot ?? false,
-      pending_shutdown: liveUpdateFields.pending_shutdown ?? client?.pending_shutdown ?? false,
-      pending_os_update: localOsUpdateBusy ? true : (liveUpdateFields.pending_os_update ?? client?.pending_os_update ?? false),
+      ...correlatedLiveUpdateFields,
+      pending_reboot: correlatedLiveUpdateFields.pending_reboot ?? client?.pending_reboot ?? false,
+      pending_shutdown: correlatedLiveUpdateFields.pending_shutdown ?? client?.pending_shutdown ?? false,
+      pending_os_update: localOsUpdateBusy ? true : (correlatedLiveUpdateFields.pending_os_update ?? client?.pending_os_update ?? false),
       livestream_status: liveLivestreamStatus ?? client?.livestream_status ?? null,
       livestream_process_status: liveLivestreamProcessStatus ?? client?.livestream_process_status ?? null,
       livestream_desired_state: liveLivestreamDesiredState || "stopped",
@@ -1675,7 +1703,7 @@ export default function ClientDetailsPage({
       liveDetailHotFields,
       liveDisplayResolution,
       liveNetworkStatus,
-      liveUpdateFields,
+      correlatedLiveUpdateFields,
       localOsUpdateBusy,
       displayUptime,
       livePresence,

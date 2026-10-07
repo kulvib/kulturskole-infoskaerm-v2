@@ -639,6 +639,7 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) 
   const [polling, setPolling] = React.useState(false);
   const [sawBusyState, setSawBusyState] = React.useState(false);
   const requestStartedAtRef = React.useRef(null);
+  const requestCommandIdRef = React.useRef(null);
 
   const updateCount = getUbuntuUpdateCount(client);
   const phase = normalizeUbuntuPhase(client, localStatus);
@@ -689,6 +690,16 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) 
   React.useEffect(() => {
     const stepPhase = getUbuntuStepPhase(client);
     const timestamp = getUbuntuPhaseTimestamp(client) || new Date().toISOString();
+    const expectedCommandId = String(requestCommandIdRef.current || "");
+    const observedCommandId = String(client?.ubuntu_update_command_id || "");
+
+    // A terminal/busy projection belongs to exactly one canonical System
+    // command. Ignore an older command while a newly queued request is waiting
+    // for the hot projection to catch up. This prevents impossible timelines
+    // where a new "Bestilt" inherits an earlier command's failure timestamps.
+    if (expectedCommandId && observedCommandId !== expectedCommandId) {
+      return;
+    }
 
     if (stepPhase && UBUNTU_UPDATE_BUSY_STEPS.has(stepPhase)) {
       setSawBusyState(true);
@@ -816,7 +827,10 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) 
 
     try {
       const res = await requestOsUpdate(client.id);
-      const responseMessage = res?.message || res?.detail || "Ubuntu-opdatering er sendt til klienten";
+      const commandId = String(res?.command_id || "").trim();
+      if (!commandId) throw new Error("Backend returnerede ikke command-id for Ubuntu-opdateringen");
+      requestCommandIdRef.current = commandId;
+      const responseMessage = res?.ubuntu_update_message || res?.message || res?.detail || "Ubuntu-opdatering er sendt til klienten";
       setLocalStatus((prev) => ({
         ...prev,
         phase: "requested",
@@ -824,8 +838,9 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) 
         requestedAt: prev.requestedAt || now,
       }));
       showSnackbar?.({ message: responseMessage, severity: "success" });
-      await onStarted?.({ optimistic: true });
+      await onStarted?.({ optimistic: true, commandId });
     } catch (err) {
+      requestCommandIdRef.current = null;
       const errMessage = err?.message || "Kunne ikke starte Ubuntu-opdatering";
       setLocalStatus((prev) => ({
         ...prev,
@@ -2120,6 +2135,9 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
   const lockdownDesired = client?.desktop_lockdown_enabled === true;
   const lockdownPending = ["pending", "applying", "rolling_back"].includes(lockdownStatus);
   const lockdownDrifted = lockdownStatus === "drifted";
+  const lockdownApplied = lockdownStatus === "applied";
+  const lockdownDisabled = lockdownStatus === "disabled";
+  const lockdownConfirmed = lockdownApplied || lockdownDisabled;
 
   const textFieldSx = {
     "& .MuiInputBase-root": { color: TEXT, background: FIELD_BG, borderRadius: 2 },
@@ -2253,7 +2271,11 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                               : "Fra – cfadmin påvirkes ikke"}
                     </Typography>
                   </Box>
-                  <Chip size="small" label={lockdownStatus === "error" ? "Fejl" : lockdownDrifted ? "Drift opdaget" : lockdownPending ? "Afventer klient" : lockdownDesired ? "Aktiv" : "Fra"} sx={compactDarkChipSx(lockdownStatus === "error" ? "error" : (lockdownPending || lockdownDrifted) ? "warning" : lockdownDesired ? "success" : "neutral")} />
+                  <Chip
+                    size="small"
+                    label={lockdownStatus === "error" ? "Fejl" : lockdownDrifted ? "Drift opdaget" : lockdownPending ? "Afventer klient" : lockdownApplied ? "Aktiv" : lockdownDisabled ? "Fra" : "Ikke bekræftet"}
+                    sx={compactDarkChipSx(lockdownStatus === "error" ? "error" : (lockdownPending || lockdownDrifted || !lockdownConfirmed) ? "warning" : lockdownApplied ? "success" : "neutral")}
+                  />
                 </Stack>
               </Box>
 

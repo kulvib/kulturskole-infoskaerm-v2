@@ -45,7 +45,7 @@ def test_catalog_1234_promotes_exact_1333_fresh_install_identity() -> None:
     assert "ikke fysisk verificeret" in release["block_reason"]
 
 
-def test_catalog_1234_is_aligned_with_1333_source_and_keeps_artifact_authority_out_of_selector() -> None:
+def test_catalog_1234_remains_immutable_selector_while_1334_1235_is_staged() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -54,13 +54,13 @@ def test_catalog_1234_is_aligned_with_1333_source_and_keeps_artifact_authority_o
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
 
-    assert source_version == "1.3.33"
-    assert release_input["release_sequence"] == 1234
+    assert source_version == "1.3.34"
+    assert release_input["release_sequence"] == 1235
     assert release_input["runtime_python"] == "3.13.14"
     assert data["catalog_sequence"] == 1234
     assert data["latest_stable"] == "1.3.33"
     assert data["default_install_version"] == "1.3.33"
-    assert release_input["release_sequence"] == data["catalog_sequence"]
+    assert release_input["release_sequence"] == data["catalog_sequence"] + 1
     assert release["release_id"] == "clientflow-1.3.33-seq-1234"
     assert all(item.get("release_sequence") != 1228 for item in data["releases"])
     assert all(item.get("version") != "1.3.27" for item in data["releases"])
