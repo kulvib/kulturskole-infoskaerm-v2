@@ -1702,6 +1702,7 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "pending_reboot": client.pending_reboot,
         "pending_shutdown": client.pending_shutdown,
         "pending_os_update": getattr(client, "pending_os_update", False),
+        "ubuntu_update_command_id": getattr(client, "ubuntu_update_command_id", None),
         "client_version": client.client_version,
         "client_version_patch": getattr(client, "client_version_patch", None),
         "client_version_updated_at": getattr(client, "client_version_updated_at", None),

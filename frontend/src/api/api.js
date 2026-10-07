@@ -611,14 +611,20 @@ export async function createControlRoomRealtimeCapability() {
 }
 
 export async function waitForControlRoomRealtime(capability, generation, timeoutSeconds = 25) {
+  const token = String(capability || "").trim();
+  if (!token) throw new Error("Realtime-capability mangler");
   const params = new URLSearchParams({
     after: String(Math.max(0, Number(generation) || 0)),
     timeout_seconds: String(Math.max(1, Math.min(30, Number(timeoutSeconds) || 25))),
   });
-  const res = await apiFetch(`${apiUrl}/api/clients/control-room-realtime/wait?${params}`, {
+  // Realtime-wait uses its own short-lived capability, not the browser session
+  // access token. Going through apiFetch() would replace this Authorization
+  // header with the ordinary login Bearer token and turn every wait into 401.
+  // Keep the capability request isolated from session refresh/retry semantics.
+  const res = await fetchWithFriendlyErrors(`${apiUrl}/api/clients/control-room-realtime/wait?${params}`, {
     headers: {
       Accept: "application/json",
-      Authorization: `Bearer ${String(capability || "")}`,
+      Authorization: `Bearer ${token}`,
     },
     credentials: "omit",
     cache: "no-store",

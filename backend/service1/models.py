@@ -547,6 +547,9 @@ class ClientRead(ClientBase):
     display_detected_updated_at: Optional[datetime] = None
     ubuntu_updates_available: Optional[int] = 0
     pending_os_update: Optional[bool] = False
+    # Response-only canonical System command identity. It is attached at read
+    # time from ClientCommand and is deliberately not persisted on Client.
+    ubuntu_update_command_id: Optional[str] = None
     ubuntu_update_status: Optional[str] = "ready"
     ubuntu_update_step: Optional[str] = None
     ubuntu_update_message: Optional[str] = None

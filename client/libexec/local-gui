@@ -478,12 +478,23 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         width, height = self._target_panel_size()
         self.set_default_size(width, height)
         self.set_resizable(False)
+        # The kiosk GUI is a permanent operational surface. Remove the window
+        # manager close affordance and consume close requests (including common
+        # keyboard/window-manager close actions) instead of letting the kiosk
+        # user terminate it. The Display runtime still supervises/restarts the
+        # process if it exits for any other reason.
+        self.set_deletable(False)
+        self.connect("close-request", self._keep_open_on_close)
         self._install_css()
         self._build()
         _write_gui_status("running")
         self.refresh()
         GLib.timeout_add_seconds(1, self.refresh)
         GLib.timeout_add(2500, self._refresh_layout)
+
+    def _keep_open_on_close(self, *_args: object) -> bool:
+        self.present()
+        return True
 
     @staticmethod
     def _screen_size() -> tuple[int, int]:

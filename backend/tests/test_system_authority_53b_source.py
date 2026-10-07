@@ -177,6 +177,7 @@ def test_53b_os_update_preserves_fixed_function_reboot_boundary_and_no_fake_prog
     assert '[ _fixed_binary("systemctl")' not in broker  # formatting-independent guard below
     assert '"--no-block", "--check-inhibitors=no", "reboot"' in broker
     assert '"claimed": ("installing", "os_update_installing", "Ubuntu-opdatering kører", None)' in control
+    assert '"ubuntu_update_command_id": row.id' in control
     assert 'if "CLIENTFLOW_REBOOT_REQUIRED=1" in output:' in control
     assert '"ubuntu_update_reboot_required": reboot_required' in control
     clients = read("backend/service1/routers/clients.py")
