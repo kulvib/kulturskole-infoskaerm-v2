@@ -132,3 +132,25 @@ def test_backend_last_applied_timestamp_is_not_refreshed_by_every_heartbeat() ->
     assert 'observed_status in {"applied", "disabled"} and previous_status != observed_status' in source
     completion = source[source.index("def apply_display_command_completion"): ]
     assert "client.desktop_lockdown_last_applied_at = utcnow()" in completion
+
+
+def test_gsettings_mutators_can_write_live_kiosk_dconf_runtime_without_disabling_home_sandbox():
+    root = ROOT
+    broker = (root / "client/systemd/clientflow-kiosk-lockdown-broker.service").read_text(encoding="utf-8")
+    display = (root / "client/systemd/clientflow-display-runtime.service").read_text(encoding="utf-8")
+
+    for unit in (broker, display):
+        assert "ProtectHome=read-only" in unit
+        assert "ReadWritePaths=/run/user/@CLIENTFLOW_KIOSK_UID@" in unit
+    assert "ReadWritePaths=/home/clientflow-kiosk" in broker
+
+    transaction = (root / "client/release/lib/clientflow_release/transaction.py").read_text(encoding="utf-8")
+    assert "@CLIENTFLOW_KIOSK_UID@" in transaction
+    assert "def _definition_kiosk_uid" in transaction
+
+    for verifier_path in (
+        "scripts/verify_clientflow_ubuntu2604_host.py",
+        "scripts/verify_clientflow_release_candidate_runtime.py",
+    ):
+        verifier = (root / verifier_path).read_text(encoding="utf-8")
+        assert "kiosk_uid=424243" in verifier

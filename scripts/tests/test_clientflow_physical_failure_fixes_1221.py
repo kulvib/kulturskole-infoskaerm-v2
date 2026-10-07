@@ -117,9 +117,11 @@ def test_fresh_install_materializes_graphical_login_before_reboot_and_activation
 def test_activation_health_excludes_only_explicitly_optional_units():
     tx = _source(TX)
     quick = _source(QUICK)
+    post_final = _source(ROOT / "client/systemd/clientflow-post-final-reboot-acceptance.service")
     marker = "# ClientFlow-Activation-Health: optional"
     assert f'_ACTIVATION_HEALTH_OPTIONAL_MARKER = "{marker}"' in tx
     assert marker in quick
+    assert marker in post_final
     fn = tx[tx.index("def _expected_active_units("):tx.index("def _health_check(")]
     assert '"WantedBy=clientflow.target" in text' in fn
     assert "_ACTIVATION_HEALTH_OPTIONAL_MARKER in text" in fn

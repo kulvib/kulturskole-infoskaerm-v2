@@ -139,7 +139,13 @@ def _source_contract(repo: Path) -> dict[str, object]:
 
         summary = validate_release_systemd_contract(release_root)
         layout = Layout(temp / "managed")
-        unit_names = _apply_definitions(layout, release_root, kiosk_user="ci-kiosk", client_id=424242)
+        unit_names = _apply_definitions(
+            layout,
+            release_root,
+            kiosk_user="ci-kiosk",
+            kiosk_uid=424243,
+            client_id=424242,
+        )
         for name in unit_names:
             text = (layout.unit_root / name).read_text(encoding="utf-8")
             if re.search(r"@[A-Z0-9_]+@", text):

@@ -24,6 +24,7 @@ PrivateTmp=yes
 PrivateDevices=no
 ProtectSystem=strict
 ProtectHome=read-only
+ReadWritePaths=/run/user/@CLIENTFLOW_KIOSK_UID@
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
