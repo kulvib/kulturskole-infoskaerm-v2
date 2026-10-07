@@ -92,12 +92,12 @@ def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() 
         }
     ]
 
-def test_1332_1233_catalog_promotion_keeps_update_closed_and_preserves_freeze_history() -> None:
-    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.32"
+def test_1333_1234_source_freeze_keeps_1332_1233_catalog_and_preserves_history() -> None:
+    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.33"
     release_input = json.loads(
         (ROOT / "client" / "release" / "release-input.json").read_text(encoding="utf-8")
     )
-    assert release_input["release_sequence"] == 1233
+    assert release_input["release_sequence"] == 1234
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(
@@ -109,7 +109,7 @@ def test_1332_1233_catalog_promotion_keeps_update_closed_and_preserves_freeze_hi
     assert catalog["latest_stable"] == "1.3.32"
     assert catalog["default_install_version"] == "1.3.32"
     selected = catalog["releases"][0]
-    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
     assert selected["release_id"] == "clientflow-1.3.32-seq-1233"
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
@@ -124,19 +124,37 @@ def test_1332_1233_catalog_promotion_keeps_update_closed_and_preserves_freeze_hi
     assert "must not be catalog-promoted" in rejection
     assert "PyJWT `2.15.1`" in rejection
 
-    # Source-freeze records remain historical and are not rewritten by promotion.
-    identity = (ROOT / "CLIENTFLOW_1.3.32_1233_SOURCE_IDENTITY.md").read_text(encoding="utf-8")
-    freeze = (ROOT / "CLIENTFLOW_1.3.32_1233_SOURCE_FREEZE_CLOSURE.md").read_text(encoding="utf-8")
-    changed = (ROOT / "CHANGED_FILES_1332_1233_SOURCE_FREEZE.txt").read_text(encoding="utf-8")
+    identity = (ROOT / "CLIENTFLOW_1.3.33_1234_SOURCE_IDENTITY.md").read_text(encoding="utf-8")
+    freeze = (ROOT / "CLIENTFLOW_1.3.33_1234_SOURCE_FREEZE_CLOSURE.md").read_text(encoding="utf-8")
+    changed = (ROOT / "CHANGED_FILES_1333_1234_SOURCE_FREEZE.txt").read_text(encoding="utf-8")
     assert "source-frozen candidate" in identity
     assert "not built, physically accepted, published or catalog-promoted" in identity
-    assert "1.3.31/1232 release" in identity
-    assert "7623c972ab5e0db7ee2a9da31023ee1e067e7d97" in identity
+    assert "1.3.32/1233" in identity
+    assert "923a4e880ffc96af981cbc5799e57afb0806deab" in identity
     assert "PASS for source freeze" in freeze
     assert "exact 40-character source-freeze SHA" in freeze
     assert "No physical acceptance, immutable publication or catalog promotion is claimed" in freeze
-    assert "CLIENTFLOW_1.3.32_1233_SOURCE_FREEZE_CLOSURE.md" in changed
+    assert "NetworkManager/Polkit" in freeze
+    assert "post-final-reboot" in freeze
+    assert "status_reported_at" in freeze
+    assert "CLIENTFLOW_1.3.33_1234_SOURCE_FREEZE_CLOSURE.md" in changed
     assert "scripts/tests/test_clientflow_source_freeze_security_hygiene.py" in changed
+
+    # Historical 1.3.32/1233 freeze and promotion evidence remain immutable.
+    identity_1233 = (ROOT / "CLIENTFLOW_1.3.32_1233_SOURCE_IDENTITY.md").read_text(
+        encoding="utf-8"
+    )
+    freeze_1233 = (ROOT / "CLIENTFLOW_1.3.32_1233_SOURCE_FREEZE_CLOSURE.md").read_text(
+        encoding="utf-8"
+    )
+    changed_1233 = (ROOT / "CHANGED_FILES_1332_1233_SOURCE_FREEZE.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "source-frozen candidate" in identity_1233
+    assert "1.3.31/1232 release" in identity_1233
+    assert "7623c972ab5e0db7ee2a9da31023ee1e067e7d97" in identity_1233
+    assert "PASS for source freeze" in freeze_1233
+    assert "CLIENTFLOW_1.3.32_1233_SOURCE_FREEZE_CLOSURE.md" in changed_1233
 
     promotion_1231 = (ROOT / "CLIENTFLOW_1.3.30_1231_FRESH_INSTALL_CATALOG_PROMOTION.md").read_text(
         encoding="utf-8"
@@ -260,6 +278,9 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CHANGED_FILES_1332_1233_SOURCE_FREEZE.txt" in seen
     assert "CLIENTFLOW_1.3.32_1233_FRESH_INSTALL_CATALOG_PROMOTION.md" in seen
     assert "CHANGED_FILES_1332_1233_FRESH_INSTALL_CATALOG_PROMOTION.txt" in seen
+    assert "CLIENTFLOW_1.3.33_1234_SOURCE_IDENTITY.md" in seen
+    assert "CLIENTFLOW_1.3.33_1234_SOURCE_FREEZE_CLOSURE.md" in seen
+    assert "CHANGED_FILES_1333_1234_SOURCE_FREEZE.txt" in seen
 
 
 def test_1323_1224_initial_freeze_is_explicitly_superseded_before_build() -> None:
