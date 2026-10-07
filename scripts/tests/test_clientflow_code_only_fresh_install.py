@@ -320,6 +320,11 @@ def test_customer_handoff_finalization_applies_lockdown_before_final_reboot(monk
         lambda **kwargs: calls.append(("retire_gui", kwargs)),
     )
     monkeypatch.setattr(module, "_apply_customer_kiosk_lockdown", lambda: calls.append("lockdown"))
+    monkeypatch.setattr(
+        module,
+        "remove_factory_kiosk_network_polkit_rule",
+        lambda: calls.append("retire_network_polkit"),
+    )
     monkeypatch.setattr(module, "_stage_post_final_reboot_acceptance", stage_handoff)
     monkeypatch.setattr(module, "_current_boot_id", lambda: "11111111-1111-1111-1111-111111111111")
     monkeypatch.setattr(module, "_queue_controlled_final_reboot", lambda: calls.append("final_reboot"))
@@ -334,6 +339,7 @@ def test_customer_handoff_finalization_applies_lockdown_before_final_reboot(monk
     assert calls == [
         ("retire_gui", {"remove_unit": True, "preserve_running": True}),
         "lockdown",
+        "retire_network_polkit",
         "stage",
         "final_reboot",
     ]
