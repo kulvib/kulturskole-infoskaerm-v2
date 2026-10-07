@@ -63,7 +63,6 @@ class ClientTimeIntegrityTests(unittest.TestCase):
         self.assertIsInstance(client.client_time_utc, type(utcnow()))
         self.assertIsNotNone(client.clock_drift_seconds)
 
-
     def test_runtime_snapshot_compares_client_clock_to_report_receipt_not_read_time(self) -> None:
         reported_at = utcnow() - timedelta(seconds=45)
         client_time = reported_at - timedelta(milliseconds=350)
@@ -89,6 +88,36 @@ class ClientTimeIntegrityTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(float(client.clock_drift_seconds or 0), 0.35, places=2)
+        self.assertEqual(client.time_sync_status, "ok")
+        self.assertNotIn("Ur-afvigelse", client.time_sync_message or "")
+
+    def test_runtime_snapshot_ignores_newer_ephemeral_presence_for_clock_drift(self) -> None:
+        durable_reported_at = utcnow() - timedelta(seconds=45)
+        ephemeral_presence_at = durable_reported_at + timedelta(seconds=30)
+        client_time = durable_reported_at - timedelta(milliseconds=275)
+        status = DomainPresence(
+            domain="status",
+            is_online=True,
+            reason="fresh_online_status",
+            reported_at=ephemeral_presence_at,
+            status_reported_at=durable_reported_at,
+            status_payload={
+                "system_timezone": "Europe/Copenhagen",
+                "ntp_enabled": True,
+                "ntp_synchronized": True,
+                "client_time_utc": client_time,
+            },
+        )
+        empty_display = DomainPresence(domain="display", is_online=False, reason="missing_status")
+        empty_system = DomainPresence(domain="system", is_online=False, reason="missing_status")
+        client = Client(name="Snapshot")
+
+        _apply_status_runtime_snapshot(
+            client,
+            ClientPresence(status=status, display=empty_display, system=empty_system),
+        )
+
+        self.assertAlmostEqual(float(client.clock_drift_seconds or 0), 0.275, places=3)
         self.assertEqual(client.time_sync_status, "ok")
         self.assertNotIn("Ur-afvigelse", client.time_sync_message or "")
 

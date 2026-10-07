@@ -49,6 +49,7 @@ class DomainPresence:
     reason: str
     observed_state: str | None = None
     reported_at: datetime | None = None
+    status_reported_at: datetime | None = None
     expires_at: datetime | None = None
     agent_version: str | None = None
     boot_id: str | None = None
@@ -129,7 +130,8 @@ def evaluate_domain_presence(
         return _offline(domain, "credential_inactive")
 
     observed_state = str(getattr(status, "observed_state", "") or "").strip().lower()
-    reported_at = _as_naive_utc(getattr(status, "reported_at", None))
+    status_reported_at = _as_naive_utc(getattr(status, "reported_at", None))
+    reported_at = status_reported_at
     ephemeral_at = _as_naive_utc(ephemeral_last_seen(domain, int(client.id)))
     if ephemeral_at is not None and (reported_at is None or ephemeral_at > reported_at):
         reported_at = ephemeral_at
@@ -152,6 +154,7 @@ def evaluate_domain_presence(
             reason="future_reported_at",
             observed_state=observed_state or None,
             reported_at=reported_at,
+            status_reported_at=status_reported_at,
             agent_version=getattr(status, "agent_version", None),
             boot_id=getattr(status, "boot_id", None),
             status_payload=dict(getattr(status, "status_payload", {}) or {}),
@@ -162,6 +165,7 @@ def evaluate_domain_presence(
         "domain": domain,
         "observed_state": observed_state or None,
         "reported_at": reported_at,
+        "status_reported_at": status_reported_at,
         "expires_at": expires_at,
         "agent_version": getattr(status, "agent_version", None),
         "boot_id": getattr(status, "boot_id", None),

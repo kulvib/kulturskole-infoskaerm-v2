@@ -264,6 +264,7 @@ def _managed_units_synthetic_root(release_root: Path, manifest: dict, workspace:
         layout,
         release_root,
         kiosk_user="ci-kiosk",
+        kiosk_uid=424243,
         client_id=424242,
     )
     if not unit_names:

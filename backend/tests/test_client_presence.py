@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from service1 import client_presence
 from service1.client_domain_models import ClientDomainCredential, ClientDomainStatus
 from service1.client_presence import (
     PRESENCE_TIMEOUT_SECONDS,
@@ -138,3 +139,21 @@ def test_global_client_online_is_exactly_status_domain_presence() -> None:
     assert PRESENCE_TIMEOUT_SECONDS == 120
     assert ClientPresence(status=online_status, display=offline_display, system=offline_system).is_online is True
     assert ClientPresence(status=offline_status, display=online_display, system=online_system).is_online is False
+
+
+def test_ephemeral_presence_does_not_replace_durable_status_sample_timestamp(monkeypatch):
+    now = datetime(2026, 8, 22, 12, 0, 45)
+    durable = datetime(2026, 8, 22, 12, 0, 0)
+    ephemeral = datetime(2026, 8, 22, 12, 0, 30)
+    client = _client(status="approved")
+    status = _status(reported_at=durable)
+    credential = _credential()
+    monkeypatch.setattr(client_presence, "ephemeral_last_seen", lambda _domain, _client_id: ephemeral)
+
+    presence = evaluate_domain_presence(
+        client, domain="status", status=status, credential=credential, now=now
+    )
+
+    assert presence.is_online is True
+    assert presence.reported_at == ephemeral
+    assert presence.status_reported_at == durable

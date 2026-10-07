@@ -1,5 +1,6 @@
 [Unit]
 Description=ClientFlow post-final-reboot customer handoff acceptance
+# ClientFlow-Activation-Health: optional
 After=network-online.target graphical.target clientflow-display-runtime.service clientflow-browser-guard.service clientflow-status-agent.service clientflow-kiosk-lockdown-broker.socket
 Wants=network-online.target graphical.target clientflow-display-runtime.service clientflow-browser-guard.service clientflow-status-agent.service clientflow-kiosk-lockdown-broker.socket
 ConditionPathExists=/var/lib/clientflow/release/customer-handoff.json

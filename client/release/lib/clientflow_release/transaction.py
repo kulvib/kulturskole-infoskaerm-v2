@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import shutil
 import stat
@@ -643,6 +644,31 @@ def _definition_kiosk_user(layout: Layout, explicit: str | None) -> str:
         raise TransactionError("Kiosk-user kunne ikke læses fra ClientFlow identity") from exc
 
 
+def _definition_kiosk_uid(
+    layout: Layout,
+    kiosk_user: str | None = None,
+    explicit: int | None = None,
+) -> int:
+    username = _definition_kiosk_user(layout, kiosk_user)
+    if explicit is not None:
+        try:
+            uid = int(explicit)
+        except (TypeError, ValueError) as exc:
+            raise TransactionError("Kiosk UID er ugyldigt") from exc
+        if uid < 1000 or uid == 0:
+            raise TransactionError("Kiosk UID matcher ikke en normal lokal bruger")
+        return uid
+    if layout.root != Path("/"):
+        raise TransactionError("Kiosk UID kræver eksplicit værdi uden for den aktive host")
+    try:
+        record = pwd.getpwnam(username)
+    except KeyError as exc:
+        raise TransactionError("Kiosk UID kunne ikke slås op fra canonical kiosk-user") from exc
+    if record.pw_uid < 1000 or record.pw_uid == 0:
+        raise TransactionError("Kiosk UID matcher ikke en normal lokal bruger")
+    return record.pw_uid
+
+
 def _definition_client_id(layout: Layout, explicit: int | None = None) -> int:
     if explicit is not None:
         try:
@@ -668,6 +694,7 @@ def _apply_definitions(
     release_root: Path,
     *,
     kiosk_user: str | None = None,
+    kiosk_uid: int | None = None,
     client_id: int | None = None,
 ) -> list[str]:
     unit_source = release_root / "client-runtime/systemd"
@@ -684,6 +711,12 @@ def _apply_definitions(
         if kiosk_placeholder in raw:
             resolved = _definition_kiosk_user(layout, kiosk_user).encode("ascii")
             raw = raw.replace(kiosk_placeholder, resolved)
+        kiosk_uid_placeholder = b"@CLIENTFLOW_KIOSK_UID@"
+        if kiosk_uid_placeholder in raw:
+            raw = raw.replace(
+                kiosk_uid_placeholder,
+                str(_definition_kiosk_uid(layout, kiosk_user, kiosk_uid)).encode("ascii"),
+            )
         client_id_placeholder = b"@CLIENTFLOW_CLIENT_ID@"
         if client_id_placeholder in raw:
             raw = raw.replace(client_id_placeholder, str(_definition_client_id(layout, client_id)).encode("ascii"))

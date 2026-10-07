@@ -1023,8 +1023,9 @@ def _apply_status_runtime_snapshot(client: Client, presence: ClientPresence) -> 
     timezone_value = str(payload.get("system_timezone") or "").strip() or None
     ntp_enabled = payload.get("ntp_enabled") if isinstance(payload.get("ntp_enabled"), bool) else None
     ntp_synchronized = payload.get("ntp_synchronized") if isinstance(payload.get("ntp_synchronized"), bool) else None
+    status_reported_at = _normalise_reported_utc(presence.status.status_reported_at)
     reported_at = _normalise_reported_utc(presence.status.reported_at)
-    drift_reference = reported_at or utcnow()
+    drift_reference = status_reported_at or reported_at or utcnow()
     drift = round(abs((drift_reference - client_time).total_seconds()), 3) if client_time is not None else None
     time_reasons: list[str] = []
     time_status = "ok"
