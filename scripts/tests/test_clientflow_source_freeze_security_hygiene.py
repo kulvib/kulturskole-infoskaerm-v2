@@ -92,7 +92,7 @@ def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() 
         }
     ]
 
-def test_1333_1234_source_freeze_keeps_1332_1233_catalog_and_preserves_history() -> None:
+def test_1333_1234_promotion_preserves_source_freeze_history_and_release_chain() -> None:
     assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.33"
     release_input = json.loads(
         (ROOT / "client" / "release" / "release-input.json").read_text(encoding="utf-8")
@@ -105,12 +105,12 @@ def test_1333_1234_source_freeze_keeps_1332_1233_catalog_and_preserves_history()
             encoding="utf-8"
         )
     )
-    assert catalog["catalog_sequence"] == 1233
-    assert catalog["latest_stable"] == "1.3.32"
-    assert catalog["default_install_version"] == "1.3.32"
+    assert catalog["catalog_sequence"] == 1234
+    assert catalog["latest_stable"] == "1.3.33"
+    assert catalog["default_install_version"] == "1.3.33"
     selected = catalog["releases"][0]
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert selected["release_id"] == "clientflow-1.3.32-seq-1233"
+    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert selected["release_id"] == "clientflow-1.3.33-seq-1234"
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
     assert selected["rollback_allowed"] is False
@@ -194,6 +194,25 @@ def test_1333_1234_source_freeze_keeps_1332_1233_catalog_and_preserves_history()
     ).read_text(encoding="utf-8").splitlines()
     assert "frontend/package-lock.json" not in promotion_changed
     assert "backend/service1/clientflow_release_catalog.json" in promotion_changed
+
+
+    promotion_1234 = (ROOT / "CLIENTFLOW_1.3.33_1234_FRESH_INSTALL_CATALOG_PROMOTION.md").read_text(
+        encoding="utf-8"
+    )
+    assert "fresh-install-only catalog promotion" in promotion_1234
+    assert "a4faf2484125d3cd0dd089d2c0030f2e67519c5d" in promotion_1234
+    assert "5d255e36fd6095bfaea983c323f036e50d438bd06f743230a11849f3ba5bebee" in promotion_1234
+    assert "477fabb5110fbc5204b2845a66ddd8c4ccb9f5e7ddd9eebb871ca5355095addb" in promotion_1234
+    assert "9561af060752999636e22b97b18cb60f387cec68959680b3aef6c27370511f66" in promotion_1234
+    assert "dd0222f8e8c9af2bc54b69ba0f2c0fe3c821077f1db59d219b79bd24a8065486" in promotion_1234
+    assert "IMMUTABLE_STORE_REREAD_VERIFIED" in promotion_1234
+    assert "Physical acceptance is **PENDING**" in promotion_1234
+
+    promotion_changed_1234 = (
+        ROOT / "CHANGED_FILES_1333_1234_FRESH_INSTALL_CATALOG_PROMOTION.txt"
+    ).read_text(encoding="utf-8").splitlines()
+    assert "frontend/package-lock.json" not in promotion_changed_1234
+    assert "backend/service1/clientflow_release_catalog.json" in promotion_changed_1234
 
     frontend_lock = json.loads((ROOT / "frontend" / "package-lock.json").read_text(encoding="utf-8"))
     assert frontend_lock["packages"]["node_modules/source-map-js"]["version"] == "1.2.2"
@@ -281,6 +300,8 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CLIENTFLOW_1.3.33_1234_SOURCE_IDENTITY.md" in seen
     assert "CLIENTFLOW_1.3.33_1234_SOURCE_FREEZE_CLOSURE.md" in seen
     assert "CHANGED_FILES_1333_1234_SOURCE_FREEZE.txt" in seen
+    assert "CLIENTFLOW_1.3.33_1234_FRESH_INSTALL_CATALOG_PROMOTION.md" in seen
+    assert "CHANGED_FILES_1333_1234_FRESH_INSTALL_CATALOG_PROMOTION.txt" in seen
 
 
 def test_1323_1224_initial_freeze_is_explicitly_superseded_before_build() -> None:

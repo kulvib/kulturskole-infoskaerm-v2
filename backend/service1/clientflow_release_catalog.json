@@ -1,20 +1,20 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1233,
-  "latest_stable": "1.3.32",
-  "default_install_version": "1.3.32",
+  "catalog_sequence": 1234,
+  "latest_stable": "1.3.33",
+  "default_install_version": "1.3.33",
   "retention_policy": {
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
   },
-  "created_at": "2026-10-06T18:58:28Z",
+  "created_at": "2026-10-07T10:29:24Z",
   "releases": [
     {
-      "version": "1.3.32",
-      "client_version": "1.3.32",
-      "release_sequence": 1233,
-      "revision": "clientflow-1.3.32-seq-1233",
+      "version": "1.3.33",
+      "client_version": "1.3.33",
+      "release_sequence": 1234,
+      "revision": "clientflow-1.3.33-seq-1234",
       "status": "stable",
       "installable": true,
       "update_allowed": false,
@@ -34,16 +34,16 @@
         "requires_platform_preflight": true
       },
       "notes": [
-        "Canonical ClientFlow 1.3.32 repairs the release-blocking failures observed during physical fresh-install acceptance of 1.3.31/1232: coherent report-time clock drift, kiosk-lockdown convergence after verified seat0 Wayland/D-Bus readiness, explicit first-activation transition status, lossless Control Room realtime wake handling without shorter idle polling, resilient refresh-aware frontend/Livestream authentication, and Livestream Overview fullscreen, measured delay and bounded signal-timeout recovery. Embedded runtime Python deliberately remains 3.13.14.",
-        "This selector authority is intentionally fresh-install-only. The immutable approved bundle advertises in_place_update as a technical bundle capability, but no authentic older physical ClientFlow baseline has proven that path for 1.3.32. Therefore update_allowed is false and in_place_update is absent from catalog install_modes. Do not infer update compatibility from bundle capabilities.",
-        "Promoted to fresh-install selection only after exact source 82a8ea671b6427017c6db5ca83096f7ebcc69306 had green canonical CI, source-qualified runtime-input transport #17 produced sequence-1233 inputs at size 222248960 and SHA-256 14c5fee3193b8a8c93559643afa5bf96de910ca64233e483628aafee643021fb, release-build #38 / run 37512143962 produced byte-identical candidates, approval #20 approved candidate 0f3f3c1fcd1f6d82417995a65ece421dc2e5ce59af4431fad03bdbb387afb09b with installer 157c7682b7c75477630e465c208b4614b326c98e16620a8f5e521943ae5c82dd, and the exact 224174080-byte approved bundle was transported, immutably published and independently re-read at SHA-256 93a56a360e4a74d0eb75ea77bc4cb2a592266d89a7daea9981391efc50252b35 before this selector change. Final clean Ubuntu 26.04 fresh-install physical acceptance remains the immediate post-deployment gate."
+        "Canonical ClientFlow 1.3.33 carries the release-blocking physical-acceptance repairs discovered on immutable 1.3.32/1233: a kiosk-only NetworkManager/Polkit deny guard before first login, correct first-activation health sequencing that leaves post-final-reboot acceptance to its later lifecycle gate, narrowly scoped writable kiosk dconf runtime paths inside the hardened systemd sandbox, and coherent clock-drift projection against the durable status sample timestamp. Embedded runtime Python deliberately remains 3.13.14.",
+        "This selector authority is intentionally fresh-install-only. Authentic in-place update remains unverified, so update_allowed is false and in_place_update is absent from catalog install_modes. Frontend Start/Stop kiosk-browser behaviour remains an explicit physical retest item because the prior observation occurred during the broken 1.3.32 activation rollback loop.",
+        "Promoted to fresh-install selection only after exact source a4faf2484125d3cd0dd089d2c0030f2e67519c5d had green canonical CI, source-qualified runtime-input transport #19 produced sequence-1234 inputs at size 222248960 and SHA-256 14c5fee3193b8a8c93559643afa5bf96de910ca64233e483628aafee643021fb, release-build #39 / run 37604394332 produced byte-identical candidates, approval #21 approved candidate 5d255e36fd6095bfaea983c323f036e50d438bd06f743230a11849f3ba5bebee with installer 477fabb5110fbc5204b2845a66ddd8c4ccb9f5e7ddd9eebb871ca5355095addb, and the exact 224174080-byte approved bundle was transported, immutably published and independently re-read at SHA-256 dd0222f8e8c9af2bc54b69ba0f2c0fe3c821077f1db59d219b79bd24a8065486 before this selector change. Final clean Ubuntu 26.04 fresh-install physical acceptance remains the immediate post-deployment gate."
       ],
-      "release_id": "clientflow-1.3.32-seq-1233",
+      "release_id": "clientflow-1.3.33-seq-1234",
       "artifact_type": "runtime_release",
       "install_modes": [
         "fresh_install"
       ],
-      "block_reason": "ClientFlow 1.3.32 er kun frigivet til fresh install; in-place update er ikke fysisk verificeret fra en autentisk ældre ClientFlow-baseline."
+      "block_reason": "ClientFlow 1.3.33 er kun frigivet til fresh install; in-place update er ikke fysisk verificeret fra en autentisk ældre ClientFlow-baseline."
     }
   ]
 }
