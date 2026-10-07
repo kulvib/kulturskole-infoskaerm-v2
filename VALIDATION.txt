@@ -1,3 +1,45 @@
+ClientFlow 1.3.33 / sequence 1234 physical-acceptance failure-closure source-freeze validation
+Date: 2026-10-07
+
+PASS: fresh uploaded main archive is the only file source used for this freeze.
+PASS: canonical pre-freeze main basis is 923a4e880ffc96af981cbc5799e57afb0806deab.
+PASS: user reports canonical GitHub CI green for that merged repair source.
+PASS: source/build identity is staged as 1.3.33 / sequence 1234.
+PASS: promoted catalog remains unchanged at 1.3.32 / sequence 1233.
+PASS: source sequence 1234 leads catalog sequence 1233 by exactly one.
+PASS: immutable approved/published 1.3.32/1233 bytes and evidence are not rewritten.
+PASS: embedded runtime Python remains 3.13.14.
+PASS: backend/CI Python remains 3.13.16.
+PASS: HLS.js remains pinned at 1.6.16.
+PASS: update authority remains closed with update_allowed=false and fresh-install-only promoted selector.
+PASS: factory kiosk NetworkManager/Polkit mutation is denied without authentication UI before first kiosk login.
+PASS: temporary factory Polkit guard is retired only after runtime kiosk-lockdown handoff.
+PASS: post-final-reboot acceptance is explicitly excluded from pre-reboot activation health and remains a later condition-gated handoff gate.
+PASS: GNOME/dconf retains the hardened systemd sandbox with only the resolved kiosk /run/user/<uid> runtime path writable.
+PASS: clock projection uses durable status_reported_at paired with the same client_time_utc sample.
+PASS: legacy status snapshots without status_reported_at fall back to reported_at.
+PASS: frontend Start/Stop kiosk-browser remains an explicit physical retest item and is not falsely claimed fixed by this freeze.
+PASS: this freeze package changes release identity/evidence/tests/checksums only; already-merged runtime repair source is not rewritten here.
+
+Local gates:
+PASS: focused source-freeze/release/physical-acceptance contract suite = 39 passed locally.
+PASS: broad ClientFlow scripts/runtime/physical contract suite = 403 passed locally with only the known local PyJWT/JSON recursion environment test explicitly deselected.
+NOTE: the Legacy 1.1.19 executable capability gate cannot be collected in this tool environment because `sqlmodel` is not installed; the exact pre-freeze implementation already passed canonical GitHub CI, and canonical GitHub CI on the freeze commit remains the final dependency-backed gate.
+PASS: Python source compilation for changed Python contract files.
+PASS: SHA256SUMS full-manifest verification = 232/232.
+
+PENDING: merge this source-freeze package to canonical main.
+PENDING: canonical GitHub CI on the exact resulting freeze commit.
+PENDING: record the exact 40-character source-freeze main SHA from Git.
+PENDING: produce source-SHA-qualified sequence-1234 runtime-input transport.
+PENDING: reproducibly build byte-identical 1.3.33/1234 candidates.
+PENDING: manually approve and immutably publish only the exact reproducible bytes, then independently re-read size/SHA-256.
+PENDING: promote catalog separately to 1.3.33/1234 and redeploy backend.
+PENDING: manufacture a new canonical USB and repeat clean Ubuntu 26.04 physical fresh-install acceptance plus the relevant frozen-domain regression set.
+PENDING: authentic in-place update remains unverified and must not be claimed.
+
+---
+
 ClientFlow 1.3.32 / sequence 1233 fresh-install-only catalog-promotion validation
 Date: 2026-10-06
 
