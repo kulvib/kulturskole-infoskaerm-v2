@@ -195,3 +195,13 @@ def test_update_os_helper_uses_non_removing_health_gated_upgrade_and_never_calls
     assert "autoremove" not in helper
     assert "CLIENTFLOW_REBOOT_REQUIRED=1" in helper
     assert "systemctl" not in helper
+
+
+def test_os_update_broker_allows_dpkg_suid_install_without_weakening_system_agent() -> None:
+    broker = (ROOT / "client/systemd/clientflow-system-broker.service").read_text(encoding="utf-8")
+    agent = (ROOT / "client/systemd/clientflow-system-agent.service").read_text(encoding="utf-8")
+    assert "RestrictSUIDSGID=no" in broker
+    assert "RestrictSUIDSGID=yes" not in broker
+    assert "NoNewPrivileges=no" in broker
+    assert "RestrictSUIDSGID=yes" in agent
+    assert "NoNewPrivileges=yes" in agent

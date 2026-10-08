@@ -228,6 +228,19 @@ def _gsettings_value(kiosk_user: str, record, schema: str, key: str) -> str | No
     return (completed.stdout or "").strip() if completed.returncode == 0 else None
 
 
+def _gsettings_matches(actual: str | None, expected: str) -> bool:
+    """Accept GVariant's explicit type annotation for an empty string array.
+
+    A terminal shortcut must remain genuinely empty; nonempty or unreadable
+    values are never treated as compliant.
+    """
+    if actual is None:
+        return False
+    if expected == "[]" and actual == "@as []":
+        return True
+    return actual == expected
+
+
 def _verify(kiosk_user: str, record, home: Path, *, enabled: bool) -> dict[str, Any]:
     drift: list[str] = []
     checks: dict[str, bool] = {}
@@ -296,7 +309,7 @@ def _verify(kiosk_user: str, record, home: Path, *, enabled: bool) -> dict[str, 
     if enabled:
         gsettings_ok = True
         for schema, key, expected in ENFORCED_GSETTINGS:
-            if _gsettings_value(kiosk_user, record, schema, key) != expected:
+            if not _gsettings_matches(_gsettings_value(kiosk_user, record, schema, key), expected):
                 gsettings_ok = False
                 drift.append(f"gsettings:{schema}/{key}")
         checks["gsettings"] = gsettings_ok
@@ -462,7 +475,7 @@ def _require_gsettings_baseline_ready(kiosk_user: str, record) -> None:
 
     drift: list[str] = []
     for schema, key, expected in ENFORCED_GSETTINGS:
-        if _gsettings_value(kiosk_user, record, schema, key) != expected:
+        if not _gsettings_matches(_gsettings_value(kiosk_user, record, schema, key), expected):
             drift.append(f"gsettings:{schema}/{key}")
     if drift:
         raise KioskLockdownError(
