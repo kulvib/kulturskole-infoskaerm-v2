@@ -10,6 +10,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 FULL_SHA_ACTION_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}$")
+PINNED_POSTGRES_IMAGE = "postgres:18.4@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
 
 
 def _load(name: str) -> tuple[str, dict]:
@@ -46,6 +47,19 @@ def test_external_actions_are_immutable_and_checkout_drops_credentials():
         assert all(FULL_SHA_ACTION_RE.fullmatch(action) for action in actions)
         assert "persist-credentials: false" in source
 
+
+
+def test_workflow_execution_environment_is_immutable():
+    for path in sorted(WORKFLOW_DIR.glob("*.yml")):
+        source = path.read_text(encoding="utf-8")
+        assert "runs-on: ubuntu-latest" not in source, path.name
+
+        for raw_line in source.splitlines():
+            stripped = raw_line.strip()
+            if not stripped.startswith("image: postgres:"):
+                continue
+            image = stripped.split(":", 1)[1].strip()
+            assert image == PINNED_POSTGRES_IMAGE, path.name
 
 def test_ci_uses_read_only_permissions_and_safe_triggers():
     source, workflow = _load("ci.yml")
@@ -120,7 +134,7 @@ def test_ubuntu_2604_required_gate_parallelizes_and_scopes_expensive_executable_
     platform = jobs["client-host-ubuntu-2604-platform"]
 
     assert scope["name"] == "Ubuntu 26.04 executable proof scope"
-    assert scope["runs-on"] == "ubuntu-latest"
+    assert scope["runs-on"] == "ubuntu-24.04"
     assert set(scope["outputs"]) == {"preclaim_required", "platform_required"}
 
     assert required["name"] == "Ubuntu 26.04 client host executable contracts"
@@ -130,7 +144,7 @@ def test_ubuntu_2604_required_gate_parallelizes_and_scopes_expensive_executable_
         "client-host-ubuntu-2604-platform",
     }
     assert required["if"] == "${{ always() }}"
-    assert required["runs-on"] == "ubuntu-latest"
+    assert required["runs-on"] == "ubuntu-24.04"
 
     assert preclaim["needs"] == "client-host-ubuntu-2604-scope"
     assert preclaim["if"] == "${{ needs.client-host-ubuntu-2604-scope.outputs.preclaim_required == 'true' }}"
