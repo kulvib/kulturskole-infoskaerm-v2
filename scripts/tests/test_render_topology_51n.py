@@ -34,6 +34,11 @@ def test_51n_backend_is_new_frankfurt_single_instance_with_51m_authority():
     assert "publish_clientflow_release" not in backend
 
 
+
+def test_51n_render_services_wait_for_github_ci_before_auto_deploy():
+    assert RENDER.count("autoDeployTrigger: checksPass") == 2
+    assert "autoDeployTrigger: commit" not in RENDER
+
 def test_51n_uses_neon_secret_and_provisions_no_render_database():
     assert "databases:" not in RENDER
     backend = _backend_block()

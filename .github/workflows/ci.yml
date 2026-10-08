@@ -19,12 +19,12 @@ concurrency:
 jobs:
   backend:
     name: Backend, migrations and contracts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     services:
       postgres:
-        image: postgres:18.4
+        image: postgres:18.4@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci
@@ -141,7 +141,7 @@ jobs:
 
   client-host-ubuntu-2604-scope:
     name: Ubuntu 26.04 executable proof scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       preclaim_required: ${{ steps.scope.outputs.preclaim_required }}
@@ -216,7 +216,7 @@ jobs:
       - client-host-ubuntu-2604-preclaim
       - client-host-ubuntu-2604-platform
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
 
     steps:
@@ -302,7 +302,7 @@ jobs:
 
   frontend:
     name: Frontend contracts and build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:

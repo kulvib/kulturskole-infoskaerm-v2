@@ -24,6 +24,12 @@ This checklist is for the current correctness/isolation phase. Production-readin
 - [ ] Backend ↔ database and backend ↔ client payload fields/types/optionalities match.
 - [ ] Frontend build/tests are green when frontend code changed.
 
+## Production deployment gate
+
+- [ ] Both Render services use `autoDeployTrigger: checksPass` / **After CI Checks Pass**; a commit must not deploy while required GitHub checks are pending or failing.
+- [ ] Live Render backend/frontend settings match `render.yaml` after Blueprint synchronization.
+- [ ] The manual deployment smoke is run from `main` after deploy and verifies the deployed commit identity.
+
 ## Client release/install
 
 - [ ] `client/VERSION` and `client/release/release-input.json` are intentional.
