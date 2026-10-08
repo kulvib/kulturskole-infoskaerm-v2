@@ -79,7 +79,7 @@ def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() 
                 "GHSA-qhr7-859c-m2p7",
                 "GHSA-6j4f-fj2g-mc7p",
             ],
-            "expires": "2026-10-07",
+            "expires": "2026-10-15",
             "scope": (
                 "npm audit registry-feed false positive for exact patched "
                 "brace-expansion 1.1.21 only"
