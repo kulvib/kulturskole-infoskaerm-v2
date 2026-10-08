@@ -117,15 +117,31 @@ global backendfejl. Kontrollér først Control Room-status og den konkrete HTTP-
 - Fejl efter schemaændring: gennemgå Alembic-revision og offline SQL; brug kun en eksplicit gennemgået downgrade eller Neon restore.
 - Efter rollback: kontrollér `/health`, `/health/db` og de Display-specifikke funktioner ovenfor.
 
-## GitHub Free-procedure
+## GitHub- og Render-deploymentgate
 
-De private repositories bruger GitHub Free, så rulesets håndhæves ikke. Følg derfor altid manuelt:
+Display-repoets offentlige `main` er beskyttet af det aktive GitHub-ruleset
+`main-ci-gate`. Ændringer skal gå gennem pull request, non-fast-forward/deletion
+er blokeret, og følgende strikte statuschecks skal være grønne før merge:
+
+- **Backend, migrations and contracts**
+- **Frontend contracts and build**
+- **Ubuntu 26.04 client host executable contracts**
+
+Rulesettet har ingen bypass-aktører. Efter merge må Render heller ikke deploye den
+nye commit, mens push-CI stadig er pending eller fejler: både backend og frontend
+skal bruge `autoDeployTrigger: checksPass` / **After CI Checks Pass**, som også er
+fastlåst i `render.yaml`.
+
+Canonical flow:
 
 ```text
-ny branch → pull request → grøn CI → merge til main → Render production
+ny branch → pull request → grøn required CI → merge til main
+→ grøn main-CI → Render deploy → Production smoke test
 ```
 
-Kontrollér både **Backend og databasekontrakt** og **Frontend build** før merge.
+Efter en Blueprint- eller Render-konfigurationsændring kontrolleres live-settings
+på begge services mod `render.yaml`; et live `On Commit`-trigger er configuration
+drift og skal rettes før næste normale production-deploy.
 
 
 ## Runtime og dependencies
