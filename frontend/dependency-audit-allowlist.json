@@ -7,7 +7,7 @@
         "GHSA-qhr7-859c-m2p7",
         "GHSA-6j4f-fj2g-mc7p"
       ],
-      "expires": "2026-10-07",
+      "expires": "2026-10-15",
       "scope": "npm audit registry-feed false positive for exact patched brace-expansion 1.1.21 only",
       "replacementPlan": "Remove this exception as soon as npm audit stops reporting these three advisories against brace-expansion 1.1.21; do not extend without re-verifying the published affected ranges."
     }
