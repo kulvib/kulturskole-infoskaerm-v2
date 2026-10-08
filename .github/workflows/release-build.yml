@@ -25,7 +25,7 @@ concurrency:
 jobs:
   preflight:
     name: Pin source, CI and runtime-input transport
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       actions: read
@@ -103,7 +103,7 @@ jobs:
       fail-fast: false
       matrix:
         replica: [a, b]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -225,7 +225,7 @@ jobs:
   reproducibility:
     name: Require byte-identical independent builds
     needs: [preflight, build, candidate-runtime]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       attestations: write
