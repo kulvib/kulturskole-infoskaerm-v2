@@ -128,3 +128,49 @@ def test_apply_failure_rolls_back_every_owned_surface_before_retry(monkeypatch, 
     assert "gsettings:False" in calls
     assert states[0] == (True, "applying")
     assert states[-1] == (True, "error")
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected", "matches"),
+    [
+        ("[]", "[]", True),
+        ("@as []", "[]", True),
+        ("['<Primary><Alt>t']", "[]", False),
+        ("@as ['<Primary><Alt>t']", "[]", False),
+        ("", "[]", False),
+        (None, "[]", False),
+        ("false", "false", True),
+        ("true", "false", False),
+        ("@as []", "false", False),
+    ],
+)
+def test_gsettings_comparison_accepts_typed_empty_array_without_weaker_enforcement(
+    actual, expected, matches
+) -> None:
+    assert lockdown._gsettings_matches(actual, expected) is matches
+
+
+def test_gnome_baseline_accepts_actual_typed_empty_terminal_shortcut(monkeypatch, tmp_path: Path) -> None:
+    user, record, _home = _account(tmp_path)
+    monkeypatch.setattr(lockdown, "_active_local_kiosk_session", lambda: "1")
+    original_exists = Path.exists
+    monkeypatch.setattr(
+        Path,
+        "exists",
+        lambda self: True if str(self) == f"/run/user/{record.pw_uid}/bus" else original_exists(self),
+    )
+    monkeypatch.setattr(lockdown, "_run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
+
+    def readback(_user, _record, schema, key):
+        expected = next(value for s, k, value in lockdown.ENFORCED_GSETTINGS if (s, k) == (schema, key))
+        return "@as []" if key == "terminal" else expected
+
+    monkeypatch.setattr(lockdown, "_gsettings_value", readback)
+    lockdown._require_gsettings_baseline_ready(user, record)
+
+    monkeypatch.setattr(
+        lockdown, "_gsettings_value",
+        lambda _u, _r, schema, key: "['<Primary><Alt>t']" if key == "terminal" else readback(_u, _r, schema, key),
+    )
+    with pytest.raises(lockdown.KioskLockdownError, match="media-keys/terminal"):
+        lockdown._require_gsettings_baseline_ready(user, record)
