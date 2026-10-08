@@ -10,17 +10,22 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_1334_1235_is_staged_without_mutating_promoted_1333_catalog() -> None:
+def test_1334_1235_stage1_history_is_preserved_after_exact_release_promotion() -> None:
     assert read("client/VERSION").strip() == "1.3.34"
     release_input = json.loads(read("client/release/release-input.json"))
     assert release_input["release_sequence"] == 1235
+    historical_stage = read("CLIENTFLOW_1.3.34_1235_PHYSICAL_ACCEPTANCE_BLOCKERS_STAGE1.md")
+    assert "staged source identity only" in historical_stage
+    assert "Not source-frozen" in historical_stage
 
     catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
-    assert catalog["catalog_sequence"] == 1234
-    assert catalog["latest_stable"] == "1.3.33"
-    assert catalog["default_install_version"] == "1.3.33"
+    assert catalog["catalog_sequence"] == 1235
+    assert catalog["latest_stable"] == "1.3.34"
+    assert catalog["default_install_version"] == "1.3.34"
     assert len(catalog["releases"]) == 1
-    assert catalog["releases"][0]["release_id"] == "clientflow-1.3.33-seq-1234"
+    assert catalog["releases"][0]["release_id"] == "clientflow-1.3.34-seq-1235"
+    assert catalog["releases"][0]["install_modes"] == ["fresh_install"]
+    assert catalog["releases"][0]["update_allowed"] is False
 
 
 def test_local_gui_cannot_be_closed_by_kiosk_user_and_runtime_still_supervises_it() -> None:
