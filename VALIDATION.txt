@@ -1,3 +1,40 @@
+ClientFlow 1.3.34 / sequence 1235 fresh-install-only catalog-promotion validation
+Date: 2026-10-08
+
+Immutable release chain verified before promotion (operator Render outputs and GitHub release metadata):
+PASS: exact source commit = 51e93dad8b1cffd43e03845ae0a7e2472d955a65.
+PASS: reproducible independent build and Ubuntu 26.04 executable-candidate gate completed.
+PASS: candidate SHA-256 = 436b454fadf35ce7ae417ce82d40de4370aab2f466da463d80269255a0770955.
+PASS: installer SHA-256 = 042a55a3215d704cdb4c7de80abfdd5baeefec7f7bdac7ada80538bec423695c.
+PASS: canonical release approval completed with reference = clientflow-1.3.34-seq-1235/51e93dad8b1cffd43e03845ae0a7e2472d955a65/manual-approval-20261008.
+PASS: approved transport tag clientflow-1.3.34-1235-approved-transport; asset size = 224174080.
+PASS: approved bundle SHA-256 = 7b069011ca94dd90eefdb4248b0029c8e6d98787bdab0a7678a700f1a5bf4759.
+PASS: immutable publication accepted the exact bundle and passed independent Render disk read-back (IMMUTABLE_STORE_REREAD_VERIFIED=PASS).
+PASS: 1.3.33/1234 bundle verified unchanged during publication; 530 MB disk free afterward.
+
+Selector contract after this package:
+PASS: 1.3.34/1235 is the only fresh-install target, aligned with frozen source identity.
+PASS: update_allowed=false, rollback_allowed=false, install_modes=[fresh_install], no min_current_version.
+PASS: Ubuntu 26.04/amd64/GNOME Wayland preflight, reboot and runtime Python 3.13.14 retained.
+PASS: previous 1.3.33/1234 release is no longer selectable in the new catalog; historical release evidence is unchanged.
+PASS: catalog has no duplicated mutable bundle checksum/approval authority fields.
+PASS: no runtime, frontend, database schema, release artifact, or dependency source changed.
+
+Post-package gates:
+PENDING: full GitHub CI on exact merged catalog-promotion commit.
+PENDING: redeploy that commit to Render, re-read live catalog and prove fresh-install artifact resolution against approved SHA256.
+PENDING: canonical USB manufacture/verification and clean physical Ubuntu 26.04 fresh-install acceptance, including previous physical failures.
+UNVERIFIED: authentic in-place update; update and rollback remain disabled.
+
+Local test execution evidence:
+PASS: focused catalog/source-history/physical-security regression suite = 42 passed.
+PASS: release publication, bundle format, snapshot, fresh-installer authority and procedure contract suite = 46 passed.
+PASS: compileall changed Python contract files.
+PASS: sha256sum --check SHA256SUMS.txt (all 240 entries).
+NOTE: these local tests do not replace full canonical GitHub CI; CI remains the final gate.
+
+---
+
 ClientFlow 1.3.33 / sequence 1234 fresh-install-only catalog-promotion validation
 Date: 2026-10-07
 
