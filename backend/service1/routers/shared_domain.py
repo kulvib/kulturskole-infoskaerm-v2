@@ -173,7 +173,7 @@ def _status(domain: str, client_id: int, body: StatusBody, authorization: str | 
         )
         organization_id = getattr(authorization_context.client, "organization_id", None)
         session.commit()
-        notify_ui_state_changed(organization_id=organization_id)
+        notify_ui_state_changed(organization_id=organization_id, client_id=client_id)
         return response
 
 
@@ -208,7 +208,7 @@ def _claim(domain: str, client_id: int, body: ClaimBody, authorization: str | No
             payload["status_reported"] = True
         session.commit()
         if body.status_report is not None:
-            notify_ui_state_changed(organization_id=status_organization_id)
+            notify_ui_state_changed(organization_id=status_organization_id, client_id=client_id)
         return payload
 
 
@@ -243,7 +243,7 @@ def _complete(domain: str, client_id: int, command_id: str, body: CompleteBody, 
         client = session.get(Client, client_id)
         organization_id = getattr(client, "organization_id", None) if client is not None else None
         session.commit()
-        notify_ui_state_changed(organization_id=organization_id)
+        notify_ui_state_changed(organization_id=organization_id, client_id=client_id)
         return payload
 
 
@@ -266,7 +266,7 @@ def _fail(domain: str, client_id: int, command_id: str, body: FailBody, authoriz
         client = session.get(Client, client_id)
         organization_id = getattr(client, "organization_id", None) if client is not None else None
         session.commit()
-        notify_ui_state_changed(organization_id=organization_id)
+        notify_ui_state_changed(organization_id=organization_id, client_id=client_id)
         return payload
 
 

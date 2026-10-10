@@ -1449,8 +1449,18 @@ def get_control_room_clients(session=Depends(get_session), user=Depends(get_curr
 
 
 @router.post("/clients/control-room-realtime/capability")
-def create_control_room_realtime_capability(user=Depends(get_current_user)):
-    return issue_ui_realtime_capability(user)
+def create_control_room_realtime_capability(
+    client_id: int | None = Query(default=None, ge=1),
+    session=Depends(get_session),
+    user=Depends(get_current_user),
+):
+    if client_id is not None:
+        client = session.get(Client, client_id)
+        if client is None:
+            raise HTTPException(status_code=404, detail="Client not found")
+        # Reuse the same authorization as the canonical client details route.
+        _require_client_read_access(user, client)
+    return issue_ui_realtime_capability(user, client_id=client_id)
 
 
 @router.get("/clients/control-room-realtime/wait")

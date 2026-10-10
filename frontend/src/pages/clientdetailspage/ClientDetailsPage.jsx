@@ -27,7 +27,7 @@ import { useAuth } from "../../auth/AuthProvider";
 
 import {
   getChromeStatus,
-  createControlRoomRealtimeCapability,
+  createScopedControlRoomRealtimeCapability as createControlRoomRealtimeCapability,
   waitForControlRoomRealtime,
   getClientflowDeployments,
   clientAction,
@@ -1198,7 +1198,7 @@ export default function ClientDetailsPage({
       while (!cancelled) {
         try {
           if (!capability) {
-            const issued = await createControlRoomRealtimeCapability();
+            const issued = await createControlRoomRealtimeCapability(client.id);
             capability = issued?.capability || null;
             generation = Number(issued?.generation || 0);
             if (!capability) throw new Error("Realtime-capability mangler");
