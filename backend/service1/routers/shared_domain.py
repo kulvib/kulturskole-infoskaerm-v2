@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from typing import Any
-import asyncio
 
 
 from fastapi import APIRouter, Header, Query, Response, WebSocket, WebSocketDisconnect
@@ -24,7 +23,7 @@ from ..calendar_control import (
 from ..system_control import apply_status_power_observation, apply_system_command_completion
 from ..models import Client
 from ..ephemeral_presence import touch_presence
-from ..realtime_wakeup import current_generation, wait_for_change
+from ..realtime_wakeup import current_generation, wait_for_change_async
 from ..ui_realtime import notify_ui_state_changed
 from ..shared_domain import (
     claim_shared_command,
@@ -309,9 +308,9 @@ def display_calendar(
 
 
 
-def _wake_wait(domain: str, client_id: int, after: int, timeout_seconds: int, authorization: str | None):
+async def _wake_wait(domain: str, client_id: int, after: int, timeout_seconds: int, authorization: str | None):
     verify_shared_agent_wake_token(authorization, client_id=client_id, domain=domain)
-    generation = wait_for_change(domain, client_id, after, timeout_seconds)
+    generation = await wait_for_change_async(domain, client_id, after, timeout_seconds)
     return {
         "ok": True,
         "generation": generation,
@@ -331,8 +330,8 @@ async def _wake_ws(websocket: WebSocket, *, domain: str, client_id: int) -> None
     await websocket.send_json({"type": "wake_ready", "generation": generation})
     try:
         while True:
-            next_generation = await asyncio.to_thread(
-                wait_for_change, domain, client_id, generation, 45.0
+            next_generation = await wait_for_change_async(
+                domain, client_id, generation, 45.0
             )
             if next_generation > generation:
                 generation = next_generation
@@ -347,23 +346,23 @@ async def _wake_ws(websocket: WebSocket, *, domain: str, client_id: int) -> None
 
 
 @router.get("/display-agent/clients/{client_id}/commands/wait")
-def display_wait(
+async def display_wait(
     client_id: int,
     after: int = Query(default=0, ge=0),
     timeout_seconds: int = Query(default=25, ge=1, le=30),
     authorization: str | None = Header(default=None),
 ):
-    return _wake_wait("display", client_id, after, timeout_seconds, authorization)
+    return await _wake_wait("display", client_id, after, timeout_seconds, authorization)
 
 
 @router.get("/system-agent/clients/{client_id}/commands/wait")
-def system_wait(
+async def system_wait(
     client_id: int,
     after: int = Query(default=0, ge=0),
     timeout_seconds: int = Query(default=25, ge=1, le=30),
     authorization: str | None = Header(default=None),
 ):
-    return _wake_wait("system", client_id, after, timeout_seconds, authorization)
+    return await _wake_wait("system", client_id, after, timeout_seconds, authorization)
 
 
 @router.websocket("/display-agent/clients/{client_id}/commands/wake/ws")
