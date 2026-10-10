@@ -17,6 +17,7 @@ import uuid
 from sqlmodel import Session, select
 
 from .client_activity_models import ClientActivityLease
+from .livestream_sweep_signal import notify_lifecycle_change
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +43,22 @@ _LAST_ENDED: dict[int, datetime] = {}
 
 def _presence_add(client_id: int, domain: str, session_id: str) -> None:
     with _PRESENCE_LOCK:
-        _ACTIVE_PRESENCE.add((int(client_id), _domain(domain), _session_id(session_id)))
+        key = (int(client_id), _domain(domain), _session_id(session_id))
+        added = key not in _ACTIVE_PRESENCE
+        _ACTIVE_PRESENCE.add(key)
+    if added:
+        notify_lifecycle_change()
 
 
 def _presence_remove(client_id: int, domain: str, session_id: str) -> None:
     now = _now()
     with _PRESENCE_LOCK:
-        _ACTIVE_PRESENCE.discard((int(client_id), _domain(domain), _session_id(session_id)))
+        key = (int(client_id), _domain(domain), _session_id(session_id))
+        removed = key in _ACTIVE_PRESENCE
+        _ACTIVE_PRESENCE.discard(key)
         _LAST_ENDED[int(client_id)] = now
+    if removed:
+        notify_lifecycle_change()
 
 
 
