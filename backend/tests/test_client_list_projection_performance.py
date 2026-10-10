@@ -363,7 +363,10 @@ def test_single_client_detail_query_count_is_constant(seed_count: int) -> None:
     assert select_count == 4
 
 
-@pytest.mark.parametrize("client_count", [1, 10, 50, 100])
+# Protect the 24/7 fleet architecture at the 1,000-client planning scenario.
+# The query budget stays at five SELECTs; this does not claim that the current
+# Render/Neon instance can serve 1,000 concurrently connected clients.
+@pytest.mark.parametrize("client_count", [1, 10, 50, 100, 1000])
 def test_control_room_summary_query_count_is_constant_and_payload_is_narrow(client_count: int) -> None:
     engine = create_engine("sqlite:///:memory:")
     SQLModel.metadata.create_all(engine)

@@ -105,3 +105,34 @@ def test_scoped_capability_does_not_invent_missing_clients():
             client_id=999, session=_FakeSession(None), user=_principal()
         )
     assert error.value.status_code == 404
+
+
+def test_one_thousand_scoped_subscriptions_only_receive_their_own_client_events():
+    """A fleet-wide status burst must not invalidate unrelated detail pages.
+
+    These waits are deliberately zero-timeout and use no database session;
+    the workload measures scope isolation, not production throughput.
+    """
+    principal = _principal()
+    base_client_id = 50_000
+    subscriptions = [
+        ui_realtime.issue_ui_realtime_capability(principal, client_id=base_client_id + i)
+        for i in range(1_000)
+    ]
+    target_index = 531
+    ui_realtime.notify_ui_state_changed(
+        organization_id=principal.organization_id,
+        client_id=base_client_id + target_index,
+    )
+
+    for index, subscription in enumerate(subscriptions):
+        claims = ui_realtime.verify_ui_realtime_capability(subscription["capability"])
+        generation = ui_realtime.wait_for_ui_change(
+            claims=claims,
+            after=subscription["generation"],
+            timeout=0,
+        )
+        if index == target_index:
+            assert generation > subscription["generation"]
+        else:
+            assert generation == subscription["generation"]
