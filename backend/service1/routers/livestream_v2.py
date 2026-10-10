@@ -11,7 +11,7 @@ from sqlmodel import Session
 from ..auth import get_access_token_session_context, get_current_user_or_client, oauth2_scheme
 from ..db import engine
 from ..models import Client, User
-from ..realtime_wakeup import current_generation as wake_generation, wait_for_change as wait_for_wake_change
+from ..realtime_wakeup import current_generation as wake_generation, wait_for_change_async as wait_for_wake_change_async
 from ..livestream_v2 import (
     CLIENT_TOKEN_TTL_SECONDS,
     MAX_HLS_FILE_BYTES,
@@ -180,14 +180,14 @@ def _require_livestream_wake_token(authorization: Optional[str], *, client_id: i
 
 
 @router.get("/livestream-agent/clients/{client_id}/commands/wait")
-def livestream_command_wait(
+async def livestream_command_wait(
     client_id: int,
     after: int = Query(default=0, ge=0),
     timeout_seconds: int = Query(default=25, ge=1, le=30),
     authorization: Optional[str] = Header(default=None),
 ):
     _require_livestream_wake_token(authorization, client_id=client_id)
-    generation = wait_for_wake_change("livestream", client_id, after, timeout_seconds)
+    generation = await wait_for_wake_change_async("livestream", client_id, after, timeout_seconds)
     return {"ok": True, "generation": generation, "changed": generation > int(after)}
 
 
@@ -207,8 +207,8 @@ async def livestream_command_wake_ws(websocket: WebSocket, client_id: int):
         while True:
             now = asyncio.get_running_loop().time()
             timeout = min(15.0, max(0.5, next_auth_recheck - now))
-            next_generation = await asyncio.to_thread(
-                wait_for_wake_change, "livestream", client_id, generation, timeout
+            next_generation = await wait_for_wake_change_async(
+                "livestream", client_id, generation, timeout
             )
             if next_generation > generation:
                 generation = next_generation
