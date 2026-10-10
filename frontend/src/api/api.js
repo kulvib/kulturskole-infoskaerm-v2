@@ -599,7 +599,12 @@ export async function getControlRoomClients() {
 
 
 export async function createControlRoomRealtimeCapability() {
-  const res = await apiFetch(`${apiUrl}/api/clients/control-room-realtime/capability`, {
+  return createScopedControlRoomRealtimeCapability(null);
+}
+
+export async function createScopedControlRoomRealtimeCapability(clientId) {
+  const clientScope = clientId == null ? "" : `?client_id=${encodeURIComponent(clientId)}`;
+  const res = await apiFetch(`${apiUrl}/api/clients/control-room-realtime/capability${clientScope}`, {
     method: "POST",
     headers: authHeaders({ Accept: "application/json" }),
     credentials: "include",

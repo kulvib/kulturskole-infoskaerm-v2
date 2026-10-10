@@ -27,6 +27,7 @@ TTL_SECONDS = min(max(120, int(os.getenv("CLIENTFLOW_UI_REALTIME_CAPABILITY_TTL_
 _CONDITION = threading.Condition()
 _GLOBAL_GENERATION = 0
 _ORG_GENERATIONS: dict[int, int] = defaultdict(int)
+_CLIENT_GENERATIONS: dict[int, int] = defaultdict(int)
 
 
 def _scope_for_principal(principal: object) -> tuple[bool, int | None]:
@@ -37,8 +38,12 @@ def _scope_for_principal(principal: object) -> tuple[bool, int | None]:
     return is_global, int(organization_id) if organization_id is not None else None
 
 
-def current_generation(*, global_scope: bool, organization_id: int | None) -> int:
+def current_generation(
+    *, global_scope: bool, organization_id: int | None, client_id: int | None = None
+) -> int:
     with _CONDITION:
+        if client_id is not None:
+            return int(_CLIENT_GENERATIONS[int(client_id)])
         if global_scope:
             return int(_GLOBAL_GENERATION)
         if organization_id is None:
@@ -46,10 +51,14 @@ def current_generation(*, global_scope: bool, organization_id: int | None) -> in
         return int(_ORG_GENERATIONS[int(organization_id)])
 
 
-def notify_ui_state_changed(*, organization_id: int | None) -> int:
+def notify_ui_state_changed(
+    *, organization_id: int | None, client_id: int | None = None
+) -> int:
     global _GLOBAL_GENERATION
     with _CONDITION:
         _GLOBAL_GENERATION += 1
+        if client_id is not None:
+            _CLIENT_GENERATIONS[int(client_id)] += 1
         if organization_id is not None:
             _ORG_GENERATIONS[int(organization_id)] += 1
             generation = int(_ORG_GENERATIONS[int(organization_id)])
@@ -59,7 +68,9 @@ def notify_ui_state_changed(*, organization_id: int | None) -> int:
         return generation
 
 
-def issue_ui_realtime_capability(principal: object) -> dict[str, Any]:
+def issue_ui_realtime_capability(
+    principal: object, *, client_id: int | None = None
+) -> dict[str, Any]:
     global_scope, organization_id = _scope_for_principal(principal)
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(seconds=TTL_SECONDS)
@@ -72,6 +83,9 @@ def issue_ui_realtime_capability(principal: object) -> dict[str, Any]:
         "principal_id": str(principal_id),
         "global_scope": global_scope,
         "organization_id": organization_id,
+        # Server-side authorization for a client scope is required at issuance.
+        # The wait endpoint intentionally needs no database session.
+        "client_id": client_id,
         "iat": int(now.timestamp()),
         "nbf": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),
@@ -82,7 +96,9 @@ def issue_ui_realtime_capability(principal: object) -> dict[str, Any]:
         "capability": token,
         "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
         "ttl_seconds": TTL_SECONDS,
-        "generation": current_generation(global_scope=global_scope, organization_id=organization_id),
+        "generation": current_generation(
+            global_scope=global_scope, organization_id=organization_id, client_id=client_id
+        ),
     }
 
 
@@ -104,6 +120,9 @@ def verify_ui_realtime_capability(token: str | None) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forkert realtime-capability")
     if not bool(claims.get("global_scope")) and claims.get("organization_id") is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Realtime-capability mangler scope")
+    scoped_client = claims.get("client_id")
+    if scoped_client is not None and (type(scoped_client) is not int or scoped_client <= 0):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Ugyldigt realtime-klientscope")
     return claims
 
 
@@ -111,11 +130,19 @@ def wait_for_ui_change(*, claims: dict[str, Any], after: int, timeout: float) ->
     global_scope = bool(claims.get("global_scope"))
     organization_id = claims.get("organization_id")
     organization_id = int(organization_id) if organization_id is not None else None
+    client_id = claims.get("client_id")
     deadline = time.monotonic() + min(max(float(timeout), 0.0), 30.0)
     with _CONDITION:
-        while current_generation(global_scope=global_scope, organization_id=organization_id) <= int(after):
+        while (
+            current_generation(
+                global_scope=global_scope, organization_id=organization_id, client_id=client_id
+            )
+            <= int(after)
+        ):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
             _CONDITION.wait(timeout=remaining)
-        return current_generation(global_scope=global_scope, organization_id=organization_id)
+        return current_generation(
+            global_scope=global_scope, organization_id=organization_id, client_id=client_id
+        )

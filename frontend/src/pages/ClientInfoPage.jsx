@@ -42,6 +42,7 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { compactDarkChipSx } from "../utils/chipStyles";
 import { isPageVisible } from "../utils/pageVisibility";
+import { realtimeSnapshotDelayMs } from "../utils/realtimeSnapshotPacing.mjs";
 import {
   pageHeaderIconSx,
   pageHeaderPaperSx,
@@ -839,6 +840,7 @@ export default function ClientInfoPage() {
   // backend state commit, fetch the existing authoritative list immediately.
   useEffect(() => {
     let cancelled = false;
+    let lastRealtimeSnapshotAt = Number.NEGATIVE_INFINITY;
     const run = async () => {
       let capability = null;
       let generation = 0;
@@ -860,7 +862,16 @@ export default function ClientInfoPage() {
           const changed = wake?.changed === true || nextGeneration > generation;
           generation = Math.max(generation, nextGeneration);
           if (changed && isPageVisible() && !isDraggingRef.current) {
+            // The first change is immediate. During a fleet-wide status burst,
+            // cap redundant full-list reads while the generation counter still
+            // guarantees an authoritative snapshot of all committed changes.
+            const pause = realtimeSnapshotDelayMs(Date.now(), lastRealtimeSnapshotAt);
+            if (pause > 0) {
+              await new Promise((resolve) => window.setTimeout(resolve, pause));
+            }
+            if (cancelled || !isPageVisible() || isDraggingRef.current) continue;
             await resyncClientsAfterCurrentFetch();
+            lastRealtimeSnapshotAt = Date.now();
           }
         } catch {
           capability = null;
