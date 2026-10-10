@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import threading
 
+from .livestream_sweep_signal import notify_lifecycle_change
+
 _LOCK = threading.Lock()
 _VIEWERS: dict[tuple[int, str, str], datetime] = {}
 
@@ -21,13 +23,18 @@ def touch(client_id: int, viewer_id: str, principal_key: str, *, at: datetime | 
     observed = at or utcnow()
     key = (int(client_id), str(viewer_id), str(principal_key))
     with _LOCK:
+        added = key not in _VIEWERS
         _VIEWERS[key] = observed
+    if added:
+        notify_lifecycle_change()
     return observed
 
 
 def leave(client_id: int, viewer_id: str, principal_key: str) -> None:
     with _LOCK:
-        _VIEWERS.pop((int(client_id), str(viewer_id), str(principal_key)), None)
+        removed = _VIEWERS.pop((int(client_id), str(viewer_id), str(principal_key)), None)
+    if removed is not None:
+        notify_lifecycle_change()
 
 
 def active_keys(client_id: int, *, lease_seconds: int, now: datetime | None = None) -> set[tuple[str, str]]:

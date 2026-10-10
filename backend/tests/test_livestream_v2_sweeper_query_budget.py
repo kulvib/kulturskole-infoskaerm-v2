@@ -55,6 +55,56 @@ class LivestreamV2SweeperQueryBudgetTests(unittest.TestCase):
             )
         )
 
+    def test_empty_database_enters_idle_sweep_mode(self) -> None:
+        with Session(self.engine) as session:
+            activity = livestream_v2._SweepActivity()
+            with patch.object(livestream_v2, "reconcile_viewer_lifecycle") as reconcile:
+                self.assertEqual(
+                    livestream_v2.reconcile_all_viewer_lifecycles(
+                        session, sweep_activity=activity
+                    ),
+                    [],
+                )
+                self.assertFalse(activity.needs_fast_scan)
+                reconcile.assert_not_called()
+
+    def test_only_stopping_generation_enters_idle_sweep_mode(self) -> None:
+        with Session(self.engine) as session:
+            self.seed_client(session)
+            self.seed_stopping_generation(session)
+            session.commit()
+            activity = livestream_v2._SweepActivity()
+            with patch.object(livestream_v2, "reconcile_viewer_lifecycle") as reconcile:
+                self.assertEqual(
+                    livestream_v2.reconcile_all_viewer_lifecycles(
+                        session, sweep_activity=activity
+                    ),
+                    [],
+                )
+                self.assertFalse(activity.needs_fast_scan)
+                reconcile.assert_not_called()
+
+    def test_live_browser_activity_without_generation_retains_fast_sweep(self) -> None:
+        _presence_add(self.CLIENT_ID, "terminal", "idle-cost-test")
+        try:
+            with Session(self.engine) as session:
+                self.seed_client(session)
+                session.commit()
+                activity = livestream_v2._SweepActivity()
+                with patch.object(
+                    livestream_v2, "reconcile_viewer_lifecycle", return_value="start"
+                ) as reconcile:
+                    self.assertEqual(
+                        livestream_v2.reconcile_all_viewer_lifecycles(
+                            session, sweep_activity=activity
+                        ),
+                        [(self.CLIENT_ID, "start")],
+                    )
+                    self.assertTrue(activity.needs_fast_scan)
+                    reconcile.assert_called_once_with(session, self.CLIENT_ID)
+        finally:
+            _presence_remove(self.CLIENT_ID, "terminal", "idle-cost-test")
+
     def test_running_generation_with_live_viewer_skips_per_client_reconcile(self) -> None:
         with Session(self.engine) as session:
             self.seed_client(session)
@@ -70,7 +120,14 @@ class LivestreamV2SweeperQueryBudgetTests(unittest.TestCase):
             session.commit()
 
             with patch.object(livestream_v2, "reconcile_viewer_lifecycle") as reconcile:
-                self.assertEqual(livestream_v2.reconcile_all_viewer_lifecycles(session), [])
+                activity = livestream_v2._SweepActivity()
+                self.assertEqual(
+                    livestream_v2.reconcile_all_viewer_lifecycles(
+                        session, sweep_activity=activity
+                    ),
+                    [],
+                )
+                self.assertTrue(activity.needs_fast_scan)
                 reconcile.assert_not_called()
 
     def test_running_generation_with_live_activity_skips_per_client_reconcile(self) -> None:

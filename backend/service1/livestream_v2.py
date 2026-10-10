@@ -6,6 +6,7 @@ credentials and agent status in dedicated livestream_v2_* tables.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
@@ -32,6 +33,11 @@ from .client_activity import (
 from .db import engine
 from .models import Client
 from .realtime_wakeup import queue_wakeup_after_commit
+from .livestream_sweep_signal import (
+    current_revision as lifecycle_revision,
+    notify_lifecycle_change,
+    wait_for_lifecycle_change,
+)
 from .livestream_presence import active_client_ids as ephemeral_viewer_client_ids, active_keys as ephemeral_viewer_keys, leave as ephemeral_viewer_leave, touch as ephemeral_viewer_touch
 from .livestream_v2_models import (
     LivestreamV2AgentStatus,
@@ -50,6 +56,10 @@ VIEWER_HEARTBEAT_SECONDS = max(10, int(os.getenv("LIVESTREAM_V2_VIEWER_HEARTBEAT
 VIEWER_LEASE_SECONDS = max(45, int(os.getenv("LIVESTREAM_V2_VIEWER_LEASE_SECONDS", "75")))
 VIEWER_STOP_GRACE_SECONDS = max(5, int(os.getenv("LIVESTREAM_V2_VIEWER_STOP_GRACE_SECONDS", "30")))
 VIEWER_SWEEP_SECONDS = max(2, int(os.getenv("LIVESTREAM_V2_VIEWER_SWEEP_SECONDS", "5")))
+# Keep the 5-second sweep while Livestream needs lifecycle decisions. An idle
+# database scan every five seconds prevents Neon from ever scaling to zero.
+# The idle fallback is deliberately > Neon's 5-minute default inactivity window.
+VIEWER_IDLE_SWEEP_SECONDS = max(600, int(os.getenv("LIVESTREAM_V2_VIEWER_IDLE_SWEEP_SECONDS", "900")))
 MEDIA_STALE_SECONDS = max(15, int(os.getenv("LIVESTREAM_V2_MEDIA_STALE_SECONDS", "45")))
 COMMAND_MAX_ATTEMPTS = max(1, int(os.getenv("LIVESTREAM_V2_COMMAND_MAX_ATTEMPTS", "5")))
 MAX_HLS_FILE_BYTES = 64 * 1024 * 1024
@@ -469,6 +479,8 @@ def enqueue_command(
     )
     session.add(command)
     queue_wakeup_after_commit(session, domain="livestream", client_id=client_id)
+    # Manual start/stop also wakes an idle sweeper; it is not tied to a viewer.
+    notify_lifecycle_change()
     return command
 
 
@@ -801,6 +813,7 @@ def generation_stopped(
         session.add(client)
     _write_stop_marker(client_id, reason=error_code or "viewer_owned_stop", generation_id=generation_id)
     _clear_hls_media(client_id)
+    notify_lifecycle_change()
     return generation
 
 
@@ -1068,7 +1081,14 @@ def _active_viewer_client_ids(
     return active
 
 
-def reconcile_all_viewer_lifecycles(session: Session) -> list[tuple[int, str]]:
+@dataclass
+class _SweepActivity:
+    needs_fast_scan: bool = False
+
+
+def reconcile_all_viewer_lifecycles(
+    session: Session, *, sweep_activity: _SweepActivity | None = None
+) -> list[tuple[int, str]]:
     now = _now()
     generation_rows = session.exec(
         select(LivestreamV2Generation.client_id, LivestreamV2Generation.state).where(
@@ -1089,6 +1109,10 @@ def reconcile_all_viewer_lifecycles(session: Session) -> list[tuple[int, str]]:
     active_activity_client_ids = active_livestream_activity_client_ids(session, now=now)
     steady_presence_client_ids = active_viewer_client_ids | active_activity_client_ids
     candidate_ids = active_generation_client_ids | steady_presence_client_ids
+    if sweep_activity is not None:
+        # A stopping generation is finalized by the agent, not by this loop.
+        # All other candidates may need a start, lease expiry, or grace stop.
+        sweep_activity.needs_fast_scan = bool(candidate_ids - stopping_generation_client_ids)
 
     actions: list[tuple[int, str]] = []
     for client_id in sorted(candidate_ids):
@@ -1115,15 +1139,28 @@ def reconcile_all_viewer_lifecycles(session: Session) -> list[tuple[int, str]]:
 
 
 def _sweeper_loop() -> None:
+    revision = lifecycle_revision()
+    interval = VIEWER_SWEEP_SECONDS  # Always perform a quick recovery scan at startup.
     while True:
-        time.sleep(VIEWER_SWEEP_SECONDS)
+        revision, changed = wait_for_lifecycle_change(revision, interval)
+        if changed:
+            # Producers notify before their DB transaction commits. Give it time
+            # to finish so a wakeup cannot cause a premature empty idle scan.
+            time.sleep(VIEWER_SWEEP_SECONDS)
         try:
+            activity = _SweepActivity()
             with Session(engine) as session:
-                reconcile_all_viewer_lifecycles(session)
+                reconcile_all_viewer_lifecycles(session, sweep_activity=activity)
                 session.commit()
+            interval = (
+                VIEWER_SWEEP_SECONDS
+                if activity.needs_fast_scan
+                else VIEWER_IDLE_SWEEP_SECONDS
+            )
         except Exception:
-            # Deliberately isolated: a Livestream sweeper failure must never take
-            # down the main app or another control domain.
+            # Database errors must retain fast retries, never enter idle mode.
+            # A Livestream sweeper error cannot take down another domain.
+            interval = VIEWER_SWEEP_SECONDS
             continue
 
 
